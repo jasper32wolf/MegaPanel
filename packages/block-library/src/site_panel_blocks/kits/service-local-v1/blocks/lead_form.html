@@ -1,0 +1,11 @@
+<form id="lead-form" method="post" action="/api/v1/leads/public" style="display:grid;gap:.75rem;max-width:420px;">
+  <h2>Заявка</h2>
+  <label>Имя <input name="name" autocomplete="name"></label>
+  <label>Телефон <input name="phone" type="tel" required autocomplete="tel"></label>
+  <label>Комментарий <textarea name="message" rows="3"></textarea></label>
+  <input type="text" name="website" value="" tabindex="-1" autocomplete="off" aria-hidden="true" style="position:absolute;left:-9999px;">
+  <input type="hidden" name="form_ts" value="">
+  <label style="font-size:.85rem;"><input type="checkbox" name="consent" required> Согласие на обработку ПДн</label>
+  <button class="sp-btn" type="submit">Отправить</button>
+  <p class="sp-muted" style="font-size:.8rem;">Или позвоните: <a href="tel:{phone}">{phone}</a></p>
+</form>

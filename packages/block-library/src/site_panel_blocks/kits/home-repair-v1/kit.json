@@ -1,0 +1,146 @@
+{
+  "key": "home-repair-v1",
+  "name": "Домашний ремонт",
+  "version": "1.0.0",
+  "description": "Акцент на бригады и выезд: альтернативная вёрстка hero/team.",
+  "niches": [
+    "ремонт",
+    "стройка",
+    "отделка"
+  ],
+  "blocks": [
+    "hero",
+    "trust_bar",
+    "services_grid",
+    "pricing_table",
+    "calculator",
+    "process_steps",
+    "team",
+    "portfolio",
+    "reviews",
+    "guarantee",
+    "faq",
+    "cta_banner",
+    "lead_form",
+    "contacts",
+    "footer"
+  ],
+  "block_meta": [
+    {
+      "type": "hero",
+      "name": "Hero",
+      "cro": [
+        "offer",
+        "utp",
+        "cta_above_fold",
+        "trust_line"
+      ]
+    },
+    {
+      "type": "trust_bar",
+      "name": "Trust Bar",
+      "cro": [
+        "trust_line"
+      ]
+    },
+    {
+      "type": "services_grid",
+      "name": "Services Grid",
+      "cro": [
+        "names",
+        "prices_from",
+        "sla",
+        "guarantee"
+      ]
+    },
+    {
+      "type": "pricing_table",
+      "name": "Pricing Table",
+      "cro": [
+        "transparent",
+        "compare",
+        "cta_per_plan"
+      ]
+    },
+    {
+      "type": "calculator",
+      "name": "Calculator",
+      "cro": [
+        "min_fields"
+      ]
+    },
+    {
+      "type": "process_steps",
+      "name": "Process Steps",
+      "cro": [
+        "sla"
+      ]
+    },
+    {
+      "type": "team",
+      "name": "Team",
+      "cro": [
+        "trust_line"
+      ]
+    },
+    {
+      "type": "portfolio",
+      "name": "Portfolio",
+      "cro": [
+        "trust_line"
+      ]
+    },
+    {
+      "type": "reviews",
+      "name": "Reviews",
+      "cro": [
+        "trust_line"
+      ]
+    },
+    {
+      "type": "guarantee",
+      "name": "Guarantee",
+      "cro": [
+        "guarantee"
+      ]
+    },
+    {
+      "type": "faq",
+      "name": "Faq",
+      "cro": [
+        "5_to_10_questions",
+        "schema_faq",
+        "no_water"
+      ]
+    },
+    {
+      "type": "cta_banner",
+      "name": "Cta Banner",
+      "cro": [
+        "cta_above_fold"
+      ]
+    },
+    {
+      "type": "lead_form",
+      "name": "Lead Form",
+      "cro": [
+        "min_fields",
+        "phone_mask",
+        "pdn_consent",
+        "alt_channels"
+      ]
+    },
+    {
+      "type": "contacts",
+      "name": "Contacts",
+      "cro": [
+        "alt_channels"
+      ]
+    },
+    {
+      "type": "footer",
+      "name": "Footer",
+      "cro": []
+    }
+  ]
+}

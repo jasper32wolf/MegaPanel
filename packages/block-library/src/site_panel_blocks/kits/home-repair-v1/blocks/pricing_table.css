@@ -1,0 +1,22 @@
+.blk-pricing_table {
+  padding: calc(var(--sp-gap, 1rem) * 1.6) calc(var(--sp-gap, 1rem) * 1.2);
+  border-radius: var(--sp-radius, 12px);
+  background: var(--sp-surface, #fff);
+  color: var(--sp-text, #14201c);
+  box-shadow: var(--sp-shadow, none);
+  margin: calc(var(--sp-gap, 1rem) * 0.8) 0;
+  font-family: var(--sp-font, system-ui);
+}
+.blk-pricing_table .sp-btn {
+  display: inline-block;
+  background: var(--sp-primary, #0f6e5c);
+  color: #fff;
+  padding: 0.7rem 1.2rem;
+  border-radius: var(--sp-radius-sm, 8px);
+  text-decoration: none;
+  font-weight: 600;
+  border: 0;
+  cursor: pointer;
+}
+.blk-pricing_table .sp-muted { color: var(--sp-muted, #5f7269); }
+.blk-pricing_table h2, .blk-pricing_table h3 { margin: 0 0 0.75rem; letter-spacing: -0.02em; }

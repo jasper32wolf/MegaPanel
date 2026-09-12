@@ -1,0 +1,5 @@
+Contact: security@example.com
+Expires: 2027-01-01T00:00:00.00Z
+Preferred-Languages: ru, en
+Canonical: https://panel.example.com/.well-known/security.txt
+Policy: /legal/vulnerability-disclosure

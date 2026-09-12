@@ -1,0 +1,123 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-site_panel}
+      POSTGRES_USER: ${POSTGRES_USER:-site_panel}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-site_panel_dev}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.api
+    command: ["alembic", "upgrade", "head"]
+    working_dir: /app/apps/api
+    env_file: ../../.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-site_panel}:${POSTGRES_PASSWORD:-site_panel_dev}@postgres:5432/${POSTGRES_DB:-site_panel}
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.api
+    user: "10001:10001"
+    read_only: true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp
+    volumes:
+      - sites_data:/app/dist
+      - uploads_data:/app/uploads
+    ports:
+      - "8000:8000"
+    env_file: ../../.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-site_panel}:${POSTGRES_PASSWORD:-site_panel_dev}@postgres:5432/${POSTGRES_DB:-site_panel}
+      REDIS_URL: redis://redis:6379/0
+      SITES_ROOT: /app/dist
+      CADDY_ADMIN_URL: http://caddy:2019
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.worker
+    user: "10001:10001"
+    read_only: true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp
+    volumes:
+      - sites_data:/app/dist
+    env_file: ../../.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-site_panel}:${POSTGRES_PASSWORD:-site_panel_dev}@postgres:5432/${POSTGRES_DB:-site_panel}
+      REDIS_URL: redis://redis:6379/0
+      SITES_ROOT: /app/dist
+    depends_on:
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  caddy:
+    image: caddy:2.8-alpine
+    user: "10001:10001"
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    ports:
+      - "80:80"
+      - "443:443"
+      - "2019:2019"
+    volumes:
+      - ./../caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - sites_data:/srv/sites:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+  panel:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.panel
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  sites_data:
+  uploads_data:
+  caddy_data:
+  caddy_config:

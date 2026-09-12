@@ -1,0 +1,16 @@
+{
+  admin 0.0.0.0:2019
+  auto_https disable_redirects
+}
+
+:80 {
+  root * /srv/sites
+  encode zstd gzip
+  file_server
+  header {
+    X-Content-Type-Options nosniff
+    Referrer-Policy strict-origin-when-cross-origin
+  }
+}
+
+# Per-site vhosts are added dynamically via Caddy Admin API (phase 5).

@@ -1,0 +1,11 @@
+{
+  "radius": 14,
+  "primary": "#0f6e5c",
+  "secondary": "#1a3d34",
+  "bg": "#f7f9f8",
+  "surface": "#ffffff",
+  "text": "#14201c",
+  "muted": "#5f7269",
+  "gradient": "soft",
+  "font_pair": "sans"
+}
