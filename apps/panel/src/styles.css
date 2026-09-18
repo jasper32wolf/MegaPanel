@@ -73,6 +73,24 @@ textarea {
   font: inherit;
 }
 
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 55%, white);
+  outline-offset: 3px;
+}
+
+.app-loading {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  margin: 0;
+  color: var(--muted);
+  font-weight: 600;
+}
+
 /* —— Shell —— */
 .shell {
   display: grid;

@@ -28,6 +28,24 @@ class SitePage(Base):
     content_chars: Mapped[int] = mapped_column(Integer, default=0)
     thin: Mapped[bool] = mapped_column(Boolean, default=False)
     manifest: Mapped[dict] = mapped_column(JSONB, default=dict)
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    page_plan_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("page_plans.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    page_draft_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("page_drafts.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     promoted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -62,7 +80,9 @@ class Redirect(Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), index=True
     )
-    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("sites.id", ondelete="CASCADE"))
+    site_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sites.id", ondelete="CASCADE")
+    )
     from_path: Mapped[str] = mapped_column(String(1024), nullable=False)
     to_url: Mapped[str] = mapped_column(String(2048), nullable=False)
     code: Mapped[int] = mapped_column(Integer, default=301)
@@ -102,4 +122,14 @@ class SiteBuild(Base):
     pages_built: Mapped[int] = mapped_column(Integer, default=0)
     duration_ms: Mapped[int] = mapped_column(Integer, default=0)
     log: Mapped[str] = mapped_column(Text, default="")
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    manifest_snapshot: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    page_plan_ids: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    requested_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

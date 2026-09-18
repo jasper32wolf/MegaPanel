@@ -113,6 +113,12 @@ def test_access_token_contains_its_refresh_session_id(monkeypatch):
     assert payload["sid"] == str(session_id)
 
 
+def test_site_build_route_is_available_in_the_release_api():
+    paths = app.openapi()["paths"]
+
+    assert "post" in paths["/api/v1/sites/{site_id}/build"]
+
+
 def test_security_session_routes_are_registered():
     paths = app.openapi()["paths"]
 

@@ -11,6 +11,8 @@ from app.core.rate_limit import client_ip, lead_limiter
 from app.db.session import get_db
 from app.models import Site
 from app.models.leads import Consent, Lead, WebhookDelivery, WebhookDeliveryAttempt
+from app.models.project import LeadOutcome
+from app.schemas.workflow import LeadOutcomeIn
 from app.services.audit import append_audit
 from app.services.leads import (
     check_honeypot,
@@ -177,7 +179,127 @@ async def create_public_lead(
     }
 
 
-@router.get("/inbox")
+@router.get("/analysis")
+async def lead_analysis(
+    site_id: UUID | None = None,
+    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    predicates = []
+    if auth.role != "superadmin":
+        predicates.append(Lead.tenant_id == auth.tenant_id)
+    if site_id:
+        predicates.append(Lead.site_id == site_id)
+    leads = list((await db.execute(select(Lead).where(*predicates))).scalars().all())
+    latest_outcomes = (
+        await db.execute(
+            select(LeadOutcome)
+            .where(LeadOutcome.lead_id.in_([lead.id for lead in leads]))
+            .order_by(LeadOutcome.created_at.desc(), LeadOutcome.id.desc())
+        )
+        if leads
+        else None
+    )
+    outcome_by_lead: dict[UUID, LeadOutcome] = {}
+    if latest_outcomes is not None:
+        for outcome in latest_outcomes.scalars().all():
+            outcome_by_lead.setdefault(outcome.lead_id, outcome)
+    by_outcome: dict[str, int] = {}
+    by_page: dict[str, int] = {}
+    for lead in leads:
+        outcome = outcome_by_lead.get(lead.id)
+        if outcome:
+            by_outcome[outcome.outcome] = by_outcome.get(outcome.outcome, 0) + 1
+        page = lead.page_slug or "/"
+        by_page[page] = by_page.get(page, 0) + 1
+    return {
+        "total": len(leads),
+        "evaluated": len(outcome_by_lead),
+        "unassessed": len(leads) - len(outcome_by_lead),
+        "by_outcome": by_outcome,
+        "by_page": by_page,
+        "site_id": str(site_id) if site_id else None,
+    }
+
+
+@router.post("/{lead_id}/outcomes", status_code=201)
+async def record_lead_outcome(
+    lead_id: UUID,
+    body: LeadOutcomeIn,
+    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    lead = (await db.execute(select(Lead).where(Lead.id == lead_id))).scalar_one_or_none()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Not found")
+    require_lead_owner(auth, lead)
+    site = (await db.execute(select(Site).where(Site.id == lead.site_id))).scalar_one()
+    project_id = site.project_id
+    outcome = LeadOutcome(
+        tenant_id=lead.tenant_id,
+        project_id=project_id,
+        site_id=lead.site_id,
+        lead_id=lead.id,
+        outcome=body.outcome,
+        reason=body.reason,
+        note=body.note.strip() if body.note else None,
+        actor_id=auth.user.id,
+    )
+    db.add(outcome)
+    await db.flush()
+    await append_audit(
+        db,
+        action="lead.outcome.record",
+        payload={
+            "lead_id": str(lead.id),
+            "outcome_id": str(outcome.id),
+            "outcome": outcome.outcome,
+            "reason": outcome.reason,
+            "note_recorded": bool(outcome.note),
+        },
+        tenant_id=lead.tenant_id,
+        actor_id=auth.user.id,
+    )
+    await db.commit()
+    return _serialize_lead_outcome(outcome)
+
+
+@router.get("/{lead_id}/outcomes")
+async def list_lead_outcomes(
+    lead_id: UUID,
+    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor")),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    lead = (await db.execute(select(Lead).where(Lead.id == lead_id))).scalar_one_or_none()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Not found")
+    require_lead_owner(auth, lead)
+    outcomes = (
+        (
+            await db.execute(
+                select(LeadOutcome)
+                .where(LeadOutcome.lead_id == lead.id)
+                .order_by(LeadOutcome.created_at.desc(), LeadOutcome.id.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [_serialize_lead_outcome(outcome) for outcome in outcomes]
+
+
+def _serialize_lead_outcome(outcome: LeadOutcome) -> dict:
+    return {
+        "id": str(outcome.id),
+        "outcome": outcome.outcome,
+        "reason": outcome.reason,
+        "note": outcome.note,
+        "project_id": str(outcome.project_id) if outcome.project_id else None,
+        "page_plan_id": str(outcome.page_plan_id) if outcome.page_plan_id else None,
+        "created_at": outcome.created_at.isoformat() if outcome.created_at else None,
+    }
+
+
 async def lead_inbox(
     status: str | None = None,
     site_id: UUID | None = None,

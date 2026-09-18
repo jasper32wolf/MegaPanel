@@ -217,6 +217,7 @@ async def update_webhook_settings(
     return {"target_url": target_url, "secret_configured": True, "configured": True}
 
 
+@router.post("/{site_id}/build")
 async def build_site(
     site_id: UUID,
     auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor")),

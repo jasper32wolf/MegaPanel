@@ -3,7 +3,17 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -93,6 +103,12 @@ class Site(Base):
     indexnow_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     lead_token: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
     caddy_configured: Mapped[bool] = mapped_column(Boolean, default=False)
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="SET NULL"),
+        nullable=True,
+        unique=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -105,7 +121,9 @@ class AuditLog(Base):
     __tablename__ = "audit_log"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    tenant_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True, index=True
+    )
     actor_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     action: Mapped[str] = mapped_column(String(128), nullable=False)
     payload: Mapped[dict] = mapped_column(JSONB, default=dict)
@@ -165,7 +183,10 @@ class GeoPlace(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     name_forms: Mapped[dict] = mapped_column(JSONB, default=dict)  # nom/gen/prep/dat/acc/ins
     parent_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("geo_places.id", ondelete="SET NULL"), nullable=True, index=True
+        UUID(as_uuid=True),
+        ForeignKey("geo_places.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
     external_id: Mapped[str | None] = mapped_column(String(128), nullable=True)  # FIAS/GAR/OSM
     source: Mapped[str] = mapped_column(String(32), default="manual")  # fias|osm|geonames|manual
@@ -211,7 +232,9 @@ class OnboardingSession(Base):
         UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), index=True
     )
     actor_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
-    step: Mapped[str] = mapped_column(String(64), default="niche")  # niche|geo|template|domain|build
+    step: Mapped[str] = mapped_column(
+        String(64), default="niche"
+    )  # niche|geo|template|domain|build
     payload: Mapped[dict] = mapped_column(JSONB, default=dict)
     completed: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -245,8 +268,24 @@ from app.models.publish import (  # noqa: E402
     SitePage,
 )
 from app.models.leads import AnalyticsEvent, Consent, Lead, WebhookDelivery, WebhookDeliveryAttempt  # noqa: E402
+from app.models.project import (  # noqa: E402
+    LeadOutcome,
+    PageDraft,
+    PagePlan,
+    Project,
+    ProjectFactRevision,
+    ProjectGeoPlace,
+    ProjectKeyword,
+)
 from app.models.ops import ContentDecayEvent, FootprintAudit, SerpCheck, StagingApproval  # noqa: E402
-from app.models.panel import AuthSession, ApiKey, Notification, Plugin, SavedView, WebhookSubscription  # noqa: E402
+from app.models.panel import (
+    AuthSession,
+    ApiKey,
+    Notification,
+    Plugin,
+    SavedView,
+    WebhookSubscription,
+)  # noqa: E402
 
 __all__ = [
     "AnalyticsEvent",
@@ -277,6 +316,13 @@ __all__ = [
     "Notification",
     "OnboardingSession",
     "Plugin",
+    "Project",
+    "ProjectFactRevision",
+    "ProjectGeoPlace",
+    "ProjectKeyword",
+    "PagePlan",
+    "PageDraft",
+    "LeadOutcome",
     "PromptEntry",
     "Redirect",
     "SavedView",

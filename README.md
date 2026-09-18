@@ -110,14 +110,14 @@ chmod +x УСТАНОВКА.sh scripts/*.sh
 | Блок | Фактический статус |
 |------|--------------------|
 | Мастер и install-скрипты | no-demo путь и bootstrap оператора реализованы; clean install на новой машине ещё не подтверждён |
-| API, модели, миграции | Alembic head: **`0015_webhook_delivery`**; PostgreSQL/RLS end-to-end ещё не подтверждён |
-| Python tests / panel build | **146 passed** / production build **OK** (2026-09-17) |
+| API, модели, миграции | Alembic head: **`0016_project_workflow`**; PostgreSQL/RLS end-to-end ещё не подтверждён |
+| Python tests / panel build | **155 passed** / production build **OK** (2026-09-18) |
 | Безопасность доступа | public registration, tenant/API-key/plugin endpoints закрыты; TOTP и отзыв сессий доступны в панели |
 | Домены, лиды и delivery | DNS/TLS states, redirects, encrypted lead inbox, per-site encrypted webhook settings и durable retries/DLQ реализованы; public deployment smoke не выполнен |
 | Docker / VPS / Caddy / worker | конфигурация и документы подготовлены; проверка в Docker/VPS blocked локальной средой |
 | SERP / FIAS / IaC | mock, stub или post-release scope; не входят в подтверждённый release workflow |
 
-Миграционный head в коде: **`0015_webhook_delivery`**. Full-repository Ruff пока не чист из-за legacy backlog; новые route-regression файлы проходят targeted checks.
+Миграционный head в коде: **`0016_project_workflow`**. Full-repository Ruff пока не чист из-за legacy backlog; новые route-regression и project workflow файлы проходят targeted checks.
 
 ---
 

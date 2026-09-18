@@ -2,6 +2,18 @@
 
 > **Статус документа: предложение, не реализация.** Здесь описано развитие Site Panel после доказательства текущего single-user VPS release-кандидата. Источник фактов о существующем коде, проверках и ограничениях — [ХОД-РАБОТ.md](./ХОД-РАБОТ.md). Этот roadmap не добавляет API, экранов, фоновых задач, сроков или гарантий.
 
+## Реализованный срез 2026-09-18
+
+Следующие части roadmap уже реализованы на уровне API/UI и автоматических проверок, но ещё не прошли PostgreSQL, Docker/Caddy и browser E2E proof:
+
+- `Project`, immutable fact revisions, project-bound keyword/geo selection и PagePlan state machine;
+- deterministic PageDraft generation из approved inputs, QA `pass/warn/block`, audited warning override и explicit apply без публикации;
+- candidate SSG materialization без activation, authenticated preview, explicit project publish и selected rollback;
+- append-only LeadOutcome, lead analysis summary и отдельный outcome history в inbox;
+- project-first panel workspace `/projects` и `/projects/:projectId` с loading/error/status пояснениями.
+
+Оставшиеся части этого roadmap — backfill существующих сайтов, полноценный PostgreSQL/RLS migration proof, worker orchestration, Playwright/axe E2E, CI release job и production runtime proof.
+
 ## Как читать статусы
 
 | Статус | Значение |

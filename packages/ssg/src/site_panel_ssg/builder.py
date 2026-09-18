@@ -11,6 +11,7 @@ from typing import Any
 
 from site_panel_shared.enums import IndexState
 from site_panel_shared.manifests import PageManifest, SiteManifest
+
 from site_panel_ssg.legal import write_legal_pack
 from site_panel_ssg.templates import content_hash, fill_slots, page_url, render_page
 
@@ -33,7 +34,9 @@ LEAD_FORM_SCRIPT = """(() => {
         const data = new FormData(form);
         const status = form.querySelector(".sp-lead-status");
         const button = form.querySelector('button[type="submit"]');
-        const utm = Object.fromEntries([...query.entries()].filter(([key]) => key.startsWith("utm_")));
+        const utm = Object.fromEntries(
+          [...query.entries()].filter(([key]) => key.startsWith("utm_"))
+        );
         const payload = {
           site_id: form.dataset.siteId,
           lead_token: form.dataset.leadToken,
@@ -99,7 +102,12 @@ def schema_org_jsonld(site: SiteManifest, page: PageManifest, context: dict[str,
         {
             "@type": "BreadcrumbList",
             "itemListElement": [
-                {"@type": "ListItem", "position": 1, "name": "Главная", "item": page_url(site.domain, "/")},
+                {
+                    "@type": "ListItem",
+                    "position": 1,
+                    "name": "Главная",
+                    "item": page_url(site.domain, "/"),
+                },
                 {
                     "@type": "ListItem",
                     "position": 2,
@@ -142,7 +150,12 @@ def _extract_faq(page: PageManifest, context: dict[str, Any]) -> list[dict[str, 
             out = []
             for item in items[:12]:
                 if isinstance(item, dict) and item.get("q") and item.get("a"):
-                    out.append({"q": fill_slots(str(item["q"]), context), "a": fill_slots(str(item["a"]), context)})
+                    out.append(
+                        {
+                            "q": fill_slots(str(item["q"]), context),
+                            "a": fill_slots(str(item["a"]), context),
+                        }
+                    )
             if out:
                 return out
     city = context.get("city_prep") or context.get("city_nom") or ""
@@ -150,11 +163,17 @@ def _extract_faq(page: PageManifest, context: dict[str, Any]) -> list[dict[str, 
     return [
         {
             "q": f"Сколько стоит {service} в {city}?" if city else f"Сколько стоит {service}?",
-            "a": f"Стоимость {service} зависит от объёма работ. Оставьте заявку — рассчитаем за 15 минут.",
+            "a": (
+                f"Стоимость {service} зависит от объёма работ. "
+                "Оставьте заявку — рассчитаем за 15 минут."
+            ),
         },
         {
             "q": f"Как быстро выполнить {service}?",
-            "a": "Обычно выезд в день обращения. Точные сроки согласуем после короткой диагностики.",
+            "a": (
+                "Обычно выезд в день обращения. "
+                "Точные сроки согласуем после короткой диагностики."
+            ),
         },
     ]
 
@@ -233,6 +252,26 @@ class SiteBuilder:
             current.rename(previous)
         release.rename(current)
 
+    def activate(self, site_id: str, build_hash: str) -> bool:
+        root = self.output_root / str(site_id)
+        release = root / "releases" / build_hash
+        marker = release / "BUILD_HASH"
+        if (
+            not release.is_dir()
+            or not marker.is_file()
+            or marker.read_text(encoding="utf-8").strip() != build_hash
+        ):
+            return False
+        self._activate_release(root, release)
+        current_marker = root / "current" / "BUILD_HASH"
+        return (
+            current_marker.is_file()
+            and current_marker.read_text(encoding="utf-8").strip() == build_hash
+        )
+
+    def release_path(self, site_id: str, build_hash: str) -> Path:
+        return self.output_root / str(site_id) / "releases" / build_hash
+
     def build(
         self,
         site: SiteManifest,
@@ -240,6 +279,7 @@ class SiteBuilder:
         *,
         index_states: dict[str, str] | None = None,
         compress: bool = True,
+        activate: bool = True,
     ) -> dict[str, Any]:
         root = self.output_root / str(site.site_id)
         releases = root / "releases"
@@ -256,20 +296,30 @@ class SiteBuilder:
                 html = render_page(site, page, ctx)
                 if any(block.type == "lead_form" for block in page.blocks):
                     has_lead_forms = True
-                    html = html.replace("</body>", '  <script src="/site-panel-leads.js" defer></script>\n</body>')
-                schema = json.dumps(schema_org_jsonld(site, page, ctx), ensure_ascii=False).replace("</", "<\\/")
-                html = html.replace("</head>", f'  <script type="application/ld+json">{schema}</script>\n</head>')
+                    html = html.replace(
+                        "</body>", '  <script src="/site-panel-leads.js" defer></script>\n</body>'
+                    )
+                schema = json.dumps(schema_org_jsonld(site, page, ctx), ensure_ascii=False).replace(
+                    "</", "<\\/"
+                )
+                html = html.replace(
+                    "</head>", f'  <script type="application/ld+json">{schema}</script>\n</head>'
+                )
 
                 thin = is_thin(html)
                 slug = page.slug.strip("/")
                 state = (index_states or {}).get(
                     page.slug,
-                    page.index_state.value if hasattr(page.index_state, "value") else str(page.index_state),
+                    page.index_state.value
+                    if hasattr(page.index_state, "value")
+                    else str(page.index_state),
                 )
                 if thin:
                     state = IndexState.NOINDEX.value
                 if state != IndexState.INDEXED.value:
-                    html = html.replace("</head>", '  <meta name="robots" content="noindex, follow">\n</head>')
+                    html = html.replace(
+                        "</head>", '  <meta name="robots" content="noindex, follow">\n</head>'
+                    )
 
                 hashes.append(content_hash(html))
                 output = staging / "index.html" if not slug else staging / slug / "index.html"
@@ -293,7 +343,9 @@ class SiteBuilder:
                 )
 
             (staging / "robots.txt").write_text(render_robots_txt(), encoding="utf-8")
-            (staging / "sitemap.xml").write_text(render_sitemap(site.domain, indexed_urls), encoding="utf-8")
+            (staging / "sitemap.xml").write_text(
+                render_sitemap(site.domain, indexed_urls), encoding="utf-8"
+            )
             write_legal_pack(staging, site.legal or {})
             if has_lead_forms:
                 (staging / "site-panel-leads.js").write_text(LEAD_FORM_SCRIPT, encoding="utf-8")
@@ -308,8 +360,15 @@ class SiteBuilder:
                 shutil.rmtree(staging)
             else:
                 staging.rename(release)
-            self._activate_release(root, release)
-            return {"build_hash": build_hash, "pages": page_meta, "indexed_count": len(indexed_urls)}
+            if activate:
+                self._activate_release(root, release)
+            return {
+                "build_hash": build_hash,
+                "pages": page_meta,
+                "indexed_count": len(indexed_urls),
+                "release_path": str(release),
+                "activated": activate,
+            }
         except Exception:
             if staging.exists():
                 shutil.rmtree(staging)

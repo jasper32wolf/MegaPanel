@@ -7,6 +7,7 @@ const groups = [
     label: "Работа",
     links: [
       { to: "/", end: true, label: "Обзор" },
+      { to: "/projects", label: "Проекты" },
       { to: "/sites", label: "Сайты" },
       { to: "/keywords", label: "Семантика" },
       { to: "/geo", label: "География" },

@@ -74,3 +74,32 @@ def test_ssg_kit_build_contains_core_blocks(tmp_path: Path):
         encoding="utf-8"
     )
     assert "form.dataset.idempotencyKey" in lead_script
+
+
+def test_candidate_build_does_not_activate_until_requested(tmp_path: Path):
+    site_id = uuid4()
+    site = SiteManifest(
+        site_id=site_id,
+        tenant_id=uuid4(),
+        domain="candidate.test",
+        pages=[
+            PageManifest(
+                slug="/",
+                title_template="{service}",
+                h1_template="{service}",
+                service="Ремонт",
+                unique_core="Достаточно длинный черновик для отдельной candidate сборки.",
+            )
+        ],
+    )
+    builder = SiteBuilder(tmp_path)
+
+    result = builder.build(site, {"service": "Ремонт"}, activate=False)
+
+    release = tmp_path / str(site_id) / "releases" / result["build_hash"]
+    assert release.is_dir()
+    assert not (tmp_path / str(site_id) / "current").exists()
+    assert result["activated"] is False
+    assert builder.activate(str(site_id), result["build_hash"])
+    marker = tmp_path / str(site_id) / "current" / "BUILD_HASH"
+    assert marker.read_text(encoding="utf-8").strip() == result["build_hash"]
