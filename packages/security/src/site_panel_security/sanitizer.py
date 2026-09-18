@@ -57,11 +57,38 @@ _ALLOWED_ATTRIBUTES = {
     # "rel" managed by link_rel= below — do not list it for <a>
     "a": {"href", "title", "target"},
     "img": {"src", "alt", "width", "height", "loading", "fetchpriority", "srcset", "sizes"},
-    "input": {"type", "name", "value", "placeholder", "required", "data-mask", "autocomplete"},
-    "form": {"action", "method", "id", "novalidate"},
+    "input": {
+        "type",
+        "name",
+        "value",
+        "placeholder",
+        "required",
+        "data-mask",
+        "autocomplete",
+        "tabindex",
+    },
+    "form": {
+        "action",
+        "method",
+        "id",
+        "novalidate",
+        "data-site-panel-lead-form",
+        "data-site-id",
+        "data-lead-token",
+        "data-endpoint",
+    },
     "button": {"type", "name", "value"},
     "label": {"for"},
-    "*": {"class", "id", "aria-label", "aria-hidden", "role", "data-calc", "data-price"},
+    "*": {
+        "class",
+        "id",
+        "aria-label",
+        "aria-hidden",
+        "aria-live",
+        "role",
+        "data-calc",
+        "data-price",
+    },
 }
 
 

@@ -1,7 +1,7 @@
 FROM python:3.12-slim AS base
 
 RUN groupadd -g 10001 app && useradd -u 10001 -g app -m app \
- && mkdir -p /app/dist /app/uploads /tmp \
+ && mkdir -p /app/dist /app/uploads /app/dsar /tmp \
  && chown -R app:app /app
 
 WORKDIR /app
@@ -11,6 +11,7 @@ COPY packages/security /app/packages/security
 COPY packages/ssg /app/packages/ssg
 COPY packages/block-library /app/packages/block-library
 COPY apps/api /app/apps/api
+COPY scripts /app/scripts
 COPY pyproject.toml README.md /app/
 
 RUN pip install --no-cache-dir \

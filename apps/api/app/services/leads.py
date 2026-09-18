@@ -9,7 +9,6 @@ import time
 from typing import Any
 
 import httpx
-
 from app.core.config import get_settings
 from site_panel_security import BlindIndex, FieldEncryptor
 
@@ -45,9 +44,12 @@ def qualify_lead_local(message: str | None, phone: str | None) -> str:
     return "new"
 
 
+def canonical_webhook_body(payload: dict[str, Any]) -> bytes:
+    return json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()
+
+
 def sign_webhook(payload: dict[str, Any], secret: str) -> str:
-    body = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()
-    return hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    return hmac.new(secret.encode(), canonical_webhook_body(payload), hashlib.sha256).hexdigest()
 
 
 async def dispatch_webhook(url: str, payload: dict[str, Any], secret: str) -> dict:
@@ -58,16 +60,17 @@ async def dispatch_webhook(url: str, payload: dict[str, Any], secret: str) -> di
         SSRFGuard().validate_url(url)
     except SSRFBlockedError as exc:
         return {"ok": False, "error": f"ssrf_blocked: {exc}"}
-    signature = sign_webhook(payload, secret)
+    body = canonical_webhook_body(payload)
+    signature = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
             resp = await client.post(
                 url,
-                json=payload,
+                content=body,
                 headers={
                     "X-Signature-SHA256": signature,
                     "Content-Type": "application/json",
-                    "Idempotency-Key": payload.get("idempotency_key", ""),
+                    "Idempotency-Key": str(payload.get("idempotency_key", "")),
                 },
             )
             return {"status": resp.status_code, "ok": resp.status_code < 300}

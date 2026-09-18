@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import secrets
 from pathlib import Path
 from uuid import uuid4
 
@@ -26,7 +27,7 @@ async def main() -> None:
     from sqlalchemy import select
 
     from app.core.security import hash_password
-    from app.db.session import SessionLocal
+    from app.db.session import open_db_session
     from app.models import Site, TaxonomyCategory, Tenant, User
     from app.models.blocks import ContentBlock
     from app.services.geo import seed_demo_geo
@@ -37,7 +38,7 @@ async def main() -> None:
     email = "admin@demo.local"
     password = "DemoPass123!"
 
-    async with SessionLocal() as db:
+    async with open_db_session() as db:
         tenant = (await db.execute(select(Tenant).where(Tenant.slug == "demo"))).scalar_one_or_none()
         if not tenant:
             tenant = Tenant(
@@ -139,6 +140,7 @@ async def main() -> None:
                 manifest=manifest.model_dump(mode="json"),
                 publish_state="published",
                 indexnow_key=new_indexnow_key(),
+                lead_token=secrets.token_urlsafe(32),
             )
             db.add(site)
             await db.flush()
@@ -153,6 +155,8 @@ async def main() -> None:
                     "service": "Ремонт стиральных машин",
                     "modifier": "Срочный",
                     "price": "от 990 ₽",
+                    "lead_token": site.lead_token,
+                    "lead_api_url": "/api/v1/leads/public",
                 },
             )
             site.build_hash = result["build_hash"]

@@ -1,10 +1,30 @@
 from __future__ import annotations
 
 import hashlib
+import warnings
 from io import BytesIO
 from pathlib import Path
 
-from PIL import Image, ImageEnhance, ImageFilter
+from PIL import Image, ImageEnhance, ImageFilter, UnidentifiedImageError
+
+MAX_IMAGE_PIXELS = 40_000_000
+
+
+def decode_image(raw: bytes) -> Image.Image:
+    previous_limit = Image.MAX_IMAGE_PIXELS
+    Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(BytesIO(raw)) as source:
+                source.verify()
+            with Image.open(BytesIO(raw)) as source:
+                source.load()
+                return source.copy()
+    except (Image.DecompressionBombError, Image.DecompressionBombWarning, UnidentifiedImageError, OSError) as exc:
+        raise ValueError("Invalid or oversized image") from exc
+    finally:
+        Image.MAX_IMAGE_PIXELS = previous_limit
 
 
 def average_hash(img: Image.Image, size: int = 8) -> str:
@@ -16,10 +36,8 @@ def average_hash(img: Image.Image, size: int = 8) -> str:
 
 
 def normalize_image(raw: bytes, site_salt: str = "") -> tuple[bytes, str]:
-    """Micro crop/rotate/noise/gamma for licensed assets uniqueness (TZ §6)."""
-    img = Image.open(BytesIO(raw))
+    img = decode_image(raw)
     w, h = img.size
-    # 1% crop
     dx, dy = max(1, w // 100), max(1, h // 100)
     img = img.crop((dx, dy, w - dx, h - dy))
     img = img.rotate(0.5, expand=True, fillcolor=(255, 255, 255))
@@ -32,7 +50,6 @@ def normalize_image(raw: bytes, site_salt: str = "") -> tuple[bytes, str]:
     out = BytesIO()
     img.save(out, format="WEBP", quality=85)
     data = out.getvalue()
-    # Cache key hint
     _ = hashlib.sha256(raw + site_salt.encode()).hexdigest()
     return data, ph
 

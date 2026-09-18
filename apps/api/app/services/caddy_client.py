@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
+from uuid import UUID
 
 import httpx
 
@@ -13,6 +15,10 @@ class CaddyClient:
     def __init__(self, base_url: str | None = None) -> None:
         settings = get_settings()
         self.base_url = (base_url or settings.caddy_admin_url).rstrip("/")
+
+    @staticmethod
+    def _ok(result: dict | list | None) -> bool:
+        return not isinstance(result, dict) or result.get("ok") is not False
 
     async def _request(self, method: str, path: str, json_body: Any = None) -> dict | list | None:
         url = f"{self.base_url}{path}"
@@ -49,6 +55,13 @@ class CaddyClient:
             )
         return routes
 
+    def _lead_form_proxy_route(self) -> dict:
+        return {
+            "match": [{"path": ["/api/v1/leads/public"], "method": ["POST"]}],
+            "handle": [{"handler": "reverse_proxy", "upstreams": [{"dial": "api:8000"}]}],
+            "terminal": True,
+        }
+
     async def upsert_site_vhost(
         self,
         hostname: str,
@@ -62,6 +75,7 @@ class CaddyClient:
         Path-scoped noindex via subroute matchers (TZ 7.1).
         """
         handlers: list[dict[str, Any]] = [
+            {"handler": "subroute", "routes": [self._lead_form_proxy_route()]},
             {
                 "handler": "headers",
                 "response": {
@@ -87,9 +101,10 @@ class CaddyClient:
             "handle": handlers,
         }
         result = await self._request("PUT", f"/id/site-{hostname}", route)
-        if isinstance(result, dict) and result.get("ok") is False:
+        if not self._ok(result):
             created = await self._request("POST", "/config/apps/http/servers/srv0/routes", route)
             return {
+                "ok": self._ok(created),
                 "upsert": result,
                 "create": created,
                 "hostname": hostname,
@@ -102,18 +117,37 @@ class CaddyClient:
             "noindex_paths": noindex_paths or [],
         }
 
-    async def add_redirect(self, hostname: str, from_path: str, to_url: str, code: int = 301) -> dict:
-        route = {
-            "@id": f"redir-{hostname}-{hash(from_path) & 0xFFFFFFFF:x}",
-            "match": [{"host": [hostname], "path": [from_path]}],
-            "handle": [{"handler": "static_response", "headers": {"Location": [to_url]}, "status_code": code}],
-        }
+    async def delete_site_vhost(self, hostname: str) -> dict:
+        result = await self._request("DELETE", f"/id/site-{hostname}")
         return {
-            "ok": True,
-            "route": route,
-            "result": await self._request("POST", "/config/apps/http/servers/srv0/routes", route),
+            "ok": self._ok(result) or (isinstance(result, dict) and result.get("status") == 404),
+            "result": result,
         }
 
+    async def add_redirect(
+        self,
+        hostname: str,
+        from_path: str,
+        to_url: str,
+        code: int = 301,
+        *,
+        redirect_id: UUID | str | None = None,
+    ) -> dict:
+        route_id = f"redir-{redirect_id}" if redirect_id else f"redir-{hashlib.sha256(f'{hostname}:{from_path}'.encode()).hexdigest()[:16]}"
+        route = {
+            "@id": route_id,
+            "match": [{"host": [hostname], "path": [from_path]}],
+            "handle": [{"handler": "static_response", "headers": {"Location": [to_url]}, "status_code": code}],
+            "terminal": True,
+        }
+        result = await self._request("PUT", f"/id/{route_id}", route)
+        if not self._ok(result):
+            result = await self._request("POST", "/config/apps/http/servers/srv0/routes/0", route)
+        return {"ok": self._ok(result), "route_id": route_id, "route": route, "result": result}
+
+    async def delete_redirect(self, redirect_id: UUID | str) -> dict:
+        result = await self._request("DELETE", f"/id/redir-{redirect_id}")
+        return {"ok": self._ok(result), "result": result}
+
     async def health(self) -> bool:
-        result = await self._request("GET", "/config/")
-        return not (isinstance(result, dict) and result.get("ok") is False and "error" in result)
+        return self._ok(await self._request("GET", "/config/"))

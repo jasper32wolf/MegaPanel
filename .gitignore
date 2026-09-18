@@ -32,6 +32,11 @@ secrets/
 Thumbs.db
 .DS_Store
 
+# Local agent settings (may contain credentials)
+.claude/settings.json
+.claude/settings.local.json
+.claude/worktrees/
+
 # Runtime
 /data/
 /uploads/

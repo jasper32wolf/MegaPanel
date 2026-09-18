@@ -1,29 +1,28 @@
-# План генерации: Мультипанель (краткий статус)
+# Site Panel — актуальный индекс развития
 
-> Полная карта проекта, промпт, структура папок, ограничения и журнал изменений:  
-> **[`docs/ХОД-РАБОТ.md`](./ХОД-РАБОТ.md)** ← канон для сверки.
+> **Фактическое состояние, результаты проверок и release gate находятся в [ХОД-РАБОТ.md](./ХОД-РАБОТ.md).** Этот файл помогает выбрать документ и не является доказательством реализации.
 
-Сверка с ТЗ v5.6 (`Промпт для генерации проекта.md`).
+## Текущий статус
 
-## Фазы 0–9
+Site Panel — кандидат self-hosted VPS-релиза для одного оператора. Реализованы single-operator bootstrap, cookie/TOTP access, ограниченный release API, сайты/домены, encrypted lead inbox, per-site webhook и durable delivery. Контрактные проверки подтверждают **52 маршрута OpenAPI / 59 операций** и **146 API-тестов**.
 
-См. [ХОД-РАБОТ.md §2](./ХОД-РАБОТ.md) — каркас auth/geo/SSG/leads/ops/compliance.  
-Часть пунктов **partial** (SERP mock, FIAS stub, IaC stubs) — детали в §5 журнала.
+Docker/VPS, PostgreSQL/RLS, Caddy/TLS, worker runtime, браузерный сценарий, публичная форма и restore drill ещё не доказаны end-to-end. До их выполнения продукт нельзя объявлять production-ready.
 
-## UI-10 — Редизайн панели (done)
+## Какой документ использовать
 
-- Hybrid ops UI: светлый workspace + charcoal sidebar, акцент deep teal
-- Шрифты: Fraunces + Source Sans 3
-- Примитивы: `PageHeader`, `Surface`, `DataTable`, `StatusPill`, `EmptyState`
-- Страница `/blocks` — каталог комплектов, превью, sync в tenant
+| Нужна информация | Документ |
+|---|---|
+| Что реально есть, что проверено и что блокирует выпуск | [ХОД-РАБОТ.md](./ХОД-РАБОТ.md) |
+| Что предлагается развивать после доказательства ядра | [ROADMAP-OPERATOR-PRODUCT.md](./ROADMAP-OPERATOR-PRODUCT.md) |
+| Как развернуть локально | [README-LOCAL.md](../README-LOCAL.md) |
+| Как подготовить VPS и выполнить release gate | [README-VPS.md](../README-VPS.md) |
+| Как восстановить сервис | [runbooks/disaster-recovery.md](./runbooks/disaster-recovery.md) |
 
-## BLK-11 — Библиотека блоков (done)
+## Предлагаемая последовательность развития
 
-- Пакет `packages/block-library` (`LIBRARY_VERSION=1.0.0`)
-- Комплекты: `service-local-v1`, `home-repair-v1`
-- Theme morph → `--sp-*` + hash-классы
-- API kits + mig `0011_block_kits`
+1. Доказать текущий release-контур на VPS: миграции, single operator, Caddy/TLS, browser, форма лида, webhook retries/DLQ и restore.
+2. Добавить операторский контур «данные бизнеса → семантика/гео → page plan → generation/QA → build/publish → исходы лидов».
+3. Автоматизировать доказанные проверки в CI, наблюдаемость и восстановление.
+4. Только затем рассматривать внешние источники, генерацию, аналитику и масштабирование.
 
-## Далее
-
-См. бэклог в [ХОД-РАБОТ.md §6](./ХОД-РАБОТ.md).
+> Пункты из [ROADMAP-OPERATOR-PRODUCT.md](./ROADMAP-OPERATOR-PRODUCT.md) имеют статус **«предлагается»**, пока не появятся реализация, проверки и запись в фактологическом журнале.

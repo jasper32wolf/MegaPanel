@@ -38,3 +38,28 @@ def test_render_page_canonical():
     assert 'rel="canonical"' in html
     assert "example.test" in html
     assert "+7000" in html
+
+
+def test_render_page_escapes_text_slots_and_normalizes_root_url():
+    site = SiteManifest(
+        site_id=uuid4(),
+        tenant_id=uuid4(),
+        domain="example.test",
+        pages=[],
+        contacts={},
+    )
+    page = PageManifest(
+        slug="/",
+        title_template="{service}",
+        h1_template="{service}",
+        meta_description_template="{service}",
+        service="<script>alert(1)</script>",
+        unique_core="<img src=x onerror=alert(1)>",
+    )
+
+    html = render_page(site, page, {"service": page.service})
+
+    assert "<script>alert(1)</script>" not in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+    assert "&lt;img src=x onerror=alert(1)&gt;" in html
+    assert 'href="https://example.test/"' in html

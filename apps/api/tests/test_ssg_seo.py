@@ -36,11 +36,11 @@ def test_ssg_writes_seo_artifacts(tmp_path: Path):
     current = tmp_path / str(site.site_id) / "current"
     assert (current / "robots.txt").exists()
     assert (current / "sitemap.xml").exists()
-    assert (current / "index" / "index.html").exists() or (current / "index.html").exists() or True
-    html = (current / "index" / "index.html").read_text(encoding="utf-8")
+    assert (current / "index.html").exists()
+    html = (current / "index.html").read_text(encoding="utf-8")
     assert "application/ld+json" in html
     assert "FAQPage" in html
-    assert (current / "index" / "index.html.gz").exists()
+    assert (current / "index.html.gz").exists()
     assert (current / "privacy" / "index.html").exists()
     assert (current / "cookie-banner.js").exists()
 
@@ -57,3 +57,35 @@ def test_robots_and_sitemap():
     sm = render_sitemap("ex.test", ["/", "/a/"])
     assert "ex.test" in sm
     assert "<urlset" in sm
+
+
+def test_ssg_build_keeps_previous_release_for_rollback(tmp_path: Path):
+    site_id = uuid4()
+    builder = SiteBuilder(tmp_path)
+
+    def site_for(title: str) -> SiteManifest:
+        return SiteManifest(
+            site_id=site_id,
+            tenant_id=uuid4(),
+            domain="rollback.test",
+            pages=[
+                PageManifest(
+                    slug="/",
+                    title_template=title,
+                    h1_template=title,
+                    service="Услуги",
+                    blocks=[BlockDef(type="hero", hash_class="blk-x", html="<p>content</p>")],
+                )
+            ],
+        )
+
+    first = builder.build(site_for("Первая версия"))
+    second = builder.build(site_for("Вторая версия"))
+    current = tmp_path / str(site_id) / "current"
+    previous = tmp_path / str(site_id) / "previous"
+
+    assert first["build_hash"] != second["build_hash"]
+    assert "Вторая версия" in (current / "index.html").read_text(encoding="utf-8")
+    assert "Первая версия" in (previous / "index.html").read_text(encoding="utf-8")
+    assert builder.rollback(str(site_id), first["build_hash"])
+    assert "Первая версия" in (current / "index.html").read_text(encoding="utf-8")

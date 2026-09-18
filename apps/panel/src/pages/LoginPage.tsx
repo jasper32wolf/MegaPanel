@@ -2,13 +2,14 @@ import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, useAuth } from "../lib/auth";
 
-type TokenResponse = { access_token: string; refresh_token: string };
+type LoginResponse = { ok: boolean };
 
 export function LoginPage() {
-  const { setToken } = useAuth();
+  const { markAuthenticated } = useAuth();
   const navigate = useNavigate();
-  const [email, setEmail] = useState("admin@demo.local");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [totpCode, setTotpCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -17,11 +18,11 @@ export function LoginPage() {
     setLoading(true);
     setError(null);
     try {
-      const data = await api<TokenResponse>("/api/v1/auth/login", {
+      await api<LoginResponse>("/api/v1/auth/login", {
         method: "POST",
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, ...(totpCode ? { totp_code: totpCode } : {}) }),
       });
-      setToken(data.access_token);
+      markAuthenticated();
       navigate("/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
@@ -34,13 +35,13 @@ export function LoginPage() {
     <div className="login-wrap">
       <section className="login-hero" aria-label="Site Panel">
         <h1 className="brand">Site Panel</h1>
-        <p>Мультипанель массовой генерации сайтов услуг — SEO, drip и лиды в одном контуре.</p>
+        <p>Панель одного оператора для создания, публикации и сопровождения сайтов услуг.</p>
       </section>
       <div className="login-panel">
         <form className="login-box" onSubmit={onSubmit}>
           <h2>Вход</h2>
           <p className="muted" style={{ marginTop: 0, marginBottom: "1.25rem" }}>
-            Используйте учётную запись tenant или demo.
+            Войдите с учётной записью оператора.
           </p>
           <label className="field">
             Email
@@ -55,6 +56,15 @@ export function LoginPage() {
               required
               minLength={10}
               autoComplete="current-password"
+            />
+          </label>
+          <label className="field">
+            Код из приложения-аутентификатора <span className="muted">(если включён TOTP)</span>
+            <input
+              value={totpCode}
+              onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, "").slice(0, 8))}
+              inputMode="numeric"
+              autoComplete="one-time-code"
             />
           </label>
           {error && <p className="error">{error}</p>}

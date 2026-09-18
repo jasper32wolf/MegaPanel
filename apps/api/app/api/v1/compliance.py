@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthContext, require_roles
 from app.db.session import get_db
-from app.services.hardening import egress, finops, finops_summary, record_finops
+from app.services.hardening import egress, finops_summary, record_finops
 
 router = APIRouter()
 
@@ -73,15 +73,7 @@ async def get_finops(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     tid = auth.tenant_id or auth.user.id
-    try:
-        return await finops_summary(db, tid)
-    except Exception:  # noqa: BLE001 — table may be missing pre-migration
-        return {
-            "tenant_id": str(tid),
-            "total_usd": finops.total_for(str(tid)),
-            "by_kind": finops.by_kind(str(tid)),
-            "alerts": ["llm_spike"] if finops.by_kind(str(tid)).get("llm", 0) > 100 else [],
-        }
+    return await finops_summary(db, tid)
 
 
 @router.get("/dr/status")

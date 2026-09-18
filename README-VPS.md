@@ -1,14 +1,18 @@
 # Установка и работа на сервере (VPS)
 
-Этот файл — **полная инструкция «от нуля»** для запуска Site Panel на арендованном Linux-сервере в интернете.  
-Писано так, чтобы было понятно человеку без DevOps-опыта: что купить, что нажать, что опасно, что делать при ошибках.
+Этот файл описывает **целевой пошаговый путь** запуска Site Panel на арендованном Linux-сервере.
+Он написан понятным языком, но текущий репозиторий ещё нельзя безопасно разворачивать в production без исправлений ниже.
+
+> **Статус проверки 2026-09-17: single-user VPS release candidate.** Автоматические API-регрессии и production build панели проходят; production Compose изолирует служебные сервисы. Docker/VPS runtime, PostgreSQL/RLS, Caddy/TLS, worker и browser smoke не проверены в этой среде. Не размещайте панель в публичном интернете, пока не выполните release gate из [`docs/ХОД-РАБОТ.md`](./docs/ХОД-РАБОТ.md).
 
 Связанные файлы:
 
 - Свой компьютер → [`README-LOCAL.md`](./README-LOCAL.md)  
 - Краткий обзор → [`README.md`](./README.md)  
-- Статус и ограничения проекта → [`docs/ХОД-РАБОТ.md`](./docs/ХОД-РАБОТ.md)  
+- Единый паспорт, блокеры и план → [`docs/ХОД-РАБОТ.md`](./docs/ХОД-РАБОТ.md)
+- Предлагаемое развитие операторского продукта (не текущие функции) → [`docs/ROADMAP-OPERATOR-PRODUCT.md`](./docs/ROADMAP-OPERATOR-PRODUCT.md)
 - Авария / восстановление → [`docs/runbooks/disaster-recovery.md`](./docs/runbooks/disaster-recovery.md)
+- GitHub-обновления, rollback и backup/restore → [`docs/runbooks/github-deploy-recovery.md`](./docs/runbooks/github-deploy-recovery.md)
 
 ---
 
@@ -77,7 +81,7 @@ Caddy (порты 80 и 443)  ← сайты клиентов + (желател�
    ├── готовый HTML сайтов (том Docker sites_data)
    ├── Panel (админка)
    ├── API (мозг)
-   ├── Worker (фоновые задачи: drip, DSAR)
+   ├── Worker (фоновая доставка лидов и повторные попытки webhook)
    ├── PostgreSQL (база)
    └── Redis (очереди)
 ```
@@ -190,14 +194,23 @@ scp -r "e:\РАБОТА\ПАНЕЛЬ ДЛЯ ГЕНЕРАЦИИ САЙТОВ\*" s
 
 ---
 
-## 5. Установка одной командой (рекомендуется)
+## 5. Текущий bootstrap одной командой (только staging/разработка)
 
-На сервере:
+### Интерактивный мастер (проще всего)
 
 ```bash
 cd /opt/site-panel
-chmod +x scripts/*.sh
-./scripts/install.sh --mode vps
+chmod +x УСТАНОВКА.sh scripts/*.sh
+./УСТАНОВКА.sh
+```
+
+В меню: **`2` → режим vps**, укажите URL панели/API (или Enter и допишите `.env` позже).
+Демо-seed на VPS по умолчанию **выключен**.
+
+Без меню:
+
+```bash
+./scripts/install.sh --mode vps --skip-seed
 ```
 
 ### Что делает режим `vps`
@@ -208,7 +221,7 @@ chmod +x scripts/*.sh
 4. Собирает и поднимает весь Docker Compose.  
 5. Ждёт, пока API ответит на порту 8000.
 
-В конце увидите адреса `http://127.0.0.1:8000` и `:5173` — это пока **с самого сервера**, не «красивый» домен.
+В конце installer ожидает доступность порта 8000 и печатает адреса `http://127.0.0.1:8000` и `:5173`. Это **не подтверждает** browser login, работу worker, выдачу SSG через Caddy или безопасность deployment; текущие расхождения перечислены в едином паспорте.
 
 ### Сразу после install — обязательно вручную
 
@@ -361,23 +374,31 @@ api.example.com {
 
 ## 9. Первый администратор (без demo)
 
-### 9.1. Регистрация через API
+### 9.1. Создать единственного оператора
 
-На сервере:
+Публичной регистрации в production нет. После успешных миграций создайте первую и единственную учётную запись **изнутри Docker-сети**. Пароль не передавайте в командной строке и не сохраняйте в shell history:
 
 ```bash
-curl -fsS -X POST http://127.0.0.1:8000/api/v1/auth/register \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "email": "admin@ваш-домен.ru",
-    "password": "ОченьСложныйПароль_НеМеньше12!",
-    "role": "superadmin"
-  }'
+cd /opt/site-panel/current
+read -rs OPERATOR_PASSWORD
+printf '\n'
+printf '%s\n' "$OPERATOR_PASSWORD" | \
+  docker compose --env-file .env -f infra/docker/docker-compose.production.yml \
+  run --rm -T api python /app/scripts/bootstrap_operator.py \
+  --email 'you@example.com' \
+  --name 'Site Panel Operator' \
+  --password-stdin
+unset OPERATOR_PASSWORD
 ```
 
-Пароль придумайте свой. Запишите в менеджер паролей.
+Повторный запуск с тем же email останавливается без изменений. Чтобы осознанно заменить пароль или нормализовать оператора на старой установке, добавьте `--reset-password` с тем же email. Команда не создаёт второй owner scope; если в базе уже несколько пользователей или owner scopes, она останавливается и требует сначала вручную исправить данные. Команда создаёт внутреннего владельца `operator`, который нужен только для совместимости текущей схемы БД и не появляется в интерфейсе.
 
-Дальше через API/панель создайте **tenant** (агентство) и привяжите пользователя — иначе часть функций «пустая».
+Проверки, обязательные до публикации панели:
+
+1. `POST /api/v1/auth/register` отсутствует из OpenAPI и возвращает 404;
+2. оператор может войти через HTTPS, а API/база/Caddy Admin не открыты наружу;
+3. пароль и demo seed не используются на VPS;
+4. TOTP включена до постоянной эксплуатации.
 
 ### 9.2. Почему нельзя demo на VPS
 
@@ -396,12 +417,22 @@ curl -fsS -X POST http://127.0.0.1:8000/api/v1/auth/register \
 Нужен телефон с приложением Google Authenticator / Aegis / 1Password и т.п.
 
 ```bash
-TOKEN=$(curl -fsS -X POST http://127.0.0.1:8000/api/v1/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"admin@ваш-домен.ru","password":"ВАШ_ПАРОЛЬ"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+BASE="https://panel.example.com"
+COOKIE_JAR="$(mktemp)"
 
-curl -fsS -X POST http://127.0.0.1:8000/api/v1/security/totp/setup \
-  -H "Authorization: Bearer $TOKEN"
+read -rp 'Email: ' OPERATOR_EMAIL
+read -rs -p 'Password: ' OPERATOR_PASSWORD
+printf '\n'
+curl -fsS -c "$COOKIE_JAR" -X POST "$BASE/api/v1/auth/login" \
+  -H 'Content-Type: application/json' \
+  -d "$(printf '{\"email\":%s,\"password\":%s}' \
+    "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$OPERATOR_EMAIL")" \
+    "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$OPERATOR_PASSWORD")")"
+unset OPERATOR_PASSWORD
+CSRF=$(awk '$6 == "site_panel_csrf" { print $7 }' "$COOKIE_JAR")
+
+curl -fsS -b "$COOKIE_JAR" -X POST "$BASE/api/v1/security/totp/setup" \
+  -H "X-CSRF-Token: $CSRF"
 ```
 
 В ответе будет секрет / ссылка `otpauth://...` — внесите в приложение.
@@ -409,15 +440,17 @@ curl -fsS -X POST http://127.0.0.1:8000/api/v1/security/totp/setup \
 Подтверждение кодом из приложения:
 
 ```bash
-curl -fsS -X POST http://127.0.0.1:8000/api/v1/security/totp/confirm \
-  -H "Authorization: Bearer $TOKEN" \
+read -rp 'TOTP code: ' TOTP_CODE
+curl -fsS -b "$COOKIE_JAR" -X POST "$BASE/api/v1/security/totp/confirm" \
   -H 'Content-Type: application/json' \
-  -d '{"code":"123456"}'
+  -H "X-CSRF-Token: $CSRF" \
+  -d "{\"code\":\"$TOTP_CODE\"}"
+rm -f "$COOKIE_JAR"
 ```
 
 Пока не сделали `confirm`, MFA ещё не включена. После confirm при логине нужен `totp_code`.
 
-То же можно сделать из интерфейса панели (раздел безопасности), если UI доступен.
+Настройка и подтверждение TOTP доступны в панели в разделе **«Настройки»**. Cookie-based сценарий выше остаётся для аварийной диагностики; выполняйте его только по HTTPS и удаляйте временный cookie-файл после работы.
 
 ---
 
@@ -436,19 +469,20 @@ docker compose -f infra/docker/docker-compose.yml logs -f api worker caddy --tai
 docker compose -f infra/docker/docker-compose.yml ps
 ```
 
-### Обновление кода
+### Обновление кода и аварийный откат
 
-```bash
-cd /opt/site-panel
-# 1) БЭКАП БД (§11) — обязательно перед миграциями
-git pull   # или скопируйте новые файлы
+> **Production-путь после настройки release system:** не выполняйте `git pull` непосредственно на работающем VPS. Он не даёт immutable release, проверяемого SHA, pre-deploy backup или безопасного rollback.
 
-docker compose --env-file .env -f infra/docker/docker-compose.yml up -d --build
-docker compose -f infra/docker/docker-compose.yml logs migrate
-curl -fsS http://127.0.0.1:8000/api/v1/health
-```
+После закрытия P0 и настройки GitHub Environments используйте:
 
-Сервис `migrate` при каждом полном `up` пытается догнать Alembic до актуальной головы (сейчас **`0011_block_kits`**).
+1. merge проверенного изменения в `main`;
+2. успешный `ci`;
+3. workflow **Deploy production**, который доставит точный SHA на VPS;
+4. workflow **Recover production** для `status`, `restart`, `rollback` или manual `restore`.
+
+Система хранит `current` и `previous` releases, создаёт encrypted restic backup перед обновлением и автоматически может сделать только restart → code rollback. Восстановление PostgreSQL всегда требует явного `RESTORE` confirmation. Полная настройка: [`docs/runbooks/github-deploy-recovery.md`](./docs/runbooks/github-deploy-recovery.md).
+
+До настройки этого контура обновляйте только закрытый staging вручную, предварительно создавая backup и фиксируя SHA; не используйте это как production process.
 
 ### Сборка сайта клиента
 
@@ -469,13 +503,11 @@ curl -fsS -X POST -H "Authorization: Bearer $TOKEN" \
 
 ### Лиды
 
-Формы шлют на `POST /api/v1/leads/public`.  
-На **клиентском статическом домене** относительный `/api/...` сам по себе **не попадёт** в ваш API — нужен абсолютный `API_PUBLIC_URL` в формах или прокси (известное ограничение, журнал §5).
+Формы отправляют данные same-origin на `POST /api/v1/leads/public`. При подключении клиентского домена dynamic vhost Caddy добавляет proxy только для этого `POST`-пути к API. После привязки домена пересоберите сайт и до production подтвердите отправку на реальном hostname через Docker/Caddy smoke.
 
-### Drip / IndexNow
+### Индексация
 
-Worker ночью (~03:00) переводит страницы из noindex в indexed и дергает IndexNow.  
-Смотрите логи `worker`.
+Автоматическое продвижение страниц и отправка в IndexNow не входят в подтверждённый workflow первого релиза и не запускаются worker-ом. Не используйте API-only controls индексирования до отдельной end-to-end проверки.
 
 ### Остановка
 
@@ -495,20 +527,27 @@ docker compose -f infra/docker/docker-compose.yml down -v
 
 ---
 
-## 11. Бэкапы (обязательно)
+## 11. Резервные копии и восстановление
 
-### База PostgreSQL (каждый день)
+> Для production используйте encrypted off-host restic backups из GitHub release/recovery system. Простые `pg_dump` и tar ниже оставлены только как диагностические примеры для закрытого staging: они сами по себе не обеспечивают шифрование, off-host хранение, retention или проверенный restore.
+
+### Production-путь
+
+1. Настройте `/opt/site-panel/shared/backup.env` и restic repository согласно [`github-deploy-recovery.md`](./docs/runbooks/github-deploy-recovery.md).
+2. Bootstrap установит `site-panel-backup.timer`: ежедневный backup + retention + `restic check`.
+3. Перед production deploy release manager создаёт дополнительный encrypted pre-deploy snapshot.
+4. Для data recovery используйте **Actions → Recover production → restore** с конкретным snapshot ID и `confirmation=RESTORE`.
+5. Не храните backup только на одном VPS и не отправляйте PII backups в GitHub Actions artifacts.
+
+### Диагностический PostgreSQL dump (закрытый staging)
 
 ```bash
-mkdir -p /var/backups/site-panel
 docker compose -f infra/docker/docker-compose.yml exec -T postgres \
   pg_dump -U site_panel -Fc site_panel \
   > /var/backups/site-panel/db-$(date +%F).dump
 ```
 
-Копии **выносите с VPS** (другой диск, S3, домашний ПК). Один VPS сгорел — бэкап на нём же бесполезен.
-
-### Том сайтов
+### Диагностический archive sites volume (закрытый staging)
 
 ```bash
 docker volume ls | grep sites
@@ -520,17 +559,7 @@ docker run --rm \
   alpine tar czf /backup/sites-$(date +%F).tgz -C /data .
 ```
 
-### Cron пример
-
-```bash
-crontab -e
-# каждый день в 2:15
-15 2 * * * /opt/site-panel/scripts/backup-daily.sh
-```
-
-(Скрипт бэкапа можете создать сами по командам выше.)
-
-Подробный сценарий аварии: [`docs/runbooks/disaster-recovery.md`](./docs/runbooks/disaster-recovery.md).
+Полная процедура, обязательный recovery drill и различие code rollback/data restore: [`docs/runbooks/github-deploy-recovery.md`](./docs/runbooks/github-deploy-recovery.md) и [`docs/runbooks/disaster-recovery.md`](./docs/runbooks/disaster-recovery.md).
 
 ---
 
@@ -571,9 +600,9 @@ After=network.target redis.service
 
 [Service]
 User=sitepanel
-WorkingDirectory=/opt/site-panel/apps/worker
+WorkingDirectory=/opt/site-panel
 EnvironmentFile=/opt/site-panel/.env
-Environment=PYTHONPATH=/opt/site-panel/apps/api:/opt/site-panel/apps/worker
+Environment=PYTHONPATH=/opt/site-panel/apps/api
 ExecStart=/opt/site-panel/.venv/bin/arq app.worker.WorkerSettings
 Restart=on-failure
 
@@ -598,7 +627,7 @@ sudo systemctl enable --now sitepanel-api sitepanel-worker
 |------|-----|
 | Health | `GET /api/v1/health` |
 | Metrics | `GET /api/v1/metrics` (Prometheus) |
-| security.txt | `/api/v1/compliance/security.txt` |
+| security.txt | `docs/security/security.txt` — заполните реальные контакты до публикации |
 | MFA | у всех админов |
 | Firewall | только 22/80/443 снаружи |
 | Caddy Admin | не в интернет |
@@ -609,6 +638,8 @@ sudo systemctl enable --now sitepanel-api sitepanel-worker
 | Диск | следите за ростом `sites_data` |
 
 Заготовки IaC (`infra/ansible`, `infra/terraform`) сейчас **заглушки** — не считайте готовым прод-оркестратором.
+
+> Этот checklist описывает необходимые ручные проверки, а не уже настроенные SLO, alerts, автоматическое восстановление или подтверждённый runtime. Их предлагаемый контур описан в [`docs/ROADMAP-OPERATOR-PRODUCT.md`](./docs/ROADMAP-OPERATOR-PRODUCT.md); до отдельной проверки он не является функцией VPS-установки.
 
 ---
 
@@ -630,7 +661,6 @@ sudo systemctl enable --now sitepanel-api sitepanel-worker
 ```bash
 curl -fsS https://api.ваш-домен.ru/api/v1/health
 curl -fsS -o /dev/null -w "%{http_code}\n" https://panel.ваш-домен.ru/
-curl -fsS https://api.ваш-домен.ru/.well-known/security.txt || true
 ```
 
 ### Автотесты
@@ -695,7 +725,7 @@ k6 run -e BASE=https://api.ваш-домен.ru infra/k6/smoke.js
 О: Считайте всё скомпрометированным: новые секреты, новый пароль БД, новые пароли пользователей, ротация ключей шифрования по процедуре (сложно). Перевыпустите доступы.
 
 **В: Можно ли один VPS на несколько агентств?**  
-О: Да, это multi-tenant: разные tenant внутри одной установки. Изоляция — логическая (RLS), не «отдельная машина на клиента».
+О: Первый релиз рассчитан на одного оператора и один внутренний owner scope. Multi-tenant agency hosting — отдельный post-release redesign, а не поддерживаемый режим этой установки.
 
 **В: Нужен ли Cloudflare?**  
 О: Не обязателен. Полезен как CDN/WAF перед Caddy. DNS должен в итоге указывать туда, куда вы задумали (CF proxy или напрямую на VPS).
@@ -712,7 +742,7 @@ k6 run -e BASE=https://api.ваш-домен.ru infra/k6/smoke.js
 О: В Docker volume `sites_data`. Смотреть: `docker compose exec api ls /app/dist`.
 
 **В: Форма заявки на клиентском домене не работает.**  
-О: Статический HTML бьёт в относительный `/api` — на чужом домене это не ваш API. Нужен абсолютный URL API или прокси. См. журнал ограничений.
+О: Проверьте, что Caddy dynamic vhost проксирует `POST /api/v1/leads/public` к API, а сайт был пересобран после настройки домена. Этот путь реализован, но должен быть подтверждён public Docker/Caddy smoke на вашем hostname.
 
 **В: Клиентский домен и панель на одном IP — нормально?**  
 О: Да. Caddy различает их по имени хоста (Host).
@@ -734,13 +764,13 @@ k6 run -e BASE=https://api.ваш-домен.ru infra/k6/smoke.js
 ### ИИ и лиды
 
 **В: Обязательны ключи нейросетей?**  
-О: Нет. Без ключей — локальная генерация. С ключами — лучше качество micro-infill, появятся записи FinOps.
+О: Нет. Экспериментальные AI-generation endpoints не входят в первый release; сайты собираются из подготовленных оператором данных, блоков и manifest. Versioned LLM generation появится после отдельного QA pipeline.
 
 **В: Где лежат персональные данные лидов?**  
 О: В PostgreSQL в зашифрованном виде. Ключ — в `.env`. Бэкапы БД = бэкапы ПДн → храните как секреты.
 
 **В: Что такое DSAR?**  
-О: Запрос субъекта данных на выгрузку/удаление (в духе 152-ФЗ/GDPR). Endpoint `/api/v1/security/dsar`.
+О: Запрос субъекта данных на выгрузку/удаление. Публичный DSAR endpoint намеренно выключен до browser/worker/retention integration proof; обрабатывайте такие запросы по утверждённой ручной процедуре.
 
 ### Прочее
 
@@ -754,14 +784,14 @@ k6 run -e BASE=https://api.ваш-домен.ru infra/k6/smoke.js
 О: Пока заготовка-stub. Основной путь — Docker Compose + эта инструкция.
 
 **В: Как связаться / security.txt?**  
-О: Смотрите `docs/security/security.txt` и endpoint compliance.
+О: Смотрите `docs/security/security.txt`; до публикации замените placeholders реальными контактами. Compliance endpoint в first-release API не публикуется.
 
 ---
 
-## 17. Чеклист «можно пускать людей»
+## 17. Целевой чеклист перед допуском людей (после закрытия P0)
 
 - [ ] Ubuntu/Debian, Docker работает  
-- [ ] `./scripts/install.sh --mode vps` (или ручной compose) успешен  
+- [ ] `./УСТАНОВКА.sh` (режим vps) или `./scripts/install.sh --mode vps` успешен
 - [ ] `.env` с сильными секретами, `chmod 600`, `APP_ENV=production`  
 - [ ] `PANEL_PUBLIC_URL` / `API_PUBLIC_URL` / `CORS_ORIGINS` = ваши HTTPS  
 - [ ] Firewall: снаружи только SSH + 80 + 443  
@@ -769,21 +799,21 @@ k6 run -e BASE=https://api.ваш-домен.ru infra/k6/smoke.js
 - [ ] Свой админ создан, **demo нет**  
 - [ ] MFA включена и подтверждена  
 - [ ] HTTPS panel и api открываются  
-- [ ] Создан tenant → сайт → build → домен открывается  
+- [ ] Создан единственный оператор → сайт → build → домен открывается
 - [ ] Тестовый лид доходит в inbox  
 - [ ] Ежедневный бэкап БД настроен и проверен restore на учебном стенде  
 - [ ] Диск мониторится  
 - [ ] Понимаете ограничения из `docs/ХОД-РАБОТ.md` §5  
 
-Если все пункты отмечены — можно работать с реальными клиентами (с оглядкой на известные пробелы продукта).
+Даже если операционные пункты отмечены, текущий снимок нельзя пускать к реальным клиентам до закрытия всех P0 из единого паспорта и успешного DB/Docker/browser/lead end-to-end теста.
 
 ---
 
-## 18. Быстрый план «первый прод-день»
+## 18. Целевой план первого production-дня (после закрытия P0)
 
 1. Harden SSH + ufw.  
 2. Клон в `/opt/site-panel`.  
-3. `./scripts/install.sh --mode vps`.  
+3. `./УСТАНОВКА.sh` → режим vps (или `./scripts/install.sh --mode vps --skip-seed`).
 4. Дописать домены в `.env`, доработать Caddyfile, закрыть лишние порты.  
 5. Админ + MFA.  
 6. Бэкап cron.  
@@ -802,6 +832,7 @@ k6 run -e BASE=https://api.ваш-домен.ru infra/k6/smoke.js
 | Обзор | [`README.md`](./README.md) |
 | Журнал / ограничения | [`docs/ХОД-РАБОТ.md`](./docs/ХОД-РАБОТ.md) |
 | Disaster recovery | [`docs/runbooks/disaster-recovery.md`](./docs/runbooks/disaster-recovery.md) |
+| GitHub deploy/recovery | [`docs/runbooks/github-deploy-recovery.md`](./docs/runbooks/github-deploy-recovery.md) |
 | Compose | [`infra/docker/docker-compose.yml`](./infra/docker/docker-compose.yml) |
 | Caddy | [`infra/caddy/Caddyfile`](./infra/caddy/Caddyfile) |
 | Пример env | [`.env.example`](./.env.example) |

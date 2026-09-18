@@ -1,15 +1,17 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import UTC, datetime
+from uuid import UUID
 
 from app.api.deps import AuthContext, require_roles
 from app.db.session import get_db
-from app.models import DsarJob
+from app.models import AuthSession
 from app.services.audit import append_audit
-from app.services.dsar import process_dsar_job
 from app.services.mfa import generate_totp_secret, provisioning_uri, verify_totp
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
 
@@ -41,7 +43,9 @@ async def totp_setup(
         actor_id=user.id,
     )
     await db.commit()
-    return TotpSetupOut(secret=secret, otpauth_url=provisioning_uri(secret, user.email), pending=True)
+    return TotpSetupOut(
+        secret=secret, otpauth_url=provisioning_uri(secret, user.email), pending=True
+    )
 
 
 @router.post("/totp/confirm")
@@ -89,102 +93,77 @@ async def totp_disable(
     return {"ok": True, "mfa_enabled": False}
 
 
-class DsarRequest(BaseModel):
-    subject_email: str | None = None
-    subject_phone: str | None = None
-    action: str = Field(pattern=r"^(export|delete)$")
-    process_inline: bool = True
+@router.get("/sessions")
+async def list_sessions(
+    auth: AuthContext = Depends(
+        require_roles("superadmin", "tenant_admin", "manager", "editor", "viewer")
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    sessions = list(
+        (
+            await db.execute(
+                select(AuthSession)
+                .where(AuthSession.user_id == auth.user.id)
+                .order_by(AuthSession.created_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        {
+            "id": str(session.id),
+            "current": session.id == auth.session_id,
+            "created_at": session.created_at.isoformat() if session.created_at else None,
+            "expires_at": session.expires_at.isoformat(),
+            "revoked_at": session.revoked_at.isoformat() if session.revoked_at else None,
+        }
+        for session in sessions
+    ]
 
 
-@router.post("/dsar")
-async def dsar(
-    body: DsarRequest,
-    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin")),
+@router.post("/sessions/{session_id}/revoke")
+async def revoke_session(
+    session_id: UUID,
+    auth: AuthContext = Depends(
+        require_roles("superadmin", "tenant_admin", "manager", "editor", "viewer")
+    ),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Data Subject Access Request — queue + optional inline process (TZ 12.5)."""
-    if not auth.tenant_id:
-        raise HTTPException(status_code=403, detail="Tenant required")
-    if not body.subject_email and not body.subject_phone:
-        raise HTTPException(status_code=400, detail="subject_email or subject_phone required")
-
-    job = DsarJob(
-        tenant_id=auth.tenant_id,
-        action=body.action,
-        subject_email=body.subject_email,
-        subject_phone=body.subject_phone,
-        status="queued",
-    )
-    db.add(job)
-    await db.flush()
-
-    result: dict | None = None
-    if body.process_inline:
-        result = await process_dsar_job(
-            db,
-            tenant_id=auth.tenant_id,
-            action=body.action,
-            subject_email=body.subject_email,
-            subject_phone=body.subject_phone,
-            job_id=job.id,
-        )
-        from datetime import UTC, datetime
-
-        job.status = "done"
-        job.result = result
-        job.finished_at = datetime.now(UTC)
-    else:
-        # Best-effort enqueue to ARQ worker
-        try:
-            from arq import create_pool
-            from arq.connections import RedisSettings
-
-            from app.core.config import get_settings
-
-            redis = await create_pool(RedisSettings.from_dsn(get_settings().redis_url))
-            await redis.enqueue_job(
-                "dsar_process_task",
-                str(job.id),
-                str(auth.tenant_id),
-                body.action,
-                body.subject_email,
-                body.subject_phone,
+    if session_id == auth.session_id:
+        raise HTTPException(status_code=409, detail="Use logout to revoke the current session")
+    session = (
+        await db.execute(
+            select(AuthSession).where(
+                AuthSession.id == session_id, AuthSession.user_id == auth.user.id
             )
-            job.status = "queued"
-        except Exception as exc:  # noqa: BLE001
-            job.status = "queued_local"
-            job.result = {"enqueue_error": str(exc)}
-
-    await append_audit(
-        db,
-        action=f"dsar.{body.action}",
-        payload={
-            "job_id": str(job.id),
-            "subject_email": body.subject_email,
-            "subject_phone": bool(body.subject_phone),
-            "inline": body.process_inline,
-        },
-        tenant_id=auth.tenant_id,
-        actor_id=auth.user.id,
-    )
-    await db.commit()
-    return {
-        "status": job.status,
-        "action": body.action,
-        "job_id": str(job.id),
-        "result": result,
-    }
+        )
+    ).scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.revoked_at is None:
+        session.revoked_at = datetime.now(UTC)
+        await append_audit(
+            db,
+            action="user.session_revoke",
+            payload={"session_id": str(session.id)},
+            tenant_id=auth.tenant_id,
+            actor_id=auth.user.id,
+        )
+        await db.commit()
+    return {"id": str(session.id), "revoked": True}
 
 
 @router.get("/me")
-async def me(auth: AuthContext = Depends(require_roles(
-    "superadmin", "tenant_admin", "manager", "editor", "client", "viewer"
-))) -> dict:
+async def me(
+    auth: AuthContext = Depends(
+        require_roles("superadmin", "tenant_admin", "manager", "editor", "client", "viewer")
+    ),
+) -> dict:
     return {
         "id": str(auth.user.id),
         "email": auth.user.email,
-        "role": auth.role,
-        "tenant_id": str(auth.tenant_id) if auth.tenant_id else None,
         "mfa_enabled": bool(auth.user.mfa_enabled and auth.user.totp_secret),
         "mfa_pending": bool(auth.user.totp_pending),
     }

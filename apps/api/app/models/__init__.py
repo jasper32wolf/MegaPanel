@@ -91,6 +91,7 @@ class Site(Base):
     version: Mapped[int] = mapped_column(Integer, default=1)
     niche: Mapped[str | None] = mapped_column(String(128), nullable=True)
     indexnow_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lead_token: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
     caddy_configured: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -243,13 +244,13 @@ from app.models.publish import (  # noqa: E402
     SiteBuild,
     SitePage,
 )
-from app.models.leads import AnalyticsEvent, Consent, Lead  # noqa: E402
+from app.models.leads import AnalyticsEvent, Consent, Lead, WebhookDelivery, WebhookDeliveryAttempt  # noqa: E402
 from app.models.ops import ContentDecayEvent, FootprintAudit, SerpCheck, StagingApproval  # noqa: E402
-from app.models.panel import ApiKey, Notification, Plugin, SavedView, WebhookSubscription  # noqa: E402
+from app.models.panel import AuthSession, ApiKey, Notification, Plugin, SavedView, WebhookSubscription  # noqa: E402
 
 __all__ = [
     "AnalyticsEvent",
-    "ApiKey",
+    "AuthSession",
     "AuditLog",
     "BlockKit",
     "BlockKitItem",
@@ -287,6 +288,8 @@ __all__ = [
     "TaxonomyCategory",
     "Tenant",
     "User",
+    "WebhookDelivery",
+    "WebhookDeliveryAttempt",
     "WebhookSubscription",
     "make_hash_class",
 ]

@@ -10,11 +10,19 @@ from fastapi.responses import PlainTextResponse
 from app.api.v1 import api_router
 from app.core.config import get_settings
 from app.core.logging import get_logger, setup_logging
-from app.core.middleware import CorrelationIdMiddleware, SecurityHeadersMiddleware
+from app.core.middleware import CorrelationIdMiddleware, CsrfMiddleware, SecurityHeadersMiddleware
 
 settings = get_settings()
 logger = get_logger("api")
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _docs_url() -> str | None:
+    return None if settings.app_env.lower() == "production" else "/docs"
+
+
+def _openapi_url() -> str | None:
+    return None if settings.app_env.lower() == "production" else "/openapi.json"
 
 
 @asynccontextmanager
@@ -28,8 +36,11 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(
     title="Site Panel API",
     version="0.1.0",
-    description="Programmatic SEO Multi-Client Lead Hub (TZ v5.6)",
+    description="Private single-operator site management API",
     lifespan=lifespan,
+    docs_url=_docs_url(),
+    redoc_url=None if settings.app_env.lower() == "production" else "/redoc",
+    openapi_url=_openapi_url(),
 )
 
 app.add_middleware(
@@ -40,6 +51,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(CsrfMiddleware)
 app.add_middleware(CorrelationIdMiddleware)
 
 app.include_router(api_router)
@@ -47,7 +59,11 @@ app.include_router(api_router)
 
 @app.get("/")
 async def root() -> dict:
-    return {"service": "site-panel-api", "docs": "/docs", "health": "/api/v1/health"}
+    return {
+        "service": "site-panel-api",
+        "docs": _docs_url(),
+        "health": "/api/v1/health",
+    }
 
 
 @app.get("/.well-known/security.txt", response_class=PlainTextResponse)

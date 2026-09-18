@@ -61,6 +61,7 @@ class SiteManifest(BaseModel):
     pages: list[PageManifest] = Field(default_factory=list)
     legal: dict[str, Any] = Field(default_factory=dict)
     contacts: dict[str, Any] = Field(default_factory=dict)
+    context: dict[str, Any] = Field(default_factory=dict)
     version: int = 1
     updated_at: datetime | None = None
 

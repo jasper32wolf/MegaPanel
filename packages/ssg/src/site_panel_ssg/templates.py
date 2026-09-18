@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import re
+from html import escape
 from typing import Any
 
 from site_panel_security import sanitize_html
 from site_panel_shared.manifests import PageManifest, SiteManifest
 
 _PLACEHOLDER = re.compile(r"\{([a-z0-9_]+)\}", re.IGNORECASE)
+_FORBIDDEN_CSS = re.compile(r"(?:@import|expression\s*\(|url\s*\(|-moz-binding|behavior\s*:|</style)", re.I)
 
 
 def fill_slots(template: str, context: dict[str, Any]) -> str:
@@ -19,6 +21,16 @@ def fill_slots(template: str, context: dict[str, Any]) -> str:
     return _PLACEHOLDER.sub(repl, template)
 
 
+def page_url(domain: str, slug: str) -> str:
+    host = domain.strip().strip("/")
+    path = slug.strip("/")
+    return f"https://{host}/" if not path else f"https://{host}/{path}/"
+
+
+def _safe_css(value: str) -> str:
+    return "" if _FORBIDDEN_CSS.search(value) else value
+
+
 def render_page(site: SiteManifest, page: PageManifest, context: dict[str, Any] | None = None) -> str:
     ctx = {
         "domain": site.domain,
@@ -26,28 +38,34 @@ def render_page(site: SiteManifest, page: PageManifest, context: dict[str, Any] 
         **(site.contacts or {}),
         **(context or {}),
     }
-    title = fill_slots(page.title_template, ctx)
-    h1 = fill_slots(page.h1_template, ctx)
-    meta = fill_slots(page.meta_description_template, ctx)
-    unique = page.unique_core or ""
+    title = escape(fill_slots(page.title_template, ctx))
+    h1 = escape(fill_slots(page.h1_template, ctx))
+    meta = escape(fill_slots(page.meta_description_template, ctx), quote=True)
+    unique = escape(page.unique_core or "")
 
     blocks = sorted(page.blocks, key=lambda b: (b.order ^ (page.seed & 0xFF), b.type))
     body_parts: list[str] = []
     css_parts: list[str] = [":root {"]
-    for k, v in site.css_vars.items():
-        css_parts.append(f"  --{k}: {v};")
+    for key, value in site.css_vars.items():
+        css_value = _safe_css(str(value))
+        if css_value:
+            css_parts.append(f"  --{key}: {css_value};")
     css_parts.append("}")
     css_parts.append(
         "body{margin:0;background:var(--sp-bg,var(--bg,#fff));color:var(--sp-text,var(--text,#111));"
         "font-family:var(--sp-font,system-ui,sans-serif);} main{max-width:960px;margin:0 auto;padding:1rem;}"
     )
 
-    has_hero = any(b.type == "hero" for b in blocks)
+    has_hero = any(block.type == "hero" for block in blocks)
     for block in blocks:
-        html = sanitize_html(fill_slots(block.html, {**ctx, "unique_core": unique}))
-        body_parts.append(f'<section class="{block.hash_class}" data-block="{block.type}">{html}</section>')
-        if block.css:
-            css_parts.append(block.css)
+        html = sanitize_html(fill_slots(block.html, {**ctx, "unique_core": page.unique_core or ""}))
+        body_parts.append(
+            f'<section class="{escape(block.hash_class, quote=True)}" '
+            f'data-block="{escape(block.type, quote=True)}">{html}</section>'
+        )
+        css = _safe_css(block.css)
+        if css:
+            css_parts.append(css)
 
     css = "\n".join(css_parts)
     body = "\n".join(body_parts)
@@ -55,13 +73,13 @@ def render_page(site: SiteManifest, page: PageManifest, context: dict[str, Any] 
     unique_html = "" if has_hero or not unique else f'<p class="unique-core">{unique}</p>'
 
     return f"""<!DOCTYPE html>
-<html lang="{site.locale}">
+<html lang="{escape(site.locale, quote=True)}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{title}</title>
   <meta name="description" content="{meta}">
-  <link rel="canonical" href="https://{site.domain}/{page.slug.strip('/')}/">
+  <link rel="canonical" href="{escape(page_url(site.domain, page.slug), quote=True)}">
   <style>{css}</style>
 </head>
 <body>

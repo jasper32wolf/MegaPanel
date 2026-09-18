@@ -1,0 +1,49 @@
+{
+  email {$CADDY_EMAIL}
+  # Bound to the Docker network only: port 2019 is deliberately not published on the host.
+  admin 0.0.0.0:2019
+}
+
+# The panel uses relative /api calls. Keeping this proxy on the panel origin
+# avoids exposing API :8000 and reduces CORS surface for the admin UI.
+{$PANEL_DOMAIN} {
+  handle /api/* {
+    reverse_proxy api:8000
+  }
+
+  handle {
+    reverse_proxy panel:80
+  }
+
+  encode zstd gzip
+  header {
+    X-Content-Type-Options nosniff
+    Referrer-Policy strict-origin-when-cross-origin
+    Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    X-Frame-Options DENY
+  }
+}
+
+{$API_DOMAIN} {
+  reverse_proxy api:8000
+  encode zstd gzip
+  header {
+    X-Content-Type-Options nosniff
+    Referrer-Policy strict-origin-when-cross-origin
+    Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    X-Frame-Options DENY
+  }
+}
+
+# Client-site vhosts are added by the Caddy Admin API. This fallback handles
+# static content before a hostname has an explicit vhost and never exposes the
+# admin panel or API directly.
+:80 {
+  root * /srv/sites
+  encode zstd gzip
+  file_server
+  header {
+    X-Content-Type-Options nosniff
+    Referrer-Policy strict-origin-when-cross-origin
+  }
+}

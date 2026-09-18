@@ -1,0 +1,196 @@
+name: Deploy production
+
+on:
+  workflow_run:
+    workflows: [ci]
+    branches: [main]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: "Green CI commit from main to deploy (40 or 64 lowercase hexadecimal chars)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  resolve-release:
+    name: Resolve verified release
+    runs-on: ubuntu-latest
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main') }}
+    outputs:
+      release_sha: ${{ steps.release.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - id: release
+        name: Verify release provenance
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          WORKFLOW_SHA: ${{ github.event.workflow_run.head_sha }}
+          INPUT_SHA: ${{ inputs.release_sha }}
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -Eeuo pipefail
+          if [[ "$EVENT_NAME" == "workflow_run" ]]; then
+            sha="$WORKFLOW_SHA"
+          else
+            sha="$INPUT_SHA"
+          fi
+          [[ "$sha" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]]
+          git merge-base --is-ancestor "$sha" origin/main
+
+          # A manual deployment may use an older good release, but never an
+          # arbitrary commit that has not passed the repository CI workflow.
+          runs="$(curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$sha&status=completed&per_page=100")"
+          CI_RUNS="$runs" python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          payload = json.loads(os.environ["CI_RUNS"])
+          if not any(run.get("conclusion") == "success" for run in payload.get("workflow_runs", [])):
+              sys.exit("The requested commit has no successful ci.yml workflow run")
+          PY
+          printf 'sha=%s\n' "$sha" >>"$GITHUB_OUTPUT"
+
+  package-release:
+    name: Package immutable release
+    needs: resolve-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-release.outputs.release_sha }}
+          fetch-depth: 1
+
+      - name: Create release archive
+        env:
+          RELEASE_SHA: ${{ needs.resolve-release.outputs.release_sha }}
+        run: |
+          set -Eeuo pipefail
+          printf 'commit=%s\n' "$RELEASE_SHA" > .site-panel-release
+          tar \
+            --exclude-vcs \
+            --exclude=.env \
+            --exclude='.env.*' \
+            --exclude=.claude \
+            --exclude=.roo \
+            --exclude=.venv \
+            --exclude=venv \
+            --exclude=node_modules \
+            --exclude='*/node_modules' \
+            --exclude=data \
+            --exclude=uploads \
+            --exclude=sites \
+            --exclude='*.log' \
+            -czf "site-panel-${RELEASE_SHA}.tar.gz" .
+          sha256sum "site-panel-${RELEASE_SHA}.tar.gz" > release-archive.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: site-panel-release-${{ needs.resolve-release.outputs.release_sha }}
+          path: |
+            site-panel-*.tar.gz
+            release-archive.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  deploy:
+    name: Activate production release
+    needs: [resolve-release, package-release]
+    runs-on: ubuntu-latest
+    environment: production-deploy
+    timeout-minutes: 30
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: site-panel-release-${{ needs.resolve-release.outputs.release_sha }}
+
+      - name: Configure pinned SSH host key
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          test -s ~/.ssh/id_ed25519
+          test -s ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+
+      - id: activate
+        name: Upload and activate verified release
+        env:
+          RELEASE_SHA: ${{ needs.resolve-release.outputs.release_sha }}
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
+          DEPLOY_ROOT: ${{ vars.DEPLOY_ROOT || '/opt/site-panel' }}
+        run: |
+          set -Eeuo pipefail
+          : "${DEPLOY_HOST:?Set DEPLOY_HOST as a production-deploy environment variable}"
+          : "${DEPLOY_USER:?Set DEPLOY_USER as a production-deploy environment variable}"
+          archive="site-panel-${RELEASE_SHA}.tar.gz"
+          sha256sum -c release-archive.sha256
+          # -O forces legacy SCP. The VPS forced-command gateway permits only
+          # this exact incoming release filename, never arbitrary file writes.
+          scp -O \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -o IdentitiesOnly=yes \
+            -P "$DEPLOY_PORT" \
+            "$archive" \
+            "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_ROOT/incoming/$RELEASE_SHA.tar.gz"
+          output="$(ssh \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -o IdentitiesOnly=yes \
+            -p "$DEPLOY_PORT" \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "site-panel-release deploy $RELEASE_SHA" 2>&1)" || {
+              printf '%s\n' "$output"
+              exit 1
+            }
+          printf '%s\n' "$output"
+          {
+            echo 'remote_output<<EOF'
+            printf '%s\n' "$output"
+            echo 'EOF'
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Publish deployment summary
+        env:
+          RELEASE_SHA: ${{ needs.resolve-release.outputs.release_sha }}
+          REMOTE_OUTPUT: ${{ steps.activate.outputs.remote_output }}
+        run: |
+          {
+            echo "## Production deployment"
+            echo
+            echo "- Release: \`$RELEASE_SHA\`"
+            echo "- Source: verified successful \`ci.yml\` run on \`main\`"
+            echo "- Database restore: not permitted by this workflow"
+            echo
+            echo '```text'
+            printf '%s\n' "$REMOTE_OUTPUT"
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"

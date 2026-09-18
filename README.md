@@ -3,7 +3,10 @@
 Простыми словами: это **панель**, в которой агентство создаёт много сайтов услуг (ремонт, клининг и т.д.), собирает их в готовый HTML и принимает заявки (лиды).
 
 Полное ТЗ: [`Промпт для генерации проекта.md`](./Промпт%20для%20генерации%20проекта.md) (версия 5.6).  
-Живой статус и карта папок: [`docs/ХОД-РАБОТ.md`](./docs/ХОД-РАБОТ.md).
+Единый паспорт проекта — промпт, структура, аудит, изменения, ограничения и план: [`docs/ХОД-РАБОТ.md`](./docs/ХОД-РАБОТ.md).
+Предлагаемое развитие операторского продукта — [`docs/ROADMAP-OPERATOR-PRODUCT.md`](./docs/ROADMAP-OPERATOR-PRODUCT.md); это не перечень уже реализованных функций.
+
+> **Текущий статус:** single-user release candidate. API unit-тесты и production-сборка панели проходят; безопасный доступ, домены, лиды и webhook delivery реализованы. Docker/VPS, PostgreSQL/Redis worker и browser smoke ещё не были проверены в этом окружении, поэтому перед production-развёртыванием выполните release gate из единого паспорта. План проектов/страниц, контролируемая генерация и проверка качества, обратная связь по лидам и расширенный контур надёжности описаны только в [предлагаемой дорожной карте](./docs/ROADMAP-OPERATOR-PRODUCT.md).
 
 ---
 
@@ -13,37 +16,44 @@
 |---------------|----------|
 | Компьютер дома / в офисе (Windows, Mac, Linux) | **[`README-LOCAL.md`](./README-LOCAL.md)** ← начните здесь |
 | Арендованный сервер (VPS) в интернете | **[`README-VPS.md`](./README-VPS.md)** |
-| Нужно понять «что уже сделано» и структуру проекта | [`docs/ХОД-РАБОТ.md`](./docs/ХОД-РАБОТ.md) |
-| Краткий статус фаз | [`docs/PLAN-MULTIPANEL.md`](./docs/PLAN-MULTIPANEL.md) |
+| Нужен единый документ: промпт, структура, аудит, изменения и план | [`docs/ХОД-РАБОТ.md`](./docs/ХОД-РАБОТ.md) |
+| Предлагаемое развитие операторского продукта | [`docs/ROADMAP-OPERATOR-PRODUCT.md`](./docs/ROADMAP-OPERATOR-PRODUCT.md) — не текущий статус |
+| Краткий индекс текущего статуса и дальнейшей работы | [`docs/PLAN-MULTIPANEL.md`](./docs/PLAN-MULTIPANEL.md) |
 | Восстановление после аварии | [`docs/runbooks/disaster-recovery.md`](./docs/runbooks/disaster-recovery.md) |
+| GitHub-обновления и rollback | [`docs/runbooks/github-deploy-recovery.md`](./docs/runbooks/github-deploy-recovery.md) |
 
 ---
 
 ## Самая быстрая установка (кратко)
 
-### Windows
+> Это текущий путь для разработки, а не подтверждённый clean-install сценарий: локальная миграция Alembic и DB/RLS flow требуют исправления. Диагностика и актуальный статус — в [`docs/ХОД-РАБОТ.md`](./docs/ХОД-РАБОТ.md#6-установка-и-режимы-запуска-фактический-статус).
+
+### Windows (самый простой путь)
 
 1. Установите **Python 3.12+**, **Node.js 20+**, желательно **Docker Desktop**.  
-2. Откройте папку проекта в PowerShell.  
-3. Выполните:
+2. Дважды щёлкните файл **`УСТАНОВКА.cmd`** в корне проекта (или `INSTALL.cmd`).
+3. В меню нажмите **`1`** — экспресс-установка.
+4. Создайте оператора локально: `python scripts\bootstrap_operator.py --email you@example.com`
+5. Откройте http://127.0.0.1:5173 и войдите с созданными данными.
+
+Без меню (как раньше):
 
 ```powershell
 .\scripts\install.ps1
 ```
 
-4. Откройте в браузере: http://127.0.0.1:5173  
-5. Войдите: **`admin@demo.local`** / **`DemoPass123!`**
-
-### Linux / Mac
+### Linux / Mac / VPS
 
 ```bash
-chmod +x scripts/*.sh
-./scripts/install.sh
+chmod +x УСТАНОВКА.sh scripts/*.sh
+./УСТАНОВКА.sh
 ```
 
-Те же адрес и логин, что выше.
+В меню: `1` (локально) или `2` → режим `vps` для сервера.
 
-Подробности, ошибки, ручной режим, FAQ — только в **README-LOCAL** / **README-VPS**.
+Неинтерактивно: `python3 scripts/setup_wizard.py --express --yes`
+
+Подробности, ошибки, ручной режим, FAQ — в **README-LOCAL** / **README-VPS**.
 
 ---
 
@@ -56,7 +66,7 @@ chmod +x scripts/*.sh
 | Документация API (Swagger) | http://127.0.0.1:8000/docs |
 | Проверка «жив ли сервер» | http://127.0.0.1:8000/api/v1/health |
 
-Демо-логин создаётся скриптом `seed` и **нельзя** оставлять на публичном сервере.
+После установки создайте единственного оператора локальной командой `scripts/bootstrap_operator.py`; пароль не передаётся через HTTP и не записывается в документацию.
 
 ---
 
@@ -73,8 +83,8 @@ chmod +x scripts/*.sh
 **Где пароли и ключи?**  
 В файле `.env` в корне. **Не** коммитьте и не публикуйте. На VPS — `chmod 600 .env`.
 
-**Какой логин после локальной установки?**  
-`admin@demo.local` / `DemoPass123!` — **только локально/staging**. На публичном VPS demo запрещён.
+**Какой логин после установки?**
+Создайте его локальной командой: `python scripts/bootstrap_operator.py --email you@example.com`. Пароль будет запрошен интерактивно.
 
 **Как остановить локально?**
 
@@ -97,15 +107,17 @@ chmod +x scripts/*.sh
 
 ## Статус (кратко)
 
-| Блок | Статус |
-|------|--------|
-| Установка одной командой | есть |
-| Auth, сайты, SSG, лиды, блоки | есть |
-| Редизайн панели (UI-10) | есть |
-| Библиотека блоков (BLK-11) | есть |
-| Живой SERP / полный FIAS / конструктор блоков | ещё нет / частично |
+| Блок | Фактический статус |
+|------|--------------------|
+| Мастер и install-скрипты | no-demo путь и bootstrap оператора реализованы; clean install на новой машине ещё не подтверждён |
+| API, модели, миграции | Alembic head: **`0015_webhook_delivery`**; PostgreSQL/RLS end-to-end ещё не подтверждён |
+| Python tests / panel build | **146 passed** / production build **OK** (2026-09-17) |
+| Безопасность доступа | public registration, tenant/API-key/plugin endpoints закрыты; TOTP и отзыв сессий доступны в панели |
+| Домены, лиды и delivery | DNS/TLS states, redirects, encrypted lead inbox, per-site encrypted webhook settings и durable retries/DLQ реализованы; public deployment smoke не выполнен |
+| Docker / VPS / Caddy / worker | конфигурация и документы подготовлены; проверка в Docker/VPS blocked локальной средой |
+| SERP / FIAS / IaC | mock, stub или post-release scope; не входят в подтверждённый release workflow |
 
-Миграции БД: до **`0011_block_kits`**.
+Миграционный head в коде: **`0015_webhook_delivery`**. Full-repository Ruff пока не чист из-за legacy backlog; новые route-regression файлы проходят targeted checks.
 
 ---
 

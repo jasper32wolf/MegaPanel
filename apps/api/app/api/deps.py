@@ -3,15 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.core.security import decode_token
+from app.core.security import ACCESS_COOKIE_NAME, decode_token
 from app.db.session import get_db
 from app.models import User
 from app.services.token_blacklist import is_blacklisted
+from fastapi import Depends, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -21,16 +20,33 @@ class AuthContext:
     user: User
     tenant_id: UUID | None
     role: str
+    session_id: UUID | None = None
+
+
+async def require_single_operator(db: AsyncSession, user: User) -> None:
+    operator_ids = list(
+        (
+            await db.execute(
+                select(User.id).where(User.role == "superadmin", User.is_active.is_(True)).limit(2)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if len(operator_ids) != 1 or operator_ids[0] != user.id:
+        raise HTTPException(status_code=403, detail="Single operator access required")
 
 
 async def get_current_user(
+    request: Request,
     creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
     db: AsyncSession = Depends(get_db),
 ) -> AuthContext:
-    if not creds:
+    token = creds.credentials if creds else request.cookies.get(ACCESS_COOKIE_NAME)
+    if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     try:
-        payload = decode_token(creds.credentials)
+        payload = decode_token(token)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=401, detail="Invalid token") from exc
     if payload.get("type") != "access":
@@ -43,9 +59,12 @@ async def get_current_user(
     user = result.scalar_one_or_none()
     if not user or not user.is_active:
         raise HTTPException(status_code=401, detail="User inactive")
+    await require_single_operator(db, user)
     tenant_raw = payload.get("tenant_id")
     tenant_id = UUID(tenant_raw) if tenant_raw else user.tenant_id
-    return AuthContext(user=user, tenant_id=tenant_id, role=user.role)
+    session_raw = payload.get("sid")
+    session_id = UUID(session_raw) if session_raw else None
+    return AuthContext(user=user, tenant_id=tenant_id, role=user.role, session_id=session_id)
 
 
 def require_roles(*roles: str):

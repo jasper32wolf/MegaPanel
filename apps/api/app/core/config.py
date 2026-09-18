@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from urllib.parse import urlparse
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,6 +23,10 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     caddy_admin_url: str = "http://localhost:2019"
     sites_root: str = "./data/sites"
+    caddy_sites_root: str = "./data/sites"
+    uploads_root: str = "./data/uploads"
+    dsar_exports_root: str = "./data/dsar"
+    dsar_export_ttl_hours: int = 24
 
     sentry_dsn: str = ""
     log_level: str = "INFO"
@@ -41,6 +47,42 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @model_validator(mode="after")
+    def validate_production_settings(self) -> Settings:
+        if self.app_env.lower() != "production":
+            return self
+
+        secrets = {
+            "APP_SECRET_KEY": self.app_secret_key,
+            "APP_PEPPER": self.app_pepper,
+            "BLIND_INDEX_PEPPER": self.blind_index_pepper,
+            "FIELD_ENCRYPTION_KEY": self.field_encryption_key,
+        }
+        invalid = [
+            name
+            for name, value in secrets.items()
+            if len(value) < 32
+            or any(marker in value.lower() for marker in ("change-me", "dev-secret", "dev-pepper"))
+        ]
+        if invalid:
+            raise ValueError(f"Production secrets are missing or unsafe: {', '.join(invalid)}")
+
+        public_urls = {
+            "PANEL_PUBLIC_URL": self.panel_public_url,
+            "API_PUBLIC_URL": self.api_public_url,
+        }
+        invalid_urls = [
+            name
+            for name, value in public_urls.items()
+            if urlparse(value).scheme != "https" or not urlparse(value).netloc
+        ]
+        if invalid_urls:
+            raise ValueError(f"Production URLs must use HTTPS: {', '.join(invalid_urls)}")
+
+        if self.panel_public_url not in self.cors_origin_list:
+            raise ValueError("CORS_ORIGINS must include PANEL_PUBLIC_URL in production")
+        return self
 
 
 @lru_cache

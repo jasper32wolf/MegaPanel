@@ -16,7 +16,7 @@ if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
   docker compose -f infra/docker/docker-compose.deps.yml up -d >/dev/null
 fi
 
-export PYTHONPATH="$ROOT/apps/api:$ROOT/apps/worker:$ROOT/packages/shared/src:$ROOT/packages/security/src:$ROOT/packages/ssg/src"
+export PYTHONPATH="$ROOT/apps/api:$ROOT/packages/shared/src:$ROOT/packages/security/src:$ROOT/packages/ssg/src"
 export HTTP_PROXY= HTTPS_PROXY= NO_PROXY="*"
 
 start_one() {
@@ -32,7 +32,7 @@ start_one() {
 }
 
 start_one api uvicorn app.main:app --app-dir apps/api --host 127.0.0.1 --port 8000 --reload
-start_one worker bash -lc "cd \"$ROOT/apps/worker\" && exec arq app.worker.WorkerSettings"
+start_one worker arq app.worker.WorkerSettings
 start_one panel bash -lc "cd \"$ROOT/apps/panel\" && exec npm run dev -- --host 127.0.0.1 --port 5173"
 
 ok=0
@@ -52,5 +52,5 @@ fi
 echo
 echo "Panel: http://127.0.0.1:5173"
 echo "API:   http://127.0.0.1:8000/docs"
-echo "Login: admin@demo.local / DemoPass123!"
+echo "Bootstrap operator: python3 scripts/bootstrap_operator.py --email you@example.com"
 echo "Stop:  ./scripts/stop.sh"

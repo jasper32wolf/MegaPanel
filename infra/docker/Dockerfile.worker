@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
 RUN groupadd -g 10001 app && useradd -u 10001 -g app -m app \
- && mkdir -p /app/dist /tmp && chown -R app:app /app
+ && mkdir -p /app/dist /app/dsar /tmp && chown -R app:app /app
 
 WORKDIR /app
 
@@ -9,16 +9,16 @@ COPY packages/shared /app/packages/shared
 COPY packages/security /app/packages/security
 COPY packages/ssg /app/packages/ssg
 COPY packages/block-library /app/packages/block-library
-COPY apps/worker /app/apps/worker
+COPY apps/api /app/apps/api
 
 RUN pip install --no-cache-dir \
       -e /app/packages/shared \
       -e /app/packages/security \
       -e /app/packages/ssg \
       -e /app/packages/block-library \
-      -e /app/apps/worker
+      -e /app/apps/api
 
 USER app
-WORKDIR /app/apps/worker
-ENV PYTHONPATH=/app/apps/worker
+WORKDIR /app/apps/api
+ENV PYTHONPATH=/app/apps/api
 CMD ["arq", "app.worker.WorkerSettings"]

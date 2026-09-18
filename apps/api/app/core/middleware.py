@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import secrets
+
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 
 from app.core.logging import new_correlation_id
+from app.core.security import ACCESS_COOKIE_NAME, CSRF_COOKIE_NAME
 
 
 class CorrelationIdMiddleware(BaseHTTPMiddleware):
@@ -14,6 +17,26 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         response.headers["X-Correlation-ID"] = cid
         return response
+
+
+class CsrfMiddleware(BaseHTTPMiddleware):
+    _safe_methods = {"GET", "HEAD", "OPTIONS"}
+    _exempt_paths = {"/api/v1/auth/login", "/api/v1/auth/refresh"}
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        if (
+            request.method in self._safe_methods
+            or not request.url.path.startswith("/api/v1/")
+            or request.url.path in self._exempt_paths
+            or ACCESS_COOKIE_NAME not in request.cookies
+        ):
+            return await call_next(request)
+
+        cookie_token = request.cookies.get(CSRF_COOKIE_NAME, "")
+        header_token = request.headers.get("X-CSRF-Token", "")
+        if not cookie_token or not header_token or not secrets.compare_digest(cookie_token, header_token):
+            return JSONResponse({"detail": "CSRF validation failed"}, status_code=403)
+        return await call_next(request)
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):

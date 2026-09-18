@@ -58,9 +58,9 @@ export function BlocksPage() {
         { method: "POST" },
         token,
       );
-      setSyncMsg(`Синхронизировано ${r.synced} блоков (${r.kit_key} @ ${r.library_version})`);
+      setSyncMsg(`Подготовлено ${r.synced} блоков (${r.kit_key} @ ${r.library_version})`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Sync failed");
+      setError(e instanceof Error ? e.message : "Не удалось подготовить комплект");
     } finally {
       setBusy(false);
     }
@@ -108,7 +108,7 @@ body{margin:0;font-family:system-ui,sans-serif;background:var(--sp-bg,#fff);colo
                 Превью
               </button>
               <button className="btn" type="button" disabled={busy} onClick={() => syncKit(kit.key)}>
-                Sync в tenant
+                Подготовить комплект
               </button>
             </div>
             {selected === kit.key && <StatusPill tone="ok">выбран</StatusPill>}

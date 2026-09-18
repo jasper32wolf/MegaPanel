@@ -23,7 +23,6 @@ if (-not (Test-Path ".venv")) {
   -e packages/ssg `
   -e packages/block-library `
   -e apps/api `
-  -e apps/worker `
   pytest pytest-asyncio ruff
 
 & .\.venv\Scripts\python.exe scripts\prepare_env.py --mode local

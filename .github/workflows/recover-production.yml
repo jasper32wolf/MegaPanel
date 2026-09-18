@@ -1,0 +1,178 @@
+name: Recover production
+
+on:
+  schedule:
+    # GitHub scheduling is best effort, not a replacement for server monitoring.
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: "Safe action to run on the production release manager"
+        required: true
+        default: status
+        type: choice
+        options:
+          - status
+          - restart
+          - rollback
+          - recover
+          - restore
+      snapshot:
+        description: "Required only for restore: explicit restic snapshot ID"
+        required: false
+        type: string
+      confirmation:
+        description: "For restore only, type RESTORE"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-recovery
+  cancel-in-progress: false
+
+jobs:
+  select-operation:
+    name: Probe public health or validate manual action
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.select.outputs.should_run }}
+      operation: ${{ steps.select.outputs.operation }}
+      snapshot: ${{ steps.select.outputs.snapshot }}
+      source: ${{ steps.select.outputs.source }}
+    steps:
+      - id: select
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REQUESTED_OPERATION: ${{ inputs.operation }}
+          REQUESTED_SNAPSHOT: ${{ inputs.snapshot }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          PUBLIC_HEALTH_URL: ${{ vars.PUBLIC_HEALTH_URL }}
+        run: |
+          set -Eeuo pipefail
+          if [[ "$EVENT_NAME" == "schedule" ]]; then
+            : "${PUBLIC_HEALTH_URL:?Set PUBLIC_HEALTH_URL as a repository variable before enabling scheduled recovery}"
+            if curl --fail --silent --show-error --max-time 15 --retry 1 "$PUBLIC_HEALTH_URL" >/dev/null; then
+              echo 'should_run=false' >>"$GITHUB_OUTPUT"
+              echo 'operation=status' >>"$GITHUB_OUTPUT"
+              echo 'source=scheduled-public-health-ok' >>"$GITHUB_OUTPUT"
+            else
+              # The VPS release manager performs an internal health check before
+              # restarting anything, protecting against DNS/TLS false positives.
+              echo 'should_run=true' >>"$GITHUB_OUTPUT"
+              echo 'operation=recover' >>"$GITHUB_OUTPUT"
+              echo 'source=scheduled-public-health-failed' >>"$GITHUB_OUTPUT"
+            fi
+            exit 0
+          fi
+
+          case "$REQUESTED_OPERATION" in
+            status|restart|rollback|recover)
+              ;;
+            restore)
+              [[ "$CONFIRMATION" == "RESTORE" ]] || {
+                echo "Restore requires confirmation=RESTORE" >&2
+                exit 1
+              }
+              [[ "$REQUESTED_SNAPSHOT" =~ ^[0-9a-f]{8,64}$ ]] || {
+                echo "Restore requires an explicit hexadecimal restic snapshot ID" >&2
+                exit 1
+              }
+              ;;
+            *)
+              echo "Unsupported operation" >&2
+              exit 1
+              ;;
+          esac
+          echo 'should_run=true' >>"$GITHUB_OUTPUT"
+          echo "operation=$REQUESTED_OPERATION" >>"$GITHUB_OUTPUT"
+          echo "snapshot=$REQUESTED_SNAPSHOT" >>"$GITHUB_OUTPUT"
+          echo 'source=manual' >>"$GITHUB_OUTPUT"
+
+  recover:
+    name: Execute bounded recovery action
+    needs: select-operation
+    if: ${{ needs.select-operation.outputs.should_run == 'true' }}
+    runs-on: ubuntu-latest
+    environment: production-recovery
+    timeout-minutes: 30
+    steps:
+      - name: Configure pinned recovery SSH key
+        env:
+          RECOVERY_SSH_KEY: ${{ secrets.RECOVERY_SSH_KEY }}
+          RECOVERY_KNOWN_HOSTS: ${{ secrets.RECOVERY_KNOWN_HOSTS }}
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "$RECOVERY_SSH_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$RECOVERY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          test -s ~/.ssh/id_ed25519
+          test -s ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+
+      - id: remote
+        name: Run restricted remote operation
+        env:
+          OPERATION: ${{ needs.select-operation.outputs.operation }}
+          SNAPSHOT: ${{ needs.select-operation.outputs.snapshot }}
+          RECOVERY_HOST: ${{ vars.RECOVERY_HOST }}
+          RECOVERY_USER: ${{ vars.RECOVERY_USER }}
+          RECOVERY_PORT: ${{ vars.RECOVERY_PORT || '22' }}
+        run: |
+          set -Eeuo pipefail
+          : "${RECOVERY_HOST:?Set RECOVERY_HOST as a production-recovery environment variable}"
+          : "${RECOVERY_USER:?Set RECOVERY_USER as a production-recovery environment variable}"
+          case "$OPERATION" in
+            status) command='site-panel-release status' ;;
+            restart) command='site-panel-release restart' ;;
+            rollback) command='site-panel-release rollback' ;;
+            recover) command='site-panel-release auto-recover' ;;
+            restore) command="site-panel-release restore $SNAPSHOT --confirm-restore" ;;
+            *) echo "Unsupported operation" >&2; exit 1 ;;
+          esac
+          output="$(ssh \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -o IdentitiesOnly=yes \
+            -p "$RECOVERY_PORT" \
+            "$RECOVERY_USER@$RECOVERY_HOST" \
+            "$command" 2>&1)" || {
+              printf '%s\n' "$output"
+              exit 1
+            }
+          printf '%s\n' "$output"
+          {
+            echo 'remote_output<<EOF'
+            printf '%s\n' "$output"
+            echo 'EOF'
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Publish recovery summary
+        if: always()
+        env:
+          SOURCE: ${{ needs.select-operation.outputs.source }}
+          OPERATION: ${{ needs.select-operation.outputs.operation }}
+          REMOTE_OUTPUT: ${{ steps.remote.outputs.remote_output }}
+        run: |
+          {
+            echo "## Production recovery"
+            echo
+            echo "- Source: \`$SOURCE\`"
+            echo "- Operation: \`$OPERATION\`"
+            echo "- Automatic database restore: never allowed"
+            echo
+            echo '```text'
+            printf '%s\n' "${REMOTE_OUTPUT:-remote command did not produce a result}"
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+
+  public-health-ok:
+    name: Record healthy scheduled probe
+    needs: select-operation
+    if: ${{ needs.select-operation.outputs.should_run == 'false' }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Public health probe succeeded; no remote action was taken." >>"$GITHUB_STEP_SUMMARY"

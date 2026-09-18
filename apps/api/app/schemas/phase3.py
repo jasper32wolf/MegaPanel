@@ -7,7 +7,9 @@ from pydantic import BaseModel, Field, HttpUrl
 
 
 class BlockCreate(BaseModel):
-    type: str = Field(pattern=r"^(hero|services_grid|pricing_table|calculator|faq|lead_form|contacts|custom)$")
+    type: str = Field(
+        pattern=r"^(hero|services_grid|pricing_table|calculator|faq|lead_form|contacts|custom)$"
+    )
     name: str = Field(min_length=2, max_length=160)
     html: str = Field(min_length=1)
     css: str = ""
@@ -61,7 +63,9 @@ class MediaOut(BaseModel):
     tenant_id: UUID
     path: str
     content_type: str
+    source: str | None
     license: str | None
+    author: str | None
     phash: str | None
     normalized: bool
     tags: list

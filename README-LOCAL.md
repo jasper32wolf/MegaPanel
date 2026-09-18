@@ -1,12 +1,15 @@
 # Установка и работа на своём компьютере (локально)
 
-Этот файл — **полная инструкция «от нуля»** для человека, который не обязан быть DevOps.  
+Этот файл — **пошаговая инструкция «от нуля»** для локальной среды разработки.
 Читайте сверху вниз. Если что-то сломалось — сразу в раздел **«Вопросы и ответы»** в конце.
+
+> **Статус проверки 2026-09-17:** 146 API-тестов и production build панели проходят. Alembic graph достигает `0015_webhook_delivery`; безопасный single-active-operator access, TOTP login, формы лидов, encrypted webhook delivery, safe bulk contacts и production Compose isolation покрыты unit-регрессиями. Полный clean install с PostgreSQL/Redis, Docker и browser smoke пока не подтверждён в этой среде. Актуальные границы и release gate: [`docs/ХОД-РАБОТ.md`](./docs/ХОД-РАБОТ.md#6-установка-и-режимы-запуска-фактический-статус).
 
 Связанные файлы:
 
 - Сервер в интернете → [`README-VPS.md`](./README-VPS.md)  
-- Статус проекта → [`docs/ХОД-РАБОТ.md`](./docs/ХОД-РАБОТ.md)  
+- Единый паспорт: промпт, структура, аудит и план → [`docs/ХОД-РАБОТ.md`](./docs/ХОД-РАБОТ.md)
+- Предлагаемое развитие операторского продукта (не текущие функции) → [`docs/ROADMAP-OPERATOR-PRODUCT.md`](./docs/ROADMAP-OPERATOR-PRODUCT.md)
 - Краткий обзор → [`README.md`](./README.md)
 
 ---
@@ -20,11 +23,11 @@
 | **PostgreSQL** | База данных (хранит сайты, пользователей, лиды) | 5432 |
 | **Redis** | Очередь фоновых задач | 6379 |
 | **API** | «Мозг» панели (отвечает на запросы) | 8000 |
-| **Worker** | Фоновый работник (drip, DSAR) | — |
+| **Worker** | Фоновый работник для доставки лидов и повторов webhook | — |
 | **Panel** | Красивый сайт админки в браузере | 5173 |
 | **Caddy** | Веб-сервер для готовых сайтов (часто через Docker) | 80 / 2019 |
 
-**Рекомендуемый способ на Windows:** скрипт `install.ps1` сам поднимет Postgres+Redis в Docker, поставит Python-пакеты, прогонит тесты, создаст демо-данные и запустит API + worker + panel.
+**Предусмотренный путь на Windows:** `install.ps1` поднимает Postgres+Redis в Docker, ставит Python-пакеты, применяет миграции и запускает API + worker + panel. После установки создайте единственного оператора локальной командой `scripts/bootstrap_operator.py`.
 
 ---
 
@@ -105,9 +108,32 @@ Set-Location -LiteralPath "e:\РАБОТА\ПАНЕЛЬ ДЛЯ ГЕНЕРАЦИ�
 
 ---
 
-## 3. Установка одной командой (рекомендуется)
+## 3. Автоматизированная установка (текущий development-путь)
 
-### 3.1. Обычный режим (лучший для Windows)
+### 3.0. Самый простой способ — мастер с меню
+
+**Windows:** дважды щёлкните **`УСТАНОВКА.cmd`** (или `INSTALL.cmd`) в корне проекта.
+
+**Linux / macOS:**
+
+```bash
+chmod +x УСТАНОВКА.sh scripts/*.sh
+./УСТАНОВКА.sh
+```
+
+В меню:
+
+| Клавиша | Что делает |
+|---------|------------|
+| `1` | Экспресс: local + автостарт без demo fixtures |
+| `2` | Настроить режим, seed, тесты, URL для VPS |
+| `3` | Только запустить уже установленное |
+| `4` | Остановить |
+| `0` | Выход |
+
+Без вопросов: `python scripts/setup_wizard.py --express --yes`
+
+### 3.1. Обычный режим без меню (движок)
 
 Убедитесь, что **Docker Desktop запущен**, затем:
 
@@ -116,7 +142,7 @@ Set-Location -LiteralPath "e:\РАБОТА\ПАНЕЛЬ ДЛЯ ГЕНЕРАЦИ�
 .\scripts\install.ps1
 ```
 
-Альтернатива: двойной клик / запуск `scripts\install.cmd`.
+Альтернатива: `scripts\install.cmd --direct` (минуя мастер).
 
 ### 3.2. Что делает скрипт (по шагам)
 
@@ -126,16 +152,16 @@ Set-Location -LiteralPath "e:\РАБОТА\ПАНЕЛЬ ДЛЯ ГЕНЕРАЦИ�
 4. Ждёт, пока порты `5432` и `6379` ответят.  
 5. Создаёт виртуальное окружение `.venv` и ставит пакеты.  
 6. Прогоняет автоматические тесты (pytest).  
-7. Применяет миграции базы (Alembic → head `0011_block_kits`).  
-8. Заполняет демо-данные (`seed_demo.py`).  
-9. Ставит зависимости панели (`npm install` в `apps/panel`).  
+7. Применяет миграции базы (Alembic → актуальный head).
+8. Не создаёт пользователя автоматически; после установки выполните `scripts/bootstrap_operator.py`. Demo fixtures создаются только с `-DemoSeed`.
+9. Ставит зависимости панели (`npm ci` в `apps/panel`).
 10. Запускает API, worker и panel в фоне.
 
-В конце вы увидите примерно:
+После успешного завершения:
 
 ```text
 DONE
-  Login:  admin@demo.local / DemoPass123!
+  Bootstrap operator: python scripts/bootstrap_operator.py --email you@example.com
   API:    http://127.0.0.1:8000/docs
   Panel:  http://127.0.0.1:5173
 ```
@@ -155,8 +181,8 @@ DONE
 # Без тестов (быстрее, но хуже проверка)
 .\scripts\install.ps1 -SkipTests
 
-# Без демо-пользователя
-.\scripts\install.ps1 -SkipSeed
+# Demo fixtures только для явного локального теста
+.\scripts\install.ps1 -DemoSeed
 
 # Явно без Docker (вы сами отвечаете за Postgres/Redis)
 .\scripts\install.ps1 -NoDocker
@@ -175,7 +201,7 @@ chmod +x scripts/*.sh
 ```bash
 ./scripts/install.sh --mode docker
 ./scripts/install.sh --skip-tests --skip-start
-./scripts/install.sh --skip-seed
+./scripts/install.sh --demo # только для явного локального fixture-теста
 ./scripts/install.sh --no-docker
 ```
 
@@ -184,9 +210,13 @@ chmod +x scripts/*.sh
 ## 4. Первый вход в панель
 
 1. Откройте браузер: **http://127.0.0.1:5173**  
-2. Логин:
-   - Email: **`admin@demo.local`**  
-   - Пароль: **`DemoPass123!`**  
+2. До первого входа создайте оператора локально:
+
+   ```powershell
+   python scripts\bootstrap_operator.py --email you@example.com
+   ```
+
+   Скрипт безопасно запросит пароль в терминале. Если это обновление старой установки с уже созданным оператором, выполните ту же команду с тем же email и флагом `--reset-password`: она нормализует единственную учётную запись без смены owner scope.
 3. Если страница не открывается — см. FAQ «Panel не открывается».  
 4. Swagger API: **http://127.0.0.1:8000/docs**
 
@@ -194,9 +224,9 @@ chmod +x scripts/*.sh
 
 1. **Обзор** — статус API и сводка.  
 2. **Сайты** — список, кнопка «Собрать».  
-3. **Блоки** — комплекты шаблонов, «Превью», «Sync в tenant».  
+3. **Блоки** — комплекты шаблонов, «Превью», «Подготовить комплект».
 4. **Онбординг** — пошаговое создание сайта.  
-5. **Лиды / Домены / Ops / Инструменты** — остальные разделы.
+5. **Лиды / Домены / Медиатека / Настройки / Статус** — повседневная работа, безопасность и проверяемые состояния.
 
 ---
 
@@ -307,7 +337,6 @@ python -m pip install --no-build-isolation `
   -e packages/ssg `
   -e packages/block-library `
   -e apps/api `
-  -e apps/worker `
   pytest pytest-asyncio ruff
 ```
 
@@ -361,9 +390,9 @@ $env:PYTHONPATH="apps\api"
 ### Шаг I — worker (третий терминал, желательно)
 
 ```powershell
-$env:PYTHONPATH="apps\api;apps\worker"
-Set-Location apps\worker
-..\..\.venv\Scripts\arq.exe app.worker.WorkerSettings
+$env:PYTHONPATH="apps\api"
+Set-Location -LiteralPath "e:\РАБОТА\ПАНЕЛЬ ДЛЯ ГЕНЕРАЦИИ САЙТОВ"
+.\.venv\Scripts\arq.exe app.worker.WorkerSettings
 ```
 
 Или просто: `.\scripts\start.ps1`.
@@ -371,6 +400,8 @@ Set-Location apps\worker
 ---
 
 ## 8. Полный стек в Docker
+
+> **Сейчас это экспериментальный контур, а не рабочий «всё в контейнерах» сценарий.** Panel не проксирует относительный `/api`, worker-образ не содержит API-код, а пути SSG/Caddy расходятся. См. P0-05…P0-07 в [`docs/ХОД-РАБОТ.md`](./docs/ХОД-РАБОТ.md#p0--блокеры-основного-и-безопасного-сценария).
 
 Если хотите «всё в контейнерах»:
 
@@ -431,10 +462,18 @@ k6 run -e BASE=http://127.0.0.1:8000 infra/k6/leads.js
 
 ### Логин через API
 
+> Для проверки API используйте оператора, созданного через `scripts/bootstrap_operator.py`. Не подставляйте demo credentials в рабочую установку.
+
 ```powershell
-$body = @{ email = "admin@demo.local"; password = "DemoPass123!" } | ConvertTo-Json
-Invoke-RestMethod http://127.0.0.1:8000/api/v1/auth/login -Method POST -Body $body -ContentType "application/json"
+$email = Read-Host "Email оператора"
+$securePassword = Read-Host "Пароль" -AsSecureString
+$password = [System.Net.NetworkCredential]::new("", $securePassword).Password
+$body = @{ email = $email; password = $password } | ConvertTo-Json
+Invoke-WebRequest http://127.0.0.1:8000/api/v1/auth/login -Method POST -Body $body -ContentType "application/json" -SessionVariable session
+$password = $null
 ```
+
+Если TOTP включён, добавьте в `$body` поле `totp_code` с текущим одноразовым кодом.
 
 ---
 
@@ -444,14 +483,14 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/auth/login -Method POST -Body $bo
 
 1. Смотрите комплекты `service-local-v1`, `home-repair-v1`.  
 2. **Превью** — как примерно выглядит набор секций.  
-3. **Sync в tenant** — копирует шаблоны в вашу организацию.  
+3. **Подготовить комплект** — сохраняет выбранную версию блоков для сайтов этого оператора.
 4. Дальше сайты собираются уже с этими блоками (тема чуть меняется на каждый сайт).
 
 Обновление исходников разработчиком:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\generate_block_kits.py
-# затем Sync в UI или POST /api/v1/blocks/kits/{key}/sync
+# затем подготовьте комплект через UI
 ```
 
 ---
@@ -487,6 +526,10 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/auth/login -Method POST -Body $bo
 О: Обычно нет. Используйте `Set-Location -LiteralPath "..."` как в инструкции.
 
 ### Установка и скрипты
+
+**В: Как поставить максимально просто?**
+
+О: Дважды щёлкните **`УСТАНОВКА.cmd`** → клавиша **`1`**. На Linux: `./УСТАНОВКА.sh`.
 
 **В: `install.ps1` пишет, что нельзя выполнить скрипты.**  
 О:
@@ -549,10 +592,10 @@ docker compose -f infra/docker/docker-compose.deps.yml ps
 О: В `.env` в `CORS_ORIGINS` должен быть точный origin, например `http://127.0.0.1:5173` **и/или** `http://localhost:5173`. После правки перезапустите API. В режиме Vite proxy `/api` обычно работает и без CORS.
 
 **В: Логин «Invalid credentials».**  
-О: Сначала выполните seed. Логин именно `admin@demo.local` / `DemoPass123!`. Регистр email важен как в БД (обычно lower).
+О: Проверьте email созданного оператора и пароль. Если это старая установка, выполните `python scripts\bootstrap_operator.py --email you@example.com --reset-password` с тем же email. Demo account существует только после явного `-DemoSeed` и не является стандартным путём.
 
 **В: Просит TOTP / MFA.**  
-О: На демо MFA выключена, пока сами не включите. Если включили и потеряли код — правьте поля `totp_secret` / `mfa_enabled` в таблице `users` (только локально).
+О: При включённом TOTP введите код на странице входа. При утере доступа используйте утверждённую процедуру восстановления, а не редактируйте MFA-поля в БД вручную.
 
 **В: Порт 8000 занят.**  
 О: Запустите uvicorn на другом порту и поменяйте proxy в `apps/panel/vite.config.ts`, либо убейте процесс на 8000.
@@ -582,13 +625,13 @@ docker compose -f infra/docker/docker-compose.deps.yml logs -f postgres
 О: В Postgres, поля зашифрованы. Pepper/ключ — в `.env`.
 
 **В: Что делает Sync блоков?**  
-О: Копирует шаблоны комплекта в вашу организацию (tenant), чтобы ими пользоваться при сборке.
+О: Подготавливает выбранную версию комплекта блоков для сайтов единственного оператора.
 
 **В: Почему превью блоков не идеально совпадает с продакшен-сайтом?**  
 О: Превью — упрощённый снимок. Финальный вид зависит от seed сайта, контента и сборки SSG.
 
 **В: Формы на клиентском HTML бьют в `/api/...` — это заработает на чужом домене?**  
-О: Локально через панель/прокси — да. На реальном домене сайта нужен абсолютный URL API или прокси (это известное ограничение, см. журнал §5).
+О: В сгенерированном сайте форма отправляет данные через same-origin `/api/v1/leads/public`; для опубликованного домена Caddy добавляет этот proxy. Public Docker/Caddy smoke всё ещё обязателен перед production.
 
 ### Безопасность (даже локально)
 
@@ -604,7 +647,7 @@ docker compose -f infra/docker/docker-compose.deps.yml logs -f postgres
 О: [`docs/ХОД-РАБОТ.md`](./docs/ХОД-РАБОТ.md) раздел «Известные ограничения». Не верьте рекламным формулировкам без сверки.
 
 **В: Как обновить проект с диска/git?**  
-О: Обновите файлы → `.\scripts\install.ps1 -SkipStart` или вручную `alembic upgrade head` → `start.ps1`. Если менялись блоки — Sync kits.
+О: Обновите файлы → `./scripts/install.ps1 -SkipStart` или вручную `alembic upgrade head` → `start.ps1`. Если менялись блоки — подготовьте комплект через UI.
 
 **В: Куда писать, что я что-то поменял?**  
 О: В `docs/ХОД-РАБОТ.md` → «Журнал изменений».
@@ -615,10 +658,10 @@ docker compose -f infra/docker/docker-compose.deps.yml logs -f postgres
 
 - [ ] Python 3.12+ и Node 20+ установлены  
 - [ ] Docker Desktop запущен **или** свои Postgres/Redis  
-- [ ] `.\scripts\install.ps1` завершился без ошибки  
+- [ ] `УСТАНОВКА.cmd` → `1` (или `.\scripts\install.ps1`) завершился без ошибки
 - [ ] http://127.0.0.1:8000/api/v1/health отвечает  
 - [ ] http://127.0.0.1:5173 открывается  
-- [ ] Вход `admin@demo.local` / `DemoPass123!` успешен  
+- [ ] Вход созданного оператора успешен
 - [ ] Знаете, как `start` / `stop` и где логи `data/runtime`  
 
-Если все пункты отмечены — локальная среда готова.
+Если все пункты отмечены — локальная среда готова для текущей разработки и unit/UI-проверок. Это не подтверждает PostgreSQL/RLS, Docker/Caddy и lead end-to-end до закрытия P0.

@@ -86,7 +86,6 @@ async def record_finops(
             meta=meta or {},
         )
     )
-    finops.add(str(tid), kind, amount_usd, meta)
 
 
 async def finops_summary(session: AsyncSession, tenant_id: uuid.UUID | str) -> dict:
@@ -99,12 +98,6 @@ async def finops_summary(session: AsyncSession, tenant_id: uuid.UUID | str) -> d
     for row in rows:
         by_kind[row.kind] = by_kind.get(row.kind, 0.0) + float(row.amount_usd)
         total += float(row.amount_usd)
-    # Merge process-local (tests / pre-migration)
-    mem_total = finops.total_for(str(tid))
-    mem_by = finops.by_kind(str(tid))
-    for k, v in mem_by.items():
-        by_kind[k] = by_kind.get(k, 0.0) + v
-    total += mem_total
     return {
         "tenant_id": str(tid),
         "total_usd": round(total, 6),

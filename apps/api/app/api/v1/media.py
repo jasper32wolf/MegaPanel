@@ -3,21 +3,50 @@ from __future__ import annotations
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.api.deps import AuthContext, require_roles
+from app.core.config import get_settings
 from app.db.session import get_db
 from app.models import MediaAsset
 from app.schemas.phase3 import MediaOut
 from app.services.audit import append_audit
-from app.services.media_normalize import save_normalized
+from app.services.media_normalize import average_hash, decode_image, save_normalized
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
+settings = get_settings()
 
 ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 MAX_BYTES = 8 * 1024 * 1024
+
+
+def _asset_out(asset: MediaAsset) -> dict:
+    return {
+        "id": asset.id,
+        "tenant_id": asset.tenant_id,
+        "path": f"/api/v1/media/{asset.id}/file",
+        "content_type": asset.content_type,
+        "source": asset.source,
+        "license": asset.license,
+        "author": asset.author,
+        "phash": asset.phash,
+        "normalized": asset.normalized,
+        "tags": asset.tags,
+    }
+
+
+def _asset_path(asset: MediaAsset) -> Path:
+    root = Path(settings.uploads_root).resolve()
+    path = Path(asset.path).resolve()
+    try:
+        path.relative_to(root)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Media file not found") from exc
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Media file not found")
+    return path
 
 
 @router.post("", response_model=MediaOut, status_code=201)
@@ -26,12 +55,16 @@ async def upload_media(
     license: str = Form("own"),
     source: str = Form(""),
     author: str = Form(""),
-    normalize: bool = Form(True),
+    normalize: bool = Form(False),
     auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor")),
     db: AsyncSession = Depends(get_db),
-) -> MediaAsset:
+) -> dict:
     if not auth.tenant_id:
         raise HTTPException(status_code=403, detail="Tenant required")
+    if normalize and license != "own":
+        raise HTTPException(
+            status_code=400, detail="Normalization is only available for owned media"
+        )
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in ALLOWED_EXT:
         raise HTTPException(status_code=400, detail="Extension not allowed")
@@ -39,25 +72,24 @@ async def upload_media(
     if len(raw) > MAX_BYTES:
         raise HTTPException(status_code=400, detail="File too large")
 
-    out_dir = Path("uploads") / str(auth.tenant_id) / "media"
+    out_dir = Path(settings.uploads_root) / str(auth.tenant_id) / "media"
     name = f"{uuid.uuid4().hex}.webp"
     out_path = out_dir / name
     phash = None
     normalized = False
-    if normalize:
-        phash = save_normalized(raw, out_path, site_salt=str(auth.tenant_id))
-        normalized = True
-    else:
-        from app.services.media_normalize import average_hash
-        from io import BytesIO
-        from PIL import Image
-
-        img = Image.open(BytesIO(raw))
-        phash = average_hash(img)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        if img.mode not in {"RGB", "RGBA"}:
-            img = img.convert("RGB")
-        img.save(out_path, format="WEBP", quality=85)
+    try:
+        if normalize:
+            phash = save_normalized(raw, out_path, site_salt=str(auth.tenant_id))
+            normalized = True
+        else:
+            img = decode_image(raw)
+            phash = average_hash(img)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            if img.mode not in {"RGB", "RGBA"}:
+                img = img.convert("RGB")
+            img.save(out_path, format="WEBP", quality=85)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid image") from exc
 
     asset = MediaAsset(
         tenant_id=auth.tenant_id,
@@ -71,29 +103,48 @@ async def upload_media(
         tags=[],
     )
     db.add(asset)
+    await db.flush()
     await append_audit(
         db,
         action="media.upload",
-        payload={"path": str(out_path), "phash": phash, "license": license},
+        payload={"asset_id": str(asset.id), "phash": phash, "license": license},
         tenant_id=auth.tenant_id,
         actor_id=auth.user.id,
     )
     await db.commit()
     await db.refresh(asset)
-    return asset
+    return _asset_out(asset)
+
+
+@router.get("/{asset_id}/file")
+async def get_media_file(
+    asset_id: uuid.UUID,
+    auth: AuthContext = Depends(
+        require_roles("superadmin", "tenant_admin", "manager", "editor", "viewer")
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> FileResponse:
+    asset = (
+        await db.execute(select(MediaAsset).where(MediaAsset.id == asset_id))
+    ).scalar_one_or_none()
+    if not asset:
+        raise HTTPException(status_code=404, detail="Media not found")
+    if auth.role != "superadmin" and asset.tenant_id != auth.tenant_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return FileResponse(_asset_path(asset), media_type=asset.content_type)
 
 
 @router.get("", response_model=list[MediaOut])
 async def list_media(
-    auth: AuthContext = Depends(require_roles(
-        "superadmin", "tenant_admin", "manager", "editor", "viewer"
-    )),
+    auth: AuthContext = Depends(
+        require_roles("superadmin", "tenant_admin", "manager", "editor", "viewer")
+    ),
     db: AsyncSession = Depends(get_db),
-) -> list[MediaAsset]:
+) -> list[dict]:
     if not auth.tenant_id and auth.role != "superadmin":
         raise HTTPException(status_code=403, detail="Tenant required")
     stmt = select(MediaAsset).order_by(MediaAsset.created_at.desc())
     if auth.role != "superadmin":
         stmt = stmt.where(MediaAsset.tenant_id == auth.tenant_id)
     result = await db.execute(stmt)
-    return list(result.scalars().all())
+    return [_asset_out(asset) for asset in result.scalars().all()]

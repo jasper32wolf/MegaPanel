@@ -1,11 +1,21 @@
-<form id="lead-form" method="post" action="/api/v1/leads/public" style="display:grid;gap:.75rem;max-width:420px;">
+<form
+  id="lead-form"
+  method="post"
+  action="{lead_api_url}"
+  data-site-panel-lead-form
+  data-site-id="{site_id}"
+  data-lead-token="{lead_token}"
+  data-endpoint="{lead_api_url}"
+>
   <h2>Заявка</h2>
   <label>Имя <input name="name" autocomplete="name"></label>
   <label>Телефон <input name="phone" type="tel" required autocomplete="tel"></label>
+  <label>Email <input name="email" type="email" autocomplete="email"></label>
   <label>Комментарий <textarea name="message" rows="3"></textarea></label>
-  <input type="text" name="website" value="" tabindex="-1" autocomplete="off" aria-hidden="true" style="position:absolute;left:-9999px;">
+  <input class="sp-honeypot" type="text" name="website" value="" tabindex="-1" autocomplete="off" aria-hidden="true">
   <input type="hidden" name="form_ts" value="">
-  <label style="font-size:.85rem;"><input type="checkbox" name="consent" required> Согласие на обработку ПДн</label>
+  <label><input type="checkbox" name="consent" required> Согласие на обработку ПДн</label>
   <button class="sp-btn" type="submit">Отправить</button>
-  <p class="sp-muted" style="font-size:.8rem;">Или позвоните: <a href="tel:{phone}">{phone}</a></p>
+  <p class="sp-lead-status" aria-live="polite"></p>
+  <p class="sp-muted">Или позвоните: <a href="tel:{phone}">{phone}</a></p>
 </form>

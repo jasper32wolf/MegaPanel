@@ -1,22 +1,22 @@
 from __future__ import annotations
 
+import secrets
 from pathlib import Path
 from uuid import uuid4
-
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthContext, require_roles
 from app.core.config import get_settings
 from app.db.session import get_db
-from app.models import OnboardingSession, Site, TaxonomyCategory, Tenant
+from app.models import OnboardingSession, Site, TaxonomyCategory
 from app.schemas.phase2 import HealthCheckOut, OnboardingOut, OnboardingStart, OnboardingStep
 from app.services.audit import append_audit
-from app.services.geo import seed_demo_geo, validate_toponym
+from app.services.geo import validate_toponym
 from app.services.morph import city_placeholders, inflect_cases
+from fastapi import APIRouter, Depends, HTTPException
 from site_panel_shared.manifests import PageManifest, SiteManifest
 from site_panel_ssg import SiteBuilder
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
 settings = get_settings()
@@ -60,7 +60,9 @@ async def advance_step(
 ) -> OnboardingSession:
     from uuid import UUID
 
-    result = await db.execute(select(OnboardingSession).where(OnboardingSession.id == UUID(session_id)))
+    result = await db.execute(
+        select(OnboardingSession).where(OnboardingSession.id == UUID(session_id))
+    )
     session = result.scalar_one_or_none()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -76,14 +78,16 @@ async def advance_step(
         if not place:
             raise HTTPException(
                 status_code=400,
-                detail=f"City '{city_name}' not in geo reference — seed demo or import FIAS",
+                detail=f"City '{city_name}' is absent from local geo. Add or import it first.",
             )
         payload["geo_id"] = str(place.id)
         payload["city"] = place.name
         payload["city_forms"] = place.name_forms
 
     if body.step == "template":
-        service = body.payload.get("service") or payload.get("niche") or "Услуги"
+        service = (body.payload.get("service") or payload.get("niche") or "").strip()
+        if not service:
+            raise HTTPException(status_code=400, detail="Service required")
         slug = body.payload.get("slug") or "main-service"
         kit_key = body.payload.get("kit_key") or "service-local-v1"
         cat = TaxonomyCategory(
@@ -110,25 +114,31 @@ async def advance_step(
 
     if body.step == "domain":
         domain = (body.payload.get("domain") or "").lower().strip()
+        phone = (body.payload.get("phone") or "").strip()
         if not domain or "." not in domain:
             raise HTTPException(status_code=400, detail="Valid domain required")
+        if not phone:
+            raise HTTPException(status_code=400, detail="Phone required")
         payload["domain"] = domain
-        payload["phone"] = body.payload.get("phone", "+7 (900) 000-00-00")
+        payload["phone"] = phone
 
     if body.step == "build":
-        domain = payload.get("domain")
-        city = payload.get("city", "Москва")
-        service = payload.get("service", "Услуги")
-        kit_key = payload.get("kit_key") or "service-local-v1"
-        if not domain:
-            raise HTTPException(status_code=400, detail="Complete domain step first")
+        required = ("domain", "city", "service", "kit_key", "phone")
+        missing = [key for key in required if not payload.get(key)]
+        if missing:
+            raise HTTPException(
+                status_code=400, detail=f"Complete required steps: {', '.join(missing)}"
+            )
+        domain = payload["domain"]
+        city = payload["city"]
+        service = payload["service"]
+        kit_key = payload["kit_key"]
         forms = payload.get("city_forms") or inflect_cases(city)
         ctx = {
             **city_placeholders(city, forms),
             "service": service,
-            "modifier": payload.get("modifier") or "Срочный",
-            "phone": payload.get("phone", ""),
-            "price": "от 990 ₽",
+            "modifier": payload.get("modifier") or "",
+            "phone": payload["phone"],
         }
         site_id = uuid4()
         from app.services.block_library import instantiate_kit_for_site
@@ -151,7 +161,8 @@ async def advance_step(
             domain=domain,
             css_vars=css_vars,
             pages=[page],
-            contacts={"phone": payload.get("phone", "")},
+            contacts={"phone": payload["phone"]},
+            context=ctx,
             legal={"org": domain, "email": f"hello@{domain}"},
         )
         site = Site(
@@ -161,9 +172,12 @@ async def advance_step(
             niche=payload.get("niche"),
             manifest=manifest.model_dump(mode="json"),
             publish_state="draft",
+            lead_token=secrets.token_urlsafe(32),
         )
         db.add(site)
         await db.flush()
+        ctx["lead_token"] = site.lead_token
+        ctx["lead_api_url"] = "/api/v1/leads/public"
         builder = SiteBuilder(Path(settings.sites_root))
         build_result = builder.build(manifest, ctx)
         build_hash = build_result["build_hash"]
@@ -204,8 +218,7 @@ async def health_check(
         details["redis"] = str(exc)
 
     llm_ok = bool(
-        __import__("os").getenv("DEEPSEEK_API_KEY")
-        or __import__("os").getenv("ANTHROPIC_API_KEY")
+        __import__("os").getenv("DEEPSEEK_API_KEY") or __import__("os").getenv("ANTHROPIC_API_KEY")
     )
     details["llm"] = "keys_present" if llm_ok else "no_api_keys"
 
@@ -217,31 +230,3 @@ async def health_check(
         ssl_ok=False,
         details=details,
     )
-
-
-@router.post("/demo-tenant")
-async def create_demo_tenant(
-    auth: AuthContext = Depends(require_roles("superadmin")),
-    db: AsyncSession = Depends(get_db),
-) -> dict:
-    existing = await db.execute(select(Tenant).where(Tenant.slug == "demo"))
-    tenant = existing.scalar_one_or_none()
-    if not tenant:
-        tenant = Tenant(
-            name="Demo Tenant",
-            slug="demo",
-            is_demo=True,
-            quotas={"pages": 1000, "llm_tokens": 100000, "leads": 1000, "domains": 10},
-        )
-        db.add(tenant)
-        await db.flush()
-    geo = await seed_demo_geo(db)
-    await append_audit(
-        db,
-        action="demo_tenant.ensure",
-        payload={"tenant_id": str(tenant.id), **geo},
-        tenant_id=tenant.id,
-        actor_id=auth.user.id,
-    )
-    await db.commit()
-    return {"tenant_id": str(tenant.id), "slug": tenant.slug, "geo": geo}

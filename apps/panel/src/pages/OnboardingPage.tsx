@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { api, useAuth } from "../lib/auth";
 import { PageHeader, StatusPill, Surface } from "../components/ui";
 
@@ -13,28 +14,29 @@ const STEPS = ["niche", "geo", "template", "domain", "build"] as const;
 
 export function OnboardingPage() {
   const { token } = useAuth();
-  const [niche, setNiche] = useState("ремонт");
+  const [niche, setNiche] = useState("");
   const [session, setSession] = useState<Session | null>(null);
-  const [city, setCity] = useState("Москва");
-  const [service, setService] = useState("Ремонт стиральных машин");
-  const [domain, setDomain] = useState("demo-remont.local");
-  const [phone, setPhone] = useState("+7 (900) 000-00-00");
+  const [city, setCity] = useState("");
+  const [service, setService] = useState("");
+  const [domain, setDomain] = useState("");
+  const [phone, setPhone] = useState("");
   const [kitKey, setKitKey] = useState("service-local-v1");
-  const [log, setLog] = useState<string>("");
+  const [message, setMessage] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   async function start() {
+    if (!niche.trim()) return;
     setError(null);
     try {
-      const s = await api<Session>(
+      const created = await api<Session>(
         "/api/v1/onboarding/start",
-        { method: "POST", body: JSON.stringify({ niche }) },
+        { method: "POST", body: JSON.stringify({ niche: niche.trim() }) },
         token,
       );
-      setSession(s);
-      setLog(`Старт: ${s.id}`);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Error");
+      setSession(created);
+      setMessage("Проект создан. Продолжайте по шагам ниже.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Не удалось начать проект");
     }
   }
 
@@ -42,32 +44,23 @@ export function OnboardingPage() {
     if (!session) return;
     setError(null);
     try {
-      const s = await api<Session>(
+      const updated = await api<Session>(
         `/api/v1/onboarding/${session.id}/step`,
         { method: "POST", body: JSON.stringify({ step, payload }) },
         token,
       );
-      setSession(s);
-      setLog(JSON.stringify(s.payload, null, 2));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Error");
-    }
-  }
-
-  async function seedGeo() {
-    try {
-      const r = await api<Record<string, number>>("/api/v1/geo/seed-demo", { method: "POST" }, token);
-      setLog(`Geo seed: ${JSON.stringify(r)}`);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Error");
+      setSession(updated);
+      setMessage(step === "build" ? "Сборка завершена. Проверьте сайт перед публикацией." : "Шаг сохранён.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Не удалось сохранить шаг");
     }
   }
 
   return (
     <div>
       <PageHeader
-        title="Онбординг"
-        description="Ниша → гео → комплект блоков → домен → сборка."
+        title="Новый сайт"
+        description="Текущий упрощённый путь: собственные данные, локальный справочник гео, комплект блоков и домен. Отдельные план страниц и проверка качества относятся к дорожной карте развития."
         actions={session ? <StatusPill tone="accent">шаг: {session.step}</StatusPill> : undefined}
       />
       {error && <p className="error">{error}</p>}
@@ -75,76 +68,57 @@ export function OnboardingPage() {
       <Surface title="1. Ниша">
         <label className="field">
           Ниша
-          <input value={niche} onChange={(e) => setNiche(e.target.value)} />
+          <input value={niche} onChange={(event) => setNiche(event.target.value)} placeholder="Например: ремонт" required />
         </label>
-        <div className="row">
-          <button className="btn" type="button" onClick={start}>
-            Начать
-          </button>
-          <button className="btn btn-ghost" type="button" onClick={seedGeo}>
-            Seed гео
-          </button>
-        </div>
+        <button className="btn" type="button" disabled={!niche.trim()} onClick={start}>Начать</button>
       </Surface>
 
       {session && (
         <>
           <Surface title="2. Город">
+            <p className="muted">Сначала добавьте город в локальный справочник. Он будет проверен перед сборкой и использован для склонений.</p>
             <label className="field">
-              Город (из справочника)
-              <input value={city} onChange={(e) => setCity(e.target.value)} />
+              Город из справочника
+              <input value={city} onChange={(event) => setCity(event.target.value)} placeholder="Например: Казань" required />
             </label>
-            <button className="btn" type="button" onClick={() => next("geo", { city })}>
-              Сохранить гео
-            </button>
+            <div className="row">
+              <button className="btn" type="button" disabled={!city.trim()} onClick={() => next("geo", { city: city.trim() })}>Сохранить гео</button>
+              <Link className="btn btn-ghost" to="/geo">Открыть справочник</Link>
+            </div>
           </Surface>
-          <Surface title="3. Комплект / услуга">
+          <Surface title="3. Услуга и комплект">
             <label className="field">
               Комплект блоков
-              <select value={kitKey} onChange={(e) => setKitKey(e.target.value)}>
-                <option value="service-local-v1">service-local-v1</option>
-                <option value="home-repair-v1">home-repair-v1</option>
+              <select value={kitKey} onChange={(event) => setKitKey(event.target.value)}>
+                <option value="service-local-v1">Локальные услуги</option>
+                <option value="home-repair-v1">Домашний ремонт</option>
               </select>
             </label>
             <label className="field">
               Услуга
-              <input value={service} onChange={(e) => setService(e.target.value)} />
+              <input value={service} onChange={(event) => setService(event.target.value)} placeholder="Например: ремонт стиральных машин" required />
             </label>
-            <button
-              className="btn"
-              type="button"
-              onClick={() => next("template", { service, slug: "main", modifier: "", kit_key: kitKey })}
-            >
-              Применить комплект
-            </button>
+            <button className="btn" type="button" disabled={!service.trim()} onClick={() => next("template", { service: service.trim(), slug: "main", modifier: "", kit_key: kitKey })}>Применить комплект</button>
           </Surface>
-          <Surface title="4. Домен">
+          <Surface title="4. Домен и контакты">
             <label className="field">
               Домен
-              <input value={domain} onChange={(e) => setDomain(e.target.value)} />
+              <input value={domain} onChange={(event) => setDomain(event.target.value)} placeholder="example.ru" required />
             </label>
             <label className="field">
               Телефон
-              <input value={phone} onChange={(e) => setPhone(e.target.value)} />
+              <input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="+7 (900) 000-00-00" required />
             </label>
-            <button className="btn" type="button" onClick={() => next("domain", { domain, phone })}>
-              Сохранить домен
-            </button>
+            <button className="btn" type="button" disabled={!domain.trim() || !phone.trim()} onClick={() => next("domain", { domain: domain.trim(), phone: phone.trim() })}>Сохранить домен</button>
           </Surface>
           <Surface title="5. Сборка">
-            <button className="btn" type="button" onClick={() => next("build", {})}>
-              Собрать сайт
-            </button>
-            {session.completed && <p className="muted">Готово — смотрите payload ниже.</p>}
+            <p className="muted">Сборка создаст черновой static release. Перед публикацией проверьте контент, форму и домен.</p>
+            <button className="btn" type="button" onClick={() => next("build", {})}>Собрать сайт</button>
+            {session.completed && <p className="muted">Черновик собран. Откройте список сайтов для дальнейшей публикации.</p>}
           </Surface>
         </>
       )}
-
-      {log && (
-        <Surface title="Состояние">
-          <pre style={{ whiteSpace: "pre-wrap", color: "var(--muted)", fontSize: 13, margin: 0 }}>{log}</pre>
-        </Surface>
-      )}
+      {message && <p className="muted">{message}</p>}
     </div>
   );
 }

@@ -8,7 +8,9 @@ const groups = [
     links: [
       { to: "/", end: true, label: "Обзор" },
       { to: "/sites", label: "Сайты" },
-      { to: "/onboarding", label: "Онбординг" },
+      { to: "/keywords", label: "Семантика" },
+      { to: "/geo", label: "География" },
+      { to: "/onboarding", label: "Новый сайт" },
       { to: "/leads", label: "Лиды" },
     ],
   },
@@ -17,13 +19,15 @@ const groups = [
     links: [
       { to: "/domains", label: "Домены" },
       { to: "/blocks", label: "Блоки" },
+      { to: "/media", label: "Медиатека" },
+      { to: "/bulk", label: "Контакты" },
     ],
   },
   {
     label: "Система",
     links: [
-      { to: "/ops", label: "Ops" },
-      { to: "/tools", label: "Инструменты" },
+      { to: "/ops", label: "Статус" },
+      { to: "/settings", label: "Настройки" },
     ],
   },
 ] as const;

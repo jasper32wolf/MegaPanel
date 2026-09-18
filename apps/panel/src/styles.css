@@ -438,12 +438,34 @@ textarea {
   align-items: center;
 }
 
+.row-tight {
+  gap: var(--space-2);
+}
+
+.row-tight .btn {
+  padding: 0.4rem 0.65rem;
+  font-size: 0.85rem;
+}
+
 .stat-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: var(--space-3);
   margin-bottom: var(--space-4);
 }
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.detail-grid p {
+  margin: var(--space-1) 0 0;
+  overflow-wrap: anywhere;
+}
+
 
 .stat {
   background: var(--surface);

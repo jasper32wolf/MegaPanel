@@ -98,6 +98,9 @@ def main() -> int:
     parser.add_argument("--mode", choices=("local", "docker", "vps"), default="local")
     parser.add_argument("--force-secrets", action="store_true", help="Overwrite existing secrets")
     parser.add_argument("--demo-db-password", default="site_panel_dev")
+    parser.add_argument("--panel-url", default="", help="PANEL_PUBLIC_URL (vps/custom)")
+    parser.add_argument("--api-url", default="", help="API_PUBLIC_URL (vps/custom)")
+    parser.add_argument("--cors", default="", help="CORS_ORIGINS (comma-separated)")
     args = parser.parse_args()
 
     secrets_map = _gen_secrets()
@@ -120,6 +123,10 @@ def main() -> int:
             "REDIS_URL": "redis://localhost:6379/0",
             "CADDY_ADMIN_URL": "http://localhost:2019",
             "SITES_ROOT": str((ROOT / "data" / "sites").resolve()),
+            "CADDY_SITES_ROOT": str((ROOT / "data" / "sites").resolve()),
+            "UPLOADS_ROOT": str((ROOT / "data" / "uploads").resolve()),
+            "DSAR_EXPORTS_ROOT": str((ROOT / "data" / "dsar").resolve()),
+            "DSAR_EXPORT_TTL_HOURS": "24",
             "LOG_LEVEL": "INFO",
         }
         upsert_env(ENV_PATH, local_updates, only_if_missing_or_placeholder=False)
@@ -136,10 +143,17 @@ def main() -> int:
             "REDIS_URL": "redis://redis:6379/0",
             "CADDY_ADMIN_URL": "http://caddy:2019",
             "SITES_ROOT": "/app/dist",
+            "CADDY_SITES_ROOT": "/srv/sites",
+            "UPLOADS_ROOT": "/app/uploads",
+            "DSAR_EXPORTS_ROOT": "/app/dsar",
+            "DSAR_EXPORT_TTL_HOURS": "24",
         }
         upsert_env(ENV_PATH, docker_updates, only_if_missing_or_placeholder=False)
     else:  # vps
-        pw = secrets.token_urlsafe(24)
+        # Keep existing strong password if already set (re-running prepare_env)
+        existing = parse_env(ENV_PATH.read_text(encoding="utf-8")) if ENV_PATH.exists() else {}
+        old_pw = existing.get("POSTGRES_PASSWORD", "")
+        pw = old_pw if old_pw and not _is_placeholder(old_pw) else secrets.token_urlsafe(24)
         vps_updates = {
             "APP_ENV": "production",
             "POSTGRES_PASSWORD": pw,
@@ -147,11 +161,26 @@ def main() -> int:
             "REDIS_URL": "redis://redis:6379/0",
             "CADDY_ADMIN_URL": "http://caddy:2019",
             "SITES_ROOT": "/app/dist",
+            "CADDY_SITES_ROOT": "/srv/sites",
+            "UPLOADS_ROOT": "/app/uploads",
+            "DSAR_EXPORTS_ROOT": "/app/dsar",
+            "DSAR_EXPORT_TTL_HOURS": "24",
             "LOG_LEVEL": "INFO",
-            # Public URLs left for operator — keep placeholders if empty
         }
         upsert_env(ENV_PATH, secrets_map, only_if_missing_or_placeholder=not args.force_secrets)
         upsert_env(ENV_PATH, vps_updates, only_if_missing_or_placeholder=False)
+
+    url_updates: dict[str, str] = {}
+    if args.panel_url.strip():
+        url_updates["PANEL_PUBLIC_URL"] = args.panel_url.strip().rstrip("/")
+    if args.api_url.strip():
+        url_updates["API_PUBLIC_URL"] = args.api_url.strip().rstrip("/")
+    if args.cors.strip():
+        url_updates["CORS_ORIGINS"] = args.cors.strip()
+    elif args.panel_url.strip():
+        url_updates["CORS_ORIGINS"] = args.panel_url.strip().rstrip("/")
+    if url_updates:
+        upsert_env(ENV_PATH, url_updates, only_if_missing_or_placeholder=False)
 
     (ROOT / "data" / "sites").mkdir(parents=True, exist_ok=True)
     (ROOT / "data" / "uploads").mkdir(parents=True, exist_ok=True)

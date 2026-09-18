@@ -27,37 +27,16 @@ class TenantOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class UserCreate(BaseModel):
-    email: EmailStr
-    password: str = Field(min_length=10, max_length=128)
-    role: str = "tenant_admin"
-    tenant_id: UUID | None = None
-
-
-class UserOut(BaseModel):
-    id: UUID
-    email: EmailStr
-    role: str
-    tenant_id: UUID | None
-    is_active: bool
-
-    model_config = {"from_attributes": True}
-
-
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
     totp_code: str | None = None
 
 
-class TokenResponse(BaseModel):
-    access_token: str
-    refresh_token: str
-    token_type: str = "bearer"
-
-
 class SiteCreate(BaseModel):
     domain: str = Field(min_length=3, max_length=255)
+    service: str = Field(min_length=2, max_length=255)
+    city: str = Field(min_length=2, max_length=255)
     locale: str = "ru"
     contacts: dict = Field(default_factory=dict)
 

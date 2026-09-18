@@ -27,11 +27,11 @@ async def import_cities(csv_path: Path) -> int:
     sys.path.insert(0, str(root / "packages" / "security" / "src"))
     sys.path.insert(0, str(root / "packages" / "ssg" / "src"))
 
-    from app.db.session import SessionLocal
+    from app.db.session import open_db_session
     from app.services.geo import upsert_place
 
     count = 0
-    async with SessionLocal() as session:
+    async with open_db_session() as session:
         country = await upsert_place(
             session, kind="country", name="Россия", external_id="ru", source="fias"
         )

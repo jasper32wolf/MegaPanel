@@ -8,12 +8,26 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.core.config import get_settings
 from app.models.leads import Consent, Lead
 from app.services.leads import get_blind, get_encryptor
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+
+def _matches_subject(
+    lead: Lead,
+    encryptor: Any,
+    subject_email: str | None,
+    phone_idx: str | None,
+) -> bool:
+    if subject_email and lead.email_enc:
+        try:
+            if encryptor.decrypt(lead.email_enc).lower() == subject_email.lower():
+                return True
+        except Exception:  # noqa: BLE001
+            pass
+    return bool(phone_idx and lead.phone_blind == phone_idx)
 
 
 async def process_dsar_job(
@@ -30,21 +44,11 @@ async def process_dsar_job(
     phone_idx = blind.index(subject_phone) if subject_phone else None
 
     stmt = select(Lead).where(Lead.tenant_id == tenant_id)
-    if phone_idx:
+    if phone_idx and not subject_email:
         stmt = stmt.where(Lead.phone_blind == phone_idx)
     leads = list((await session.execute(stmt)).scalars().all())
 
-    matched: list[Lead] = []
-    for lead in leads:
-        if subject_email and lead.email_enc:
-            try:
-                if enc.decrypt(lead.email_enc).lower() == subject_email.lower():
-                    matched.append(lead)
-                    continue
-            except Exception:  # noqa: BLE001
-                pass
-        if phone_idx and lead.phone_blind == phone_idx:
-            matched.append(lead)
+    matched = [lead for lead in leads if _matches_subject(lead, enc, subject_email, phone_idx)]
 
     # Deduplicate
     seen: set[uuid.UUID] = set()
@@ -53,6 +57,23 @@ async def process_dsar_job(
         if lead.id not in seen:
             seen.add(lead.id)
             unique.append(lead)
+
+    consent_visitor_ids = [blind.index(lead.idempotency_key or str(lead.id)) for lead in unique]
+    consents = []
+    if consent_visitor_ids:
+        consents = list(
+            (
+                await session.execute(
+                    select(Consent).where(
+                        Consent.tenant_id == tenant_id,
+                        Consent.visitor_id.in_(consent_visitor_ids),
+                        Consent.revoked_at.is_(None),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
 
     if action == "export":
         rows = []
@@ -71,11 +92,16 @@ async def process_dsar_job(
                 }
             )
         settings = get_settings()
-        out_dir = Path(settings.sites_root) / "_dsar" / str(tenant_id)
+        out_dir = Path(settings.dsar_exports_root) / str(tenant_id)
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = out_dir / f"{job_id or uuid.uuid4()}.json"
         out_path.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
-        return {"action": "export", "count": len(rows), "path": str(out_path)}
+        return {
+            "action": "export",
+            "count": len(rows),
+            "active_consents": len(consents),
+            "path": str(out_path),
+        }
 
     if action == "delete":
         deleted = 0
@@ -88,21 +114,27 @@ async def process_dsar_job(
             lead.status = "erased"
             lead.meta = {**(lead.meta or {}), "dsar_erased_at": datetime.now(UTC).isoformat()}
             deleted += 1
-        # Revoke matching consents by visitor if email present in purposes — soft revoke all tenant recent if phone match only
-        if subject_email or subject_phone:
-            consents = list(
-                (
-                    await session.execute(select(Consent).where(Consent.tenant_id == tenant_id, Consent.revoked_at.is_(None)))
-                )
-                .scalars()
-                .all()
-            )
-            revoked = 0
-            for c in consents[:500]:
-                # conservative: mark revoked when subject identifiers present in job
-                c.revoked_at = datetime.now(UTC)
-                revoked += 1
-            return {"action": "delete", "leads_erased": deleted, "consents_revoked": revoked}
-        return {"action": "delete", "leads_erased": deleted, "consents_revoked": 0}
+        revoked_at = datetime.now(UTC)
+        for consent in consents:
+            consent.revoked_at = revoked_at
+        return {
+            "action": "delete",
+            "leads_erased": deleted,
+            "consents_revoked": len(consents),
+        }
 
-    return {"action": action, "error": "unknown_action"}
+    raise ValueError("Unknown DSAR action")
+
+
+def purge_expired_exports(now: datetime | None = None) -> int:
+    settings = get_settings()
+    root = Path(settings.dsar_exports_root)
+    if not root.exists():
+        return 0
+    cutoff = (now or datetime.now(UTC)).timestamp() - settings.dsar_export_ttl_hours * 3600
+    deleted = 0
+    for path in root.rglob("*.json"):
+        if path.is_file() and path.stat().st_mtime < cutoff:
+            path.unlink()
+            deleted += 1
+    return deleted

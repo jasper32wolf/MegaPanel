@@ -182,16 +182,26 @@ HTML = {
 </div>
 """,
     "lead_form": """
-<form id="lead-form" method="post" action="/api/v1/leads/public" style="display:grid;gap:.75rem;max-width:420px;">
+<form
+  id="lead-form"
+  method="post"
+  action="{lead_api_url}"
+  data-site-panel-lead-form
+  data-site-id="{site_id}"
+  data-lead-token="{lead_token}"
+  data-endpoint="{lead_api_url}"
+>
   <h2>Заявка</h2>
   <label>Имя <input name="name" autocomplete="name"></label>
   <label>Телефон <input name="phone" type="tel" required autocomplete="tel"></label>
+  <label>Email <input name="email" type="email" autocomplete="email"></label>
   <label>Комментарий <textarea name="message" rows="3"></textarea></label>
-  <input type="text" name="website" value="" tabindex="-1" autocomplete="off" aria-hidden="true" style="position:absolute;left:-9999px;">
+  <input class="sp-honeypot" type="text" name="website" value="" tabindex="-1" autocomplete="off" aria-hidden="true">
   <input type="hidden" name="form_ts" value="">
-  <label style="font-size:.85rem;"><input type="checkbox" name="consent" required> Согласие на обработку ПДн</label>
+  <label><input type="checkbox" name="consent" required> Согласие на обработку ПДн</label>
   <button class="sp-btn" type="submit">Отправить</button>
-  <p class="sp-muted" style="font-size:.8rem;">Или позвоните: <a href="tel:{phone}">{phone}</a></p>
+  <p class="sp-lead-status" aria-live="polite"></p>
+  <p class="sp-muted">Или позвоните: <a href="tel:{phone}">{phone}</a></p>
 </form>
 """,
     "contacts": """
@@ -229,7 +239,7 @@ HTML2["team"] = """
 EXTRA_CSS = {
     "hero": ".blk-hero .offer{font-size:1.05rem;max-width:36rem;}",
     "faq": ".blk-faq details{margin:.4rem 0;padding:.5rem 0;border-bottom:1px solid #eee;}",
-    "lead_form": ".blk-lead_form label{display:grid;gap:.25rem;font-size:.9rem;} .blk-lead_form input,.blk-lead_form textarea{padding:.55rem .7rem;border:1px solid #ccc;border-radius:var(--sp-radius-sm);}",
+    "lead_form": ".blk-lead_form label{display:grid;gap:.25rem;font-size:.9rem;} .blk-lead_form input,.blk-lead_form textarea{padding:.55rem .7rem;border:1px solid #ccc;border-radius:var(--sp-radius-sm);}.blk-lead_form .sp-honeypot{position:absolute;left:-9999px;opacity:0;pointer-events:none;}.blk-lead_form .sp-lead-status{min-height:1.25rem;margin:.5rem 0 0;}",
 }
 
 

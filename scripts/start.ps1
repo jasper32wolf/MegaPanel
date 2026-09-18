@@ -14,7 +14,7 @@ New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
 
 $py = Join-Path $Root ".venv\Scripts\python.exe"
 if (-not (Test-Path $py)) {
-  throw "Missing .venv — run .\scripts\install.ps1 first"
+  throw "Missing .venv - run .\scripts\install.ps1 first"
 }
 
 if (Get-Command docker -ErrorAction SilentlyContinue) {
@@ -25,7 +25,7 @@ if (Get-Command docker -ErrorAction SilentlyContinue) {
   }
 }
 
-$env:PYTHONPATH = "$Root\apps\api;$Root\apps\worker;$Root\packages\shared\src;$Root\packages\security\src;$Root\packages\ssg\src"
+$env:PYTHONPATH = "$Root\apps\api;$Root\packages\shared\src;$Root\packages\security\src;$Root\packages\ssg\src"
 $env:HTTP_PROXY = ""; $env:HTTPS_PROXY = ""; $env:NO_PROXY = "*"
 
 function Start-LoggedProcess([string]$Name, [string]$FilePath, [string[]]$ArgumentList, [string]$WorkDir) {
@@ -49,7 +49,7 @@ function Start-LoggedProcess([string]$Name, [string]$FilePath, [string[]]$Argume
     -WindowStyle Hidden `
     -PassThru
   Set-Content -Path $pidFile -Value $p.Id
-  Write-Host "Started $Name (pid $($p.Id)) — logs: data/runtime/$Name.*.log"
+  Write-Host "Started $Name (pid $($p.Id)) - logs: data/runtime/$Name.*.log"
 }
 
 $uv = Join-Path $Root ".venv\Scripts\uvicorn.exe"
@@ -59,8 +59,7 @@ Start-LoggedProcess "api" $uv @(
   "app.main:app", "--app-dir", "apps/api", "--host", "127.0.0.1", "--port", "8000", "--reload"
 ) $Root
 
-# Worker package lives under apps/worker; PYTHONPATH includes api for drip/dsar
-Start-LoggedProcess "worker" $arq @("app.worker.WorkerSettings") (Join-Path $Root "apps\worker")
+Start-LoggedProcess "worker" $arq @("app.worker.WorkerSettings") $Root
 
 Start-LoggedProcess "panel" "cmd.exe" @(
   "/c", "npm", "run", "dev", "--", "--host", "127.0.0.1", "--port", "5173"
@@ -76,11 +75,11 @@ for ($i = 0; $i -lt 45; $i++) {
 if ($ok) {
   Write-Host "API health OK" -ForegroundColor Green
 } else {
-  Write-Host "WARN: API not healthy yet — check data/runtime/api.err.log" -ForegroundColor Yellow
+  Write-Host "WARN: API not healthy yet - check data/runtime/api.err.log" -ForegroundColor Yellow
 }
 
 Write-Host ""
 Write-Host "Panel: http://127.0.0.1:5173"
 Write-Host "API:   http://127.0.0.1:8000/docs"
-Write-Host "Login: admin@demo.local / DemoPass123!"
+Write-Host "Bootstrap operator: python scripts\bootstrap_operator.py --email you@example.com"
 Write-Host "Stop:  .\scripts\stop.ps1"

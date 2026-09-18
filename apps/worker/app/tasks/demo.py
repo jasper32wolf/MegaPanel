@@ -19,10 +19,10 @@ async def drip_promote_task(ctx: dict) -> dict:
         api_root = Path(__file__).resolve().parents[3] / "api"
         if str(api_root) not in sys.path:
             sys.path.insert(0, str(api_root))
-        from app.db.session import SessionLocal
+        from app.db.session import open_db_session
         from app.services.drip import promote_drip
 
-        async with SessionLocal() as session:
+        async with open_db_session() as session:
             result = await promote_drip(session, limit=40)
             await session.commit()
         logger.info("drip_promote", **{k: result[k] for k in ("promoted",) if k in result})
@@ -52,11 +52,11 @@ async def dsar_process_task(
         api_root = Path(__file__).resolve().parents[3] / "api"
         if str(api_root) not in sys.path:
             sys.path.insert(0, str(api_root))
-        from app.db.session import SessionLocal
+        from app.db.session import open_db_session
         from app.models import DsarJob
         from app.services.dsar import process_dsar_job
 
-        async with SessionLocal() as session:
+        async with open_db_session() as session:
             job = (
                 await session.execute(select(DsarJob).where(DsarJob.id == uuid.UUID(job_id)))
             ).scalar_one_or_none()
@@ -77,4 +77,22 @@ async def dsar_process_task(
         return result
     except Exception as exc:  # noqa: BLE001
         logger.error("dsar_failed", error=str(exc), job_id=job_id)
+        return {"error": str(exc)}
+
+
+async def dsar_cleanup_task(ctx: dict) -> dict:
+    try:
+        import sys
+        from pathlib import Path
+
+        api_root = Path(__file__).resolve().parents[3] / "api"
+        if str(api_root) not in sys.path:
+            sys.path.insert(0, str(api_root))
+        from app.services.dsar import purge_expired_exports
+
+        deleted = purge_expired_exports()
+        logger.info("dsar_exports_purged", deleted=deleted)
+        return {"deleted": deleted}
+    except Exception as exc:  # noqa: BLE001
+        logger.error("dsar_cleanup_failed", error=str(exc))
         return {"error": str(exc)}

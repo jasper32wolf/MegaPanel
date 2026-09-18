@@ -17,7 +17,7 @@ SKIP_SEED=0
 SKIP_START=0
 START=0
 NO_DOCKER=0
-DEMO_SEED=1
+DEMO_SEED=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -146,10 +146,9 @@ pip install --no-build-isolation \
   -e packages/ssg \
   -e packages/block-library \
   -e apps/api \
-  -e apps/worker \
   pytest pytest-asyncio ruff
 
-export PYTHONPATH="$ROOT/apps/api:$ROOT/apps/worker:$ROOT/packages/shared/src:$ROOT/packages/security/src:$ROOT/packages/ssg/src"
+export PYTHONPATH="$ROOT/apps/api:$ROOT/packages/shared/src:$ROOT/packages/security/src:$ROOT/packages/ssg/src"
 
 if [[ "$SKIP_TESTS" -eq 0 ]]; then
   step "Running unit tests"
@@ -185,8 +184,9 @@ fi
 
 echo
 printf '\033[32mDONE\033[0m\n'
-echo "  Login:  admin@demo.local / DemoPass123!"
+echo "  Bootstrap operator: python3 scripts/bootstrap_operator.py --email you@example.com"
 echo "  API:    http://127.0.0.1:8000/docs"
 echo "  Panel:  http://127.0.0.1:5173"
 echo "  Stop:   ./scripts/stop.sh"
 echo "  Stop+DB:./scripts/stop.sh --deps"
+echo "  Wizard: ./УСТАНОВКА.sh  (or python3 scripts/setup_wizard.py)"

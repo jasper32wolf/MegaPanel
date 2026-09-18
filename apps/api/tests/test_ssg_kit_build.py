@@ -54,13 +54,23 @@ def test_ssg_kit_build_contains_core_blocks(tmp_path: Path):
             "service": "Ремонт",
             "modifier": "Срочный",
             "price": "990",
+            "lead_token": "t" * 32,
+            "lead_api_url": "/api/v1/leads/public",
         },
     )
     assert result["build_hash"]
-    html = (tmp_path / str(site_id) / "current" / "index" / "index.html").read_text(encoding="utf-8")
-    assert "data-block=\"hero\"" in html
-    assert "data-block=\"pricing_table\"" in html
-    assert "data-block=\"team\"" in html
-    assert "data-block=\"faq\"" in html
+    html = (tmp_path / str(site_id) / "current" / "index.html").read_text(encoding="utf-8")
+    assert 'data-block="hero"' in html
+    assert 'data-block="pricing_table"' in html
+    assert 'data-block="team"' in html
+    assert 'data-block="faq"' in html
     assert "--sp-primary" in html
     assert "FAQPage" in html or "application/ld+json" in html
+    assert f'data-site-id="{site_id}"' in html
+    assert 'data-lead-token="tttttttttttttttttttttttttttttttt"' in html
+    assert 'data-endpoint="/api/v1/leads/public"' in html
+    assert (tmp_path / str(site_id) / "current" / "site-panel-leads.js").exists()
+    lead_script = (tmp_path / str(site_id) / "current" / "site-panel-leads.js").read_text(
+        encoding="utf-8"
+    )
+    assert "form.dataset.idempotencyKey" in lead_script

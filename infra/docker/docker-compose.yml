@@ -52,6 +52,7 @@ services:
     volumes:
       - sites_data:/app/dist
       - uploads_data:/app/uploads
+      - dsar_data:/app/dsar
     ports:
       - "8000:8000"
     env_file: ../../.env
@@ -59,6 +60,9 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-site_panel}:${POSTGRES_PASSWORD:-site_panel_dev}@postgres:5432/${POSTGRES_DB:-site_panel}
       REDIS_URL: redis://redis:6379/0
       SITES_ROOT: /app/dist
+      CADDY_SITES_ROOT: /srv/sites
+      UPLOADS_ROOT: /app/uploads
+      DSAR_EXPORTS_ROOT: /app/dsar
       CADDY_ADMIN_URL: http://caddy:2019
     depends_on:
       migrate:
@@ -78,11 +82,13 @@ services:
       - /tmp
     volumes:
       - sites_data:/app/dist
+      - dsar_data:/app/dsar
     env_file: ../../.env
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-site_panel}:${POSTGRES_PASSWORD:-site_panel_dev}@postgres:5432/${POSTGRES_DB:-site_panel}
       REDIS_URL: redis://redis:6379/0
       SITES_ROOT: /app/dist
+      DSAR_EXPORTS_ROOT: /app/dsar
     depends_on:
       redis:
         condition: service_healthy
@@ -119,5 +125,6 @@ volumes:
   pgdata:
   sites_data:
   uploads_data:
+  dsar_data:
   caddy_data:
   caddy_config:

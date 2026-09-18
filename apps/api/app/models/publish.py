@@ -56,6 +56,7 @@ class Domain(Base):
 
 class Redirect(Base):
     __tablename__ = "redirects"
+    __table_args__ = (UniqueConstraint("site_id", "from_path", name="uq_redirects_site_path"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(
