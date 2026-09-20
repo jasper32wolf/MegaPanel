@@ -229,7 +229,7 @@ install_archive() {
   install -m 0750 "$target/scripts/release-manager.sh" "$BIN_DIR/release-manager.sh"
   install -m 0750 "$target/scripts/backup-production.sh" "$BIN_DIR/backup-production.sh"
   install -m 0750 "$target/scripts/restore-production.sh" "$BIN_DIR/restore-production.sh"
-  install -o root -g root -m 0755 \
+  install -m 0755 \
     "$target/scripts/validate_production_env.py" "$BIN_DIR/validate_production_env.py"
 
   emit "release=$release"
