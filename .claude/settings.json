@@ -34,7 +34,20 @@
       "Bash(chmod +x scripts/install-production-vps.sh scripts/validate_production_env.py)",
       "Bash(chmod +x \"E:/РАБОТА/ПАНЕЛЬ ДЛЯ ГЕНЕРАЦИИ САЙТОВ/scripts/install-production-vps.sh\" \"E:/РАБОТА/ПАНЕЛЬ ДЛЯ ГЕНЕРАЦИИ САЙТОВ/scripts/validate_production_env.py\")",
       "Bash(bash -n \"E:/РАБОТА/ПАНЕЛЬ ДЛЯ ГЕНЕРАЦИИ САЙТОВ/scripts/install-production-vps.sh\")",
-      "Bash(bash \"E:/РАБОТА/ПАНЕЛЬ ДЛЯ ГЕНЕРАЦИИ САЙТОВ/scripts/install-production-vps.sh\" --help)"
+      "Bash(bash \"E:/РАБОТА/ПАНЕЛЬ ДЛЯ ГЕНЕРАЦИИ САЙТОВ/scripts/install-production-vps.sh\" --help)",
+      "Read(//e/РАБОOTA/ПАНЕЛЬ ДЛЯ ГЕНЕРАЦИИ САЙТОВ/scripts/**)",
+      "Bash(python -m pytest apps/api/tests -q)",
+      "Bash(python -)",
+      "Bash(python -m ruff check scripts/setup_wizard.py scripts/prepare_env.py scripts/validate_production_env.py scripts/bootstrap_operator.py apps/api/tests/test_production_env.py apps/api/tests/test_production_deployment_config.py --select E,F,I)",
+      "Bash(python -m py_compile scripts/setup_wizard.py)",
+      "Bash(python scripts/setup_wizard.py --help)",
+      "Bash(python scripts/setup_wizard.py --mode vps --yes)",
+      "Bash(bash -n УСТАНОВКА.sh scripts/install.sh scripts/start.sh scripts/stop.sh scripts/install-production-vps.sh scripts/release-manager.sh scripts/backup-production.sh scripts/restore-production.sh scripts/bootstrap-github-deploy.sh)",
+      "Bash(command -v powershell)",
+      "Bash(powershell -NoProfile -Command \"[void][scriptblock]::Create\\(\\(Get-Content -Raw 'scripts/install.ps1'\\)\\); [void][scriptblock]::Create\\(\\(Get-Content -Raw 'scripts/start.ps1'\\)\\); [void][scriptblock]::Create\\(\\(Get-Content -Raw 'scripts/stop.ps1'\\)\\)\")",
+      "Bash(git restore *)",
+      "Bash(python -m py_compile scripts/setup_wizard.py scripts/prepare_env.py scripts/validate_production_env.py scripts/bootstrap_operator.py)",
+      "Bash(git check-ignore *)"
     ]
   }
 }

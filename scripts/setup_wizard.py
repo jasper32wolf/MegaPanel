@@ -40,16 +40,17 @@ class Plan:
     skip_tests: bool = True
     skip_seed: bool = True
     skip_start: bool = False
-    panel_url: str = ""
-    api_url: str = ""
-    cors: str = ""
 
 
 def c(text: str, color: str) -> str:
     # Windows cmd.exe often prints raw ANSI escapes (←[32m). Disable unless VT enabled.
     if os.environ.get("NO_COLOR"):
         return text
-    if sys.platform == "win32" and not os.environ.get("WT_SESSION") and not os.environ.get("ANSICON"):
+    if (
+        sys.platform == "win32"
+        and not os.environ.get("WT_SESSION")
+        and not os.environ.get("ANSICON")
+    ):
         return text
     if not sys.stdout.isatty():
         return text
@@ -129,7 +130,13 @@ def find_python() -> list[str] | None:
     if sys.version_info >= (3, 12):
         return [sys.executable]
     for cmd in candidates:
-        code, out = run_cmd([*cmd, "-c", "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}')"])
+        code, out = run_cmd(
+            [
+                *cmd,
+                "-c",
+                "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}')",
+            ]
+        )
         if code != 0:
             continue
         try:
@@ -213,7 +220,10 @@ def print_checks(ch: Checks) -> None:
             False,
             "Docker",
             "не установлен (желателен)",
-            "https://www.docker.com/products/docker-desktop/ — без него нужна своя БД Postgres+Redis",
+            (
+                "https://www.docker.com/products/docker-desktop/ — без него нужна "
+                "своя БД Postgres+Redis"
+            ),
         )
     say("")
 
@@ -228,8 +238,6 @@ def require_for_plan(plan: Plan, ch: Checks) -> list[str]:
         errors.append("Нужен Node.js / npm для панели.")
     if plan.mode == "docker" and not ch.docker_running:
         errors.append("Для режима docker нужен запущенный Docker.")
-    if plan.mode == "vps":
-        errors.append("Production VPS использует отдельный Linux installer: sudo scripts/install-production-vps.sh --source-dir <checkout>.")
     return errors
 
 
@@ -244,32 +252,10 @@ def summarize(plan: Plan) -> None:
         say(f"  Демо-данные:     {'нет' if plan.skip_seed else 'явно включены для fixture'}")
         say(f"  Тесты:           {'нет' if plan.skip_tests else 'да'}")
         say(f"  Старт после:     {'нет' if plan.skip_start else 'да'}")
-        if plan.mode == "vps":
-            say(f"  PANEL_PUBLIC_URL: {plan.panel_url or '(не задан)'}")
-            say(f"  API_PUBLIC_URL:   {plan.api_url or '(не задан)'}")
-            say(f"  CORS_ORIGINS:     {plan.cors or '(не задан)'}")
     say("")
 
 
-def apply_public_urls(plan: Plan) -> None:
-    if plan.mode != "vps":
-        return
-    if not (plan.panel_url or plan.api_url or plan.cors):
-        return
-    py = find_python() or [sys.executable]
-    cmd = [*py, str(SCRIPTS / "prepare_env.py"), "--mode", "vps"]
-    if plan.panel_url:
-        cmd.extend(["--panel-url", plan.panel_url])
-    if plan.api_url:
-        cmd.extend(["--api-url", plan.api_url])
-    if plan.cors:
-        cmd.extend(["--cors", plan.cors])
-    say("Запись URL в .env…", "cyan")
-    subprocess.check_call(cmd, cwd=str(ROOT))
-
-
 def run_install(plan: Plan) -> int:
-    apply_public_urls(plan)
     if IS_WINDOWS:
         ps1 = SCRIPTS / "install.ps1"
         args = [
@@ -356,18 +342,10 @@ def custom_plan(ch: Checks) -> Plan:
         "2": "docker — всё в Docker",
         "3": "deps — только пакеты и .env (своя БД)",
     }
-    if not IS_WINDOWS:
-        mode_choices["4"] = "vps — продакшен на Linux-сервере"
-    else:
-        mode_choices["4"] = "vps — только Linux (на Windows недоступен)"
 
     mode_key = ask_choice("Выберите режим установки:", mode_choices, "1")
-    mode_map = {"1": "local", "2": "docker", "3": "deps", "4": "vps"}
+    mode_map = {"1": "local", "2": "docker", "3": "deps"}
     mode = mode_map[mode_key]
-
-    if mode == "vps" and IS_WINDOWS:
-        say("Режим vps на Windows недоступен. Выберите другой.", "red")
-        return custom_plan(ch)
 
     seed_default = False
     do_seed = ask_yes_no("Создать demo fixtures для локального теста?", seed_default)
@@ -375,16 +353,8 @@ def custom_plan(ch: Checks) -> Plan:
     do_start = False
     if mode == "local":
         do_start = ask_yes_no("Запустить панель после установки?", True)
-    elif mode in ("docker", "vps"):
-        do_start = True  # compose up already starts stack
-
-    panel_url = api_url = cors = ""
-    if mode == "vps":
-        say("Укажите публичные URL (можно Enter и дописать в .env позже).", "cyan")
-        panel_url = ask("PANEL_PUBLIC_URL (https://panel.example.com)", "")
-        api_url = ask("API_PUBLIC_URL (https://api.example.com)", "")
-        default_cors = panel_url if panel_url else ""
-        cors = ask("CORS_ORIGINS", default_cors)
+    elif mode == "docker":
+        do_start = True
 
     return Plan(
         action="install",
@@ -392,9 +362,6 @@ def custom_plan(ch: Checks) -> Plan:
         skip_tests=not do_tests,
         skip_seed=not do_seed,
         skip_start=not do_start if mode == "local" else False,
-        panel_url=panel_url,
-        api_url=api_url,
-        cors=cors,
     )
 
 
@@ -448,13 +415,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Site Panel setup wizard")
     parser.add_argument("--express", action="store_true", help="Recommended local install")
     parser.add_argument("--yes", action="store_true", help="No confirmation / no final pause")
-    parser.add_argument("--mode", choices=("local", "docker", "vps", "deps"))
+    parser.add_argument("--mode", choices=("local", "docker", "deps"))
     parser.add_argument("--skip-tests", action="store_true")
     parser.add_argument("--skip-seed", action="store_true")
     parser.add_argument("--skip-start", action="store_true")
-    parser.add_argument("--panel-url", default="")
-    parser.add_argument("--api-url", default="")
-    parser.add_argument("--cors", default="")
     args = parser.parse_args(argv)
 
     os.chdir(ROOT)
@@ -471,9 +435,6 @@ def main(argv: list[str] | None = None) -> int:
             skip_tests=args.skip_tests,
             skip_seed=args.skip_seed,
             skip_start=args.skip_start,
-            panel_url=args.panel_url,
-            api_url=args.api_url,
-            cors=args.cors,
         )
     else:
         plan = interactive_menu(ch)

@@ -126,7 +126,7 @@ chmod +x УСТАНОВКА.sh scripts/*.sh
 | Клавиша | Что делает |
 |---------|------------|
 | `1` | Экспресс: local + автостарт без demo fixtures |
-| `2` | Настроить режим, seed, тесты, URL для VPS |
+| `2` | Настроить local/docker/deps режим, demo fixtures и тесты |
 | `3` | Только запустить уже установленное |
 | `4` | Остановить |
 | `0` | Выход |
@@ -142,7 +142,7 @@ Set-Location -LiteralPath "e:\РАБОТА\ПАНЕЛЬ ДЛЯ ГЕНЕРАЦИ�
 .\scripts\install.ps1
 ```
 
-Альтернатива: `scripts\install.cmd --direct` (минуя мастер).
+Альтернатива без меню: `./scripts/install.ps1` на Windows или `./scripts/install.sh` на Linux/macOS.
 
 ### 3.2. Что делает скрипт (по шагам)
 

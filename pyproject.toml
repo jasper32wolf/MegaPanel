@@ -1,7 +1,7 @@
 [project]
 name = "site-panel"
 version = "0.1.0"
-description = "Multi-tenant Programmatic SEO site generation panel (TZ v5.6)"
+description = "Single-operator self-hosted site panel"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -47,14 +47,15 @@ dev = [
 site-panel-shared = { workspace = true }
 site-panel-security = { workspace = true }
 site-panel-ssg = { workspace = true }
+site-panel-blocks = { workspace = true }
 
 [tool.uv.workspace]
 members = [
   "packages/shared",
   "packages/security",
   "packages/ssg",
+  "packages/block-library",
   "apps/api",
-  "apps/worker",
 ]
 
 [tool.ruff]

@@ -15,6 +15,7 @@ build/
 # Node
 node_modules/
 apps/panel/dist/
+apps/panel/tsconfig.tsbuildinfo
 *.local
 
 # Env & secrets
@@ -26,9 +27,30 @@ apps/panel/dist/
 *.key
 secrets/
 
+# Local deployment and backup artifacts
+site-panel-*.tar.gz
+release-archive.sha256
+*.dump
+*.sql.gz
+debug-*.log
+
 # IDE / OS
 .idea/
 .vscode/
 *.swp
 Thumbs.db
 .DS_Store
+
+# Local agent settings (may contain credentials)
+.claude/settings.json
+.claude/settings.local.json
+.claude/worktrees/
+
+# Runtime
+/data/
+/uploads/
+/sites/
+*.log
+
+# Geo dumps (too large for git)
+/data/geo/

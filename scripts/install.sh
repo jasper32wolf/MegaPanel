@@ -158,11 +158,7 @@ if [[ "$MODE" != "deps" ]]; then
 fi
 
 step "Panel npm install"
-if [[ ! -d apps/panel/node_modules ]]; then
-  (cd apps/panel && npm install)
-else
-  echo "node_modules present — skip"
-fi
+(cd apps/panel && npm ci)
 
 mkdir -p data/runtime
 

@@ -5,18 +5,16 @@
 .PARAMETER Mode
   local  - host API/panel + Docker Postgres/Redis (default)
   docker - full docker compose stack
-  vps    - unavailable: production VPS requires Linux install-production-vps.sh
   deps   - packages + .env only (external Postgres/Redis)
 
 .EXAMPLE
   .\scripts\install.ps1
   .\scripts\install.ps1 -Mode docker
-  .\scripts\install.ps1 -Mode vps -SkipSeed
 #>
 
 [CmdletBinding()]
 param(
-  [ValidateSet("local", "docker", "vps", "deps")]
+  [ValidateSet("local", "docker", "deps")]
   [string]$Mode = "local",
   [switch]$SkipTests,
   [switch]$SkipSeed,
@@ -132,11 +130,8 @@ if ($Mode -eq "local" -or $Mode -eq "deps") {
   Assert-Cmd "npm" "Install Node.js 20+ from https://nodejs.org/"
 }
 
-if (($Mode -eq "docker" -or $Mode -eq "vps") -and -not $dockerOk) {
-  throw ("Docker is required for -Mode {0}. Install/start Docker Desktop." -f $Mode)
-}
-if ($Mode -eq "vps") {
-  throw "Production VPS installation is Linux-only. Run sudo bash scripts/install-production-vps.sh --source-dir <checkout> on the VPS."
+if ($Mode -eq "docker" -and -not $dockerOk) {
+  throw "Docker is required for -Mode docker. Install/start Docker Desktop."
 }
 if ($Mode -eq "local" -and -not $dockerOk -and -not $NoDocker) {
   Write-Host "WARN: Docker not available. Expect Postgres :5432 and Redis :6379 on localhost." -ForegroundColor Yellow
@@ -150,7 +145,7 @@ if ($code -ne 0) { throw "prepare_env.py failed" }
 $composeDeps = "infra/docker/docker-compose.deps.yml"
 $composeFull = "infra/docker/docker-compose.yml"
 
-if ($Mode -eq "docker" -or $Mode -eq "vps") {
+if ($Mode -eq "docker") {
   Write-Step "Starting full Docker Compose stack"
   docker compose --env-file .env -f $composeFull up -d --build
   if ($LASTEXITCODE -ne 0) { throw "docker compose failed" }
@@ -161,10 +156,6 @@ if ($Mode -eq "docker" -or $Mode -eq "vps") {
   Write-Host "  API:   http://127.0.0.1:8000/docs"
   Write-Host "  Panel: http://127.0.0.1:5173"
   Write-Host "  Stop:  docker compose -f infra/docker/docker-compose.yml down"
-  if ($Mode -eq "vps") {
-    Write-Host "  IMPORTANT: set PANEL_PUBLIC_URL / API_PUBLIC_URL / CORS_ORIGINS in .env," -ForegroundColor Yellow
-    Write-Host "  enable MFA, do not use demo passwords on a public server." -ForegroundColor Yellow
-  }
   exit 0
 }
 
@@ -222,12 +213,8 @@ if ($Mode -ne "deps") {
 
 Write-Step "Panel npm install"
 Push-Location (Join-Path $Root "apps\panel")
-if (-not (Test-Path "node_modules")) {
-  npm install
-  if ($LASTEXITCODE -ne 0) { throw "npm install failed" }
-} else {
-  Write-Host "node_modules present - skip (delete to force reinstall)"
-}
+npm ci
+if ($LASTEXITCODE -ne 0) { throw "npm ci failed" }
 Pop-Location
 
 New-Item -ItemType Directory -Force -Path (Join-Path $Root "data\runtime") | Out-Null

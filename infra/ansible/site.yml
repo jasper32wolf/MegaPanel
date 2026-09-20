@@ -1,19 +1,18 @@
-# Site Panel — production bootstrap (phase 9 stub)
-
+# Intentional placeholder: Site Panel does not currently ship an Ansible deploy role.
+#
+# Public VPS deployment must use scripts/install-production-vps.sh followed by
+# the immutable GitHub release workflow. This prevents an Ansible invocation
+# from accidentally starting the development Compose stack with public ports.
+#
+# Do not add production hosts or tasks here until a provider-tested role has
+# the same safeguards as the production installer: explicit domains, secrets,
+# backup gate, volume ownership proof, firewall/SSH lockout protection and
+# immutable release activation.
 - hosts: all
-  become: true
+  gather_facts: false
   tasks:
-    - name: Ensure docker present
-      ansible.builtin.package:
-        name: docker.io
-        state: present
-      when: ansible_os_family == "Debian"
-
-    - name: CrowdSec placeholder
-      ansible.builtin.debug:
-        msg: "Install CrowdSec / Fail2Ban on edge host"
-
-    - name: Deploy compose stack
-      ansible.builtin.command: docker compose -f infra/docker/docker-compose.yml up -d --build
-      args:
-        chdir: "{{ project_root | default('.') }}"
+    - name: Explain supported deployment path
+      ansible.builtin.fail:
+        msg: >-
+          Ansible provisioning is intentionally not implemented. Run
+          scripts/install-production-vps.sh on a supported Linux VPS instead.

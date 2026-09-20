@@ -23,7 +23,7 @@ jobs:
       - name: Ruff
         run: |
           pip install ruff
-          ruff check packages apps/api apps/worker
+          ruff check packages apps/api
       - name: Tests
         run: pytest apps/api/tests -q
       - name: Trivy FS scan
@@ -44,12 +44,14 @@ jobs:
       - name: Validate release scripts
         run: |
           bash -n \
+            scripts/install-production-vps.sh \
             scripts/release-manager.sh \
             scripts/backup-production.sh \
             scripts/restore-production.sh \
             scripts/github-deploy-gateway.sh \
             scripts/bootstrap-github-deploy.sh \
             scripts/tests/test_release_manager.sh
+          python3 scripts/validate_production_env.py --help
           bash scripts/tests/test_release_manager.sh
 
   panel:
