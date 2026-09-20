@@ -169,7 +169,7 @@ validate_production_env() {
   value="$(shared_env_value CADDY_EMAIL)"
   [[ "$value" == *@* && "$value" != *@example.com && "$value" != *@example.test && "$value" != *@invalid ]] || die "invalid_CADDY_EMAIL"
 
-  [[ -x "$VALIDATOR" ]] || die "production_env_validator_missing"
+  [[ -f "$VALIDATOR" ]] || die "production_env_validator_missing"
   python3 "$VALIDATOR" --env-file "$SHARED_DIR/.env" --require-secure-permissions >/dev/null \
     || die "production_env_validation_failed"
 

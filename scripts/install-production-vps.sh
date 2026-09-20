@@ -383,8 +383,13 @@ initial_release() {
   step "Install initial immutable release"
   validate_source_checkout
   create_initial_archive
-  runuser -u "$DEPLOY_USER" -- env SITE_PANEL_ROOT="$INSTALL_ROOT" COMPOSE_PROJECT=site-panel \
-    bash "$SOURCE_DIR/scripts/release-manager.sh" deploy "$SOURCE_SHA"
+  if [[ -d "$INSTALL_ROOT/releases/$SOURCE_SHA" ]]; then
+    runuser -u "$DEPLOY_USER" -- env SITE_PANEL_ROOT="$INSTALL_ROOT" COMPOSE_PROJECT=site-panel \
+      bash "$SOURCE_DIR/scripts/release-manager.sh" activate "$SOURCE_SHA"
+  else
+    runuser -u "$DEPLOY_USER" -- env SITE_PANEL_ROOT="$INSTALL_ROOT" COMPOSE_PROJECT=site-panel \
+      bash "$SOURCE_DIR/scripts/release-manager.sh" deploy "$SOURCE_SHA"
+  fi
   runuser -u "$DEPLOY_USER" -- env SITE_PANEL_ROOT="$INSTALL_ROOT" COMPOSE_PROJECT=site-panel \
     "$INSTALL_ROOT/bin/release-manager.sh" backup initial-install
   write_state release complete "source_sha=$SOURCE_SHA"
