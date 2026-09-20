@@ -384,7 +384,7 @@ initial_release() {
   validate_source_checkout
   create_initial_archive
   runuser -u "$DEPLOY_USER" -- env SITE_PANEL_ROOT="$INSTALL_ROOT" COMPOSE_PROJECT=site-panel \
-    "$SOURCE_DIR/scripts/release-manager.sh" deploy "$SOURCE_SHA"
+    bash "$SOURCE_DIR/scripts/release-manager.sh" deploy "$SOURCE_SHA"
   runuser -u "$DEPLOY_USER" -- env SITE_PANEL_ROOT="$INSTALL_ROOT" COMPOSE_PROJECT=site-panel \
     "$INSTALL_ROOT/bin/release-manager.sh" backup initial-install
   write_state release complete "source_sha=$SOURCE_SHA"
