@@ -215,7 +215,7 @@ main() {
   caddy_config_volume="${COMPOSE_PROJECT}_caddy_config"
 
   stage="$(mktemp -d "${TMPDIR:-/tmp}/site-panel-backup.XXXXXX")"
-  trap 'rm -rf "$stage"' EXIT
+  trap 'rm -rf "${stage:-}"' EXIT
   payload="$stage/site-panel"
   dump="$payload/postgres.dump"
   mkdir -p "$payload"

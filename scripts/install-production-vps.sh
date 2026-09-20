@@ -188,7 +188,9 @@ preflight() {
   if [[ -z "$API_DOMAIN" && -t 0 ]]; then read -r -p 'API domain: ' API_DOMAIN; fi
   if [[ -z "$CADDY_EMAIL" && -t 0 ]]; then read -r -p 'Caddy ACME email: ' CADDY_EMAIL; fi
   validate_inputs
-  [[ -z "$(ss -ltnH '( sport = :80 or sport = :443 )' 2>/dev/null || true)" ]] || die "Host port 80 or 443 is already in use"
+  if [[ "$RUN_PHASE" == "all" && "$RESUME" == 0 ]]; then
+    [[ -z "$(ss -ltnH '( sport = :80 or sport = :443 )' 2>/dev/null || true)" ]] || die "Host port 80 or 443 is already in use"
+  fi
   install -d -m 0750 "$(state_dir)"
   exec 9>"$(state_dir)/installer.lock"
   flock -n 9 || die "Another installer run is active"

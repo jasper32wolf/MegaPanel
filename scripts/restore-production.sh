@@ -232,7 +232,7 @@ main() {
 
   local stage payload db_name db_user sites_volume uploads_volume caddy_data_volume caddy_config_volume dsar_volume current_release
   stage="$(mktemp -d "${TMPDIR:-/tmp}/site-panel-restore.XXXXXX")"
-  trap 'rm -rf "$stage"' EXIT
+  trap 'rm -rf "${stage:-}"' EXIT
   restic restore "$SNAPSHOT" --target "$stage" >/dev/null
   payload="$stage/site-panel"
   [[ -s "$payload/postgres.dump" ]] || die "restore_postgres_dump_missing"
