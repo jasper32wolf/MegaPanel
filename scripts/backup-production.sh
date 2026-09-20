@@ -13,6 +13,12 @@ AUDIT_FILE="$STATE_DIR/audit.log"
 LOCK_FILE="$STATE_DIR/backup.lock"
 CURRENT_LINK="$SITE_PANEL_ROOT/current"
 BACKUP_ENV_FILE="${BACKUP_ENV_FILE:-$SHARED_DIR/backup.env}"
+BACKUP_MANIFEST_VERSION="2"
+BACKUP_POLICY="production-volumes"
+BACKUP_POLICY_VERSION="1"
+BACKUP_INCLUDED_VOLUMES="sites_data,uploads_data,caddy_data,caddy_config"
+BACKUP_EXCLUDED_VOLUMES="dsar_data"
+DSAR_RESTORE_ACTION="clear"
 
 usage() {
   cat <<'EOF'
@@ -28,8 +34,9 @@ Optional retention values:
   BACKUP_KEEP_MONTHLY=12
   BACKUP_RUN_CHECK=1
 
-The script saves a PostgreSQL custom dump, static sites volume, shared .env and
-release state to restic. It does not store credentials in the Git repository.
+The script saves a PostgreSQL custom dump, sites, uploads, Caddy data/config,
+shared .env and release state to restic. It deliberately excludes DSAR exports;
+they are cleared during a restore. It does not store credentials in Git.
 EOF
 }
 
@@ -107,14 +114,46 @@ parse_args() {
 }
 
 load_backup_env() {
+  local line key value seen_keys=" "
+
   [[ -f "$SHARED_DIR/.env" ]] || die "shared_env_missing"
   [[ -f "$BACKUP_ENV_FILE" ]] || die "backup_env_missing"
   [[ -r "$BACKUP_ENV_FILE" ]] || die "backup_env_unreadable"
-  # This is a VPS-owned root/service configuration file, never a Git-tracked input.
-  # shellcheck disable=SC1090
-  source "$BACKUP_ENV_FILE"
-  : "${RESTIC_REPOSITORY:?RESTIC_REPOSITORY is required}"
-  : "${RESTIC_PASSWORD_FILE:?RESTIC_PASSWORD_FILE is required}"
+
+  # Treat backup.env as data, not shell code. Only these literal KEY=value
+  # entries are accepted; substitutions, commands, exports, and other keys are
+  # never evaluated or imported.
+  unset RESTIC_REPOSITORY RESTIC_PASSWORD_FILE AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+  unset BACKUP_KEEP_DAILY BACKUP_KEEP_WEEKLY BACKUP_KEEP_MONTHLY BACKUP_RUN_CHECK
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ "$line" =~ ^([A-Z_][A-Z0-9_]*)=(.*)$ ]] || die "backup_env_invalid_line"
+    key="${BASH_REMATCH[1]}"
+    value="${BASH_REMATCH[2]}"
+    case "$key" in
+      RESTIC_REPOSITORY|RESTIC_PASSWORD_FILE|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|BACKUP_KEEP_DAILY|BACKUP_KEEP_WEEKLY|BACKUP_KEEP_MONTHLY|BACKUP_RUN_CHECK)
+        ;;
+      *)
+        die "backup_env_key_not_allowed"
+        ;;
+    esac
+    [[ "$seen_keys" != *" $key "* ]] || die "backup_env_duplicate_key"
+    seen_keys+="$key "
+    case "$key" in
+      RESTIC_REPOSITORY) RESTIC_REPOSITORY="$value" ;;
+      RESTIC_PASSWORD_FILE) RESTIC_PASSWORD_FILE="$value" ;;
+      AWS_ACCESS_KEY_ID) AWS_ACCESS_KEY_ID="$value" ;;
+      AWS_SECRET_ACCESS_KEY) AWS_SECRET_ACCESS_KEY="$value" ;;
+      BACKUP_KEEP_DAILY) BACKUP_KEEP_DAILY="$value" ;;
+      BACKUP_KEEP_WEEKLY) BACKUP_KEEP_WEEKLY="$value" ;;
+      BACKUP_KEEP_MONTHLY) BACKUP_KEEP_MONTHLY="$value" ;;
+      BACKUP_RUN_CHECK) BACKUP_RUN_CHECK="$value" ;;
+    esac
+  done <"$BACKUP_ENV_FILE"
+
+  [[ -n "${RESTIC_REPOSITORY:-}" ]] || die "restic_repository_missing"
+  [[ -n "${RESTIC_PASSWORD_FILE:-}" ]] || die "restic_password_file_missing"
   [[ -r "$RESTIC_PASSWORD_FILE" ]] || die "restic_password_file_unreadable"
   BACKUP_KEEP_DAILY="${BACKUP_KEEP_DAILY:-7}"
   BACKUP_KEEP_WEEKLY="${BACKUP_KEEP_WEEKLY:-4}"
@@ -124,6 +163,24 @@ load_backup_env() {
   require_uint backup_keep_weekly "$BACKUP_KEEP_WEEKLY"
   require_uint backup_keep_monthly "$BACKUP_KEEP_MONTHLY"
   [[ "$BACKUP_RUN_CHECK" == "0" || "$BACKUP_RUN_CHECK" == "1" ]] || die "invalid_backup_run_check"
+
+  export RESTIC_REPOSITORY RESTIC_PASSWORD_FILE
+  [[ -n "${AWS_ACCESS_KEY_ID:-}" ]] && export AWS_ACCESS_KEY_ID
+  [[ -n "${AWS_SECRET_ACCESS_KEY:-}" ]] && export AWS_SECRET_ACCESS_KEY
+}
+
+archive_volume() {
+  local volume="$1"
+  local archive_name="$2"
+  local payload="$3"
+
+  docker volume inspect "$volume" >/dev/null 2>&1 || die "${archive_name%.tar.gz}_volume_missing"
+  docker run --rm \
+    -v "${volume}:/data:ro" \
+    -v "$payload:/backup" \
+    alpine:3.20 \
+    tar czf "/backup/$archive_name" -C /data .
+  [[ -s "$payload/$archive_name" ]] || die "${archive_name%.tar.gz}_archive_empty"
 }
 
 snapshot_id() {
@@ -147,29 +204,29 @@ main() {
   command -v python3 >/dev/null || die "python3_missing"
   load_backup_env
 
-  local db_name db_user sites_volume stage payload dump sites_archive current_release snapshot
+  local db_name db_user sites_volume uploads_volume caddy_data_volume caddy_config_volume
+  local stage payload dump current_release snapshot
   db_name="$(dotenv_value POSTGRES_DB)"
   db_user="$(dotenv_value POSTGRES_USER)"
   [[ -n "$db_name" && -n "$db_user" ]] || die "postgres_settings_missing"
   sites_volume="${COMPOSE_PROJECT}_sites_data"
-  docker volume inspect "$sites_volume" >/dev/null 2>&1 || die "sites_volume_missing"
+  uploads_volume="${COMPOSE_PROJECT}_uploads_data"
+  caddy_data_volume="${COMPOSE_PROJECT}_caddy_data"
+  caddy_config_volume="${COMPOSE_PROJECT}_caddy_config"
 
   stage="$(mktemp -d "${TMPDIR:-/tmp}/site-panel-backup.XXXXXX")"
   trap 'rm -rf "$stage"' EXIT
   payload="$stage/site-panel"
   dump="$payload/postgres.dump"
-  sites_archive="$payload/sites.tar.gz"
   mkdir -p "$payload"
 
   compose exec -T postgres pg_dump -U "$db_user" -Fc "$db_name" >"$dump"
   [[ -s "$dump" ]] || die "postgres_dump_empty"
 
-  docker run --rm \
-    -v "${sites_volume}:/data:ro" \
-    -v "$payload:/backup" \
-    alpine:3.20 \
-    tar czf /backup/sites.tar.gz -C /data .
-  [[ -s "$sites_archive" ]] || die "sites_archive_empty"
+  archive_volume "$sites_volume" "sites_data.tar.gz" "$payload"
+  archive_volume "$uploads_volume" "uploads_data.tar.gz" "$payload"
+  archive_volume "$caddy_data_volume" "caddy_data.tar.gz" "$payload"
+  archive_volume "$caddy_config_volume" "caddy_config.tar.gz" "$payload"
 
   install -m 0600 "$SHARED_DIR/.env" "$payload/shared.env"
   if [[ -f "$STATE_FILE" ]]; then
@@ -177,11 +234,20 @@ main() {
   fi
   current_release="$(basename "$(readlink -f "$CURRENT_LINK")")"
   cat >"$payload/manifest.env" <<EOF
+manifest_version=$BACKUP_MANIFEST_VERSION
+backup_policy=$BACKUP_POLICY
+backup_policy_version=$BACKUP_POLICY_VERSION
+included_volumes=$BACKUP_INCLUDED_VOLUMES
+excluded_volumes=$BACKUP_EXCLUDED_VOLUMES
+excluded_volume_restore_action=$DSAR_RESTORE_ACTION
 created_at=$(now_utc)
 reason=$BACKUP_REASON
 release=$current_release
 postgres_db=$db_name
 sites_volume=$sites_volume
+uploads_volume=$uploads_volume
+caddy_data_volume=$caddy_data_volume
+caddy_config_volume=$caddy_config_volume
 EOF
   chmod 0600 "$payload/manifest.env"
 

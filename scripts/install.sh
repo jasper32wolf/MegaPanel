@@ -4,7 +4,7 @@
 # Usage:
 #   ./scripts/install.sh                 # local hybrid (deps in Docker)
 #   ./scripts/install.sh --mode docker   # full compose
-#   ./scripts/install.sh --mode vps      # production compose + strong secrets
+#   sudo ./scripts/install-production-vps.sh --source-dir "$PWD"  # Linux VPS production
 #   ./scripts/install.sh --skip-tests --skip-start
 set -euo pipefail
 
@@ -83,10 +83,13 @@ case "$MODE" in
   local|deps)
     need npm "Install Node.js 20+"
     ;;
-  docker|vps)
+  docker)
     [[ "$DOCKER_OK" -eq 1 ]] || die "Docker required for mode=$MODE"
     ;;
-  *) die "Unknown mode: $MODE (local|docker|vps|deps)" ;;
+  vps)
+    die "VPS production uses: sudo ./scripts/install-production-vps.sh --source-dir \"$ROOT\""
+    ;;
+  *) die "Unknown mode: $MODE (local|docker|deps)" ;;
 esac
 
 step "Preparing .env"
@@ -97,15 +100,8 @@ python3 scripts/prepare_env.py --mode "$ENV_MODE"
 COMPOSE_DEPS="infra/docker/docker-compose.deps.yml"
 COMPOSE_FULL="infra/docker/docker-compose.yml"
 
-if [[ "$MODE" == "docker" || "$MODE" == "vps" ]]; then
+if [[ "$MODE" == "docker" ]]; then
   step "Starting full Docker Compose stack"
-  if [[ "$MODE" == "vps" ]]; then
-    # Sync compose DB password from .env if present
-    if grep -q '^POSTGRES_PASSWORD=' .env; then
-      PW="$(grep '^POSTGRES_PASSWORD=' .env | head -1 | cut -d= -f2-)"
-      export COMPOSE_POSTGRES_PASSWORD="$PW"
-    fi
-  fi
   docker compose --env-file .env -f "$COMPOSE_FULL" up -d --build
   step "Waiting for API :8000"
   wait_tcp 127.0.0.1 8000 180
@@ -114,10 +110,6 @@ if [[ "$MODE" == "docker" || "$MODE" == "vps" ]]; then
   echo "  API:   http://127.0.0.1:8000/docs"
   echo "  Panel: http://127.0.0.1:5173"
   echo "  Stop:  docker compose -f infra/docker/docker-compose.yml down"
-  if [[ "$MODE" == "vps" ]]; then
-    echo "  IMPORTANT: set PANEL_PUBLIC_URL / API_PUBLIC_URL / CORS_ORIGINS in .env to your domains,"
-    echo "  then recreate api/panel. Enable MFA. Do not use demo passwords on public VPS."
-  fi
   exit 0
 fi
 

@@ -1,0 +1,40 @@
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://claude-n-codex.com:8443",
+    "ANTHROPIC_AUTH_TOKEN": "sk-myapi_Gye3fCl-kb_Cum1lrwhgd6_Lez_yjUoEGacP9CbyFKgb2oL2GVp-4o",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "CLAUDE_CODE_ATTRIBUTION_HEADER": "0"
+  },
+  "permissions": {
+    "allow": [
+      "Read(//e/РАБОТА/ПАНЕЛЬ ДЛЯ ГЕНЕРАЦИИ САЙТОS/.claude/worktrees/agent-a41264726b96f8118/scripts/tests/**)",
+      "Bash(bash -n scripts/install-production-vps.sh scripts/install.sh scripts/bootstrap-github-deploy.sh scripts/release-manager.sh scripts/tests/test_release_manager.sh)",
+      "Bash(bash -n scripts/backup-production.sh scripts/restore-production.sh scripts/tests/test_release_manager.sh)",
+      "Bash(python -m py_compile scripts/prepare_env.py scripts/validate_production_env.py scripts/bootstrap_operator.py)",
+      "Bash(../../.venv/Scripts/python.exe -m pytest tests/test_production_env.py tests/test_production_deployment_config.py tests/test_bootstrap_operator.py -q)",
+      "Bash(bash scripts/tests/test_release_manager.sh)",
+      "Read(//e//**)",
+      "Bash(.venv/Scripts/python.exe -m py_compile scripts/prepare_env.py scripts/validate_production_env.py scripts/bootstrap_operator.py)",
+      "Bash(\"E:/РАБОТА/ПАНЕЛЬ ДЛЯ ГЕНЕРАЦИИ САЙТОВ/.venv/Scripts/python.exe\" -m py_compile \"E:/РАБОТА/ПАНЕЛЬ ДЛЯ ГЕНЕРАЦИИ САЙТОВ/scripts/prepare_env.py\" \"E:/РАБОТА/ПАНЕЛЬ ДЛЯ ГЕНЕРАЦИИ САЙТОВ/scripts/validate_production_env.py\" \"E:/РАБОТА/ПАНЕЛЬ ДЛЯ ГЕНЕРАЦИИ САЙТОВ/scripts/bootstrap_operator.py\")",
+      "Bash(\"../../.venv/Scripts/python.exe\" -m pytest tests/test_production_env.py tests/test_production_deployment_config.py tests/test_bootstrap_operator.py -q)",
+      "Bash(command -v shellcheck)",
+      "Bash(command -v wsl.exe)",
+      "Bash(command -v docker)",
+      "Bash(wsl.exe -- bash -lc 'cd \"/mnt/e/РАБОТА/ПАНЕЛЬ ДЛЯ ГЕНЕРАЦИИ САЙТОВ/.claude/worktrees/agent-a41264726b96f8118\" && bash scripts/tests/test_release_manager.sh')",
+      "Bash(\"./.venv/Scripts/python.exe\" scripts/bootstrap_operator.py --help)",
+      "Bash(\"./.venv/Scripts/python.exe\" scripts/prepare_env.py --help)",
+      "Bash(\"./.venv/Scripts/python.exe\" scripts/validate_production_env.py --help)",
+      "Bash(env 'BASH_FUNC_uname%%=\\(\\) { :; }' bash scripts/tests/test_release_manager.sh)",
+      "Bash(bash -n scripts/install-production-vps.sh scripts/install.sh scripts/bootstrap-github-deploy.sh scripts/release-manager.sh scripts/backup-production.sh scripts/restore-production.sh scripts/tests/test_release_manager.sh)",
+      "Bash(bash scripts/install-production-vps.sh --help)",
+      "Bash(\"../../.venv/Scripts/python.exe\" -m ruff check tests/test_production_env.py tests/test_production_deployment_config.py ../../../scripts/prepare_env.py ../../../scripts/validate_production_env.py ../../../scripts/bootstrap_operator.py --select E,F,I)",
+      "Bash(\"../../.venv/Scripts/python.exe\" -m ruff check tests/test_production_env.py tests/test_production_deployment_config.py ../../scripts/prepare_env.py ../../scripts/validate_production_env.py ../../scripts/bootstrap_operator.py --select E,F,I)",
+      "Bash(\"../../.venv/Scripts/python.exe\" -m pytest tests -q)",
+      "Bash(.venv/Scripts/python.exe -m ruff check scripts/prepare_env.py --select I --fix)",
+      "Bash(chmod +x scripts/install-production-vps.sh scripts/validate_production_env.py)",
+      "Bash(chmod +x \"E:/РАБОТА/ПАНЕЛЬ ДЛЯ ГЕНЕРАЦИИ САЙТОВ/scripts/install-production-vps.sh\" \"E:/РАБОТА/ПАНЕЛЬ ДЛЯ ГЕНЕРАЦИИ САЙТОВ/scripts/validate_production_env.py\")",
+      "Bash(bash -n \"E:/РАБОТА/ПАНЕЛЬ ДЛЯ ГЕНЕРАЦИИ САЙТОВ/scripts/install-production-vps.sh\")",
+      "Bash(bash \"E:/РАБОТА/ПАНЕЛЬ ДЛЯ ГЕНЕРАЦИИ САЙТОВ/scripts/install-production-vps.sh\" --help)"
+    ]
+  }
+}

@@ -5,7 +5,7 @@
 .PARAMETER Mode
   local  - host API/panel + Docker Postgres/Redis (default)
   docker - full docker compose stack
-  vps    - production compose + strong secrets
+  vps    - unavailable: production VPS requires Linux install-production-vps.sh
   deps   - packages + .env only (external Postgres/Redis)
 
 .EXAMPLE
@@ -136,7 +136,7 @@ if (($Mode -eq "docker" -or $Mode -eq "vps") -and -not $dockerOk) {
   throw ("Docker is required for -Mode {0}. Install/start Docker Desktop." -f $Mode)
 }
 if ($Mode -eq "vps") {
-  Write-Host "WARN: -Mode vps on Windows is for advanced/staging use. Prefer Linux VPS." -ForegroundColor Yellow
+  throw "Production VPS installation is Linux-only. Run sudo bash scripts/install-production-vps.sh --source-dir <checkout> on the VPS."
 }
 if ($Mode -eq "local" -and -not $dockerOk -and -not $NoDocker) {
   Write-Host "WARN: Docker not available. Expect Postgres :5432 and Redis :6379 on localhost." -ForegroundColor Yellow

@@ -71,7 +71,7 @@ done
 [[ -n "$RECOVERY_PUBLIC_KEY_FILE" && -r "$RECOVERY_PUBLIC_KEY_FILE" ]] || die "recovery GitHub public key file is required"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-for file in release-manager.sh backup-production.sh restore-production.sh github-deploy-gateway.sh; do
+for file in release-manager.sh backup-production.sh restore-production.sh github-deploy-gateway.sh validate_production_env.py; do
   [[ -f "$ROOT_DIR/scripts/$file" ]] || die "missing scripts/$file"
 done
 
@@ -96,6 +96,8 @@ install -o "$DEPLOY_USER" -g "$DEPLOY_USER" -m 0750 \
   "$ROOT_DIR/scripts/restore-production.sh" "$SITE_PANEL_ROOT/bin/restore-production.sh"
 install -o root -g root -m 0755 \
   "$ROOT_DIR/scripts/github-deploy-gateway.sh" "$SITE_PANEL_ROOT/bin/github-deploy-gateway.sh"
+install -o root -g root -m 0755 \
+  "$ROOT_DIR/scripts/validate_production_env.py" "$SITE_PANEL_ROOT/bin/validate_production_env.py"
 
 if [[ ! -e "$SITE_PANEL_ROOT/shared/.env" ]]; then
   install -o "$DEPLOY_USER" -g "$DEPLOY_USER" -m 0600 /dev/null "$SITE_PANEL_ROOT/shared/.env"

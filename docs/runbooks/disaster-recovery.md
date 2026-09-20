@@ -5,7 +5,7 @@
 ## Границы автоматизации
 
 - **Автоматически:** GitHub может сделать bounded restart, а затем code rollback на `previous` release после неудачного health check.
-- **Только вручную:** PostgreSQL restore, restore sites volume, смена `.env`, восстановление на новом VPS, schema repair.
+- **Только вручную:** PostgreSQL restore, restore sites/uploads/Caddy volumes, очистка DSAR exports, смена `.env`, восстановление на новом VPS, schema repair.
 - **Никогда автоматически:** `docker compose down -v`, удаление volumes, `pg_restore`, schema downgrade и ротация ключей шифрования.
 
 Причина: автоматический restore данных способен превратить временную проблему в необратимую потерю данных. Code rollback безопаснее только при backward-compatible migration policy.
@@ -17,7 +17,7 @@
 1. immutable GitHub release SHA;
 2. encrypted off-host restic snapshot;
 3. PostgreSQL JSON manifests;
-4. Docker named volumes с SSG output;
+4. Docker named volumes с SSG output, uploads и Caddy state/config (DSAR exports намеренно исключены);
 5. `/opt/site-panel/shared/.env` и release state.
 
 До production должны быть измерены и записаны в журнале:
@@ -28,14 +28,14 @@
 
 ## 1. Сначала классифицируйте инцидент
 
-| Признак | Первое действие | Restore данных? |
+|Признак|Первое действие|Restore данных?|
 |---|---|---|
-| Public health недоступен, internal API жив | Проверить DNS/TLS/Caddy/network | Нет |
-| API/worker/panel container упал | `Recover production → recover` | Нет |
-| Новый release не здоров | `Recover production → rollback` | Нет, если migration совместима назад |
-| PostgreSQL corruption/lost volume | Manual `restore` с snapshot | Да, после approval |
-| VPS полностью потерян | Новый VPS + deploy last-good SHA + manual restore | Да |
-| Утечка `.env`/ключа | Изоляция и incident response | Не автоматически; нужна ротация и оценка шифрованных данных |
+|Public health недоступен, internal API жив|Проверить DNS/TLS/Caddy/network|Нет|
+|API/worker/panel container упал|`Recover production → recover`|Нет|
+|Новый release не здоров|`Recover production → rollback`|Нет, если migration совместима назад|
+|PostgreSQL corruption/lost volume|Manual `restore` с snapshot|Да, после approval|
+|VPS полностью потерян|Новый VPS + deploy last-good SHA + manual restore|Да|
+|Утечка `.env`/ключа|Изоляция и incident response|Не автоматически; нужна ротация и оценка шифрованных данных|
 
 ## 2. Code rollback без data restore
 
@@ -62,25 +62,24 @@
    ```
 
 5. Workflow создаёт pre-restore backup. При его ошибке restore не стартует.
-6. Restore заменяет DB content, `sites_data`, shared `.env` и release state, применяет migrations и ждёт API health.
+6. Restore проверяет manifest policy/version, заменяет DB content, `sites_data`, `uploads_data`, `caddy_data`, `caddy_config`, shared `.env` и release state, очищает `dsar_data`, применяет migrations и ждёт API health.
 7. Проверьте:
    - login/MFA;
    - tenant isolation;
-   - sample site build и выдачу Caddy;
+   - sample site build, upload path и выдачу Caddy;
    - robots, sitemap, TLS;
    - тестовую lead form и webhook.
 8. Запишите snapshot ID, start/end time, результат и follow-up в [ХОД-РАБОТ.md](../ХОД-РАБОТ.md).
 
 ## 4. Полное восстановление на новом VPS
 
-1. Создайте новый VPS и закройте network exposure: 22/80/443 only.
-2. Установите Docker/Compose, restic и подготовьте DNS.
-3. Создайте две новые GitHub SSH key pairs, добавьте public keys через `bootstrap-github-deploy.sh`.
-4. Настройте `/opt/site-panel/shared/.env`, `/opt/site-panel/shared/backup.env` и restic password file.
-5. Обновите GitHub Environment variables/secrets с новым host и pinned host key.
-6. Запустите manual `Deploy production` для последнего known-good green SHA.
-7. После успешного release activation выполните manual `restore` с выбранным snapshot.
-8. Проведите полный smoke и recovery drill checklist.
+1. Создайте новый supported VPS и подготовьте DNS plus console/key access.
+2. На доверенной машине создайте **новые** deploy/recovery SSH key pairs; private halves не попадают на VPS.
+3. Запустите [`install-production-vps.sh`](../../scripts/install-production-vps.sh) с public config, secure restic input и обеими public keys. Он создаст Docker/Compose, restrict deployment account, production `.env`, volumes, first immutable release и initial backup without manually editing Compose.
+4. После DNS/TLS проверки обновите GitHub Environment variables/secrets с новым host, pinned host key и new private keys.
+5. Выберите исходный snapshot и выполните manual `restore` только с explicit `RESTORE` confirmation.
+6. Проведите полный smoke: login/MFA, panel same-origin API, site/Caddy route, uploads, lead/webhook path и recovery drill checklist.
+7. Зафиксируйте measured RTO/RPO. Installer status или `restic init` не заменяют restore drill.
 
 Подробные команды и GitHub secret model: [github-deploy-recovery.md](./github-deploy-recovery.md).
 

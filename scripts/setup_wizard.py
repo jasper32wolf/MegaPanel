@@ -226,10 +226,10 @@ def require_for_plan(plan: Plan, ch: Checks) -> list[str]:
         errors.append("Нужен Python 3.12+.")
     if plan.mode in ("local", "deps") and not ch.npm_ok:
         errors.append("Нужен Node.js / npm для панели.")
-    if plan.mode in ("docker", "vps") and not ch.docker_running:
-        errors.append("Для режима docker/vps нужен запущенный Docker.")
-    if plan.mode == "vps" and IS_WINDOWS:
-        errors.append("Режим vps предназначен для Linux-сервера. На Windows выберите local или docker.")
+    if plan.mode == "docker" and not ch.docker_running:
+        errors.append("Для режима docker нужен запущенный Docker.")
+    if plan.mode == "vps":
+        errors.append("Production VPS использует отдельный Linux installer: sudo scripts/install-production-vps.sh --source-dir <checkout>.")
     return errors
 
 

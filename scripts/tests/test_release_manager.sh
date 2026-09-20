@@ -21,7 +21,8 @@ trap 'rm -rf "$TMP"' EXIT
 SITE_ROOT="$TMP/site-panel"
 FAKE_BIN="$TMP/bin"
 LOG="$TMP/docker.log"
-mkdir -p "$SITE_ROOT/releases" "$SITE_ROOT/incoming" "$SITE_ROOT/shared/release-state" "$SITE_ROOT/bin" "$FAKE_BIN"
+RESTIC_PAYLOAD="$TMP/restic-payload"
+mkdir -p "$SITE_ROOT/releases" "$SITE_ROOT/incoming" "$SITE_ROOT/shared/release-state" "$SITE_ROOT/bin" "$FAKE_BIN" "$RESTIC_PAYLOAD"
 printf '%s\n' \
   'APP_ENV=production' \
   'POSTGRES_DB=site_panel' \
@@ -33,7 +34,11 @@ printf '%s\n' \
   'FIELD_ENCRYPTION_KEY=test-field-encryption-key-that-is-long-enough' \
   'PANEL_DOMAIN=panel.test.example' \
   'API_DOMAIN=api.test.example' \
-  'CADDY_EMAIL=ops@test.example' >"$SITE_ROOT/shared/.env"
+  'CADDY_EMAIL=ops@test.example' \
+  'PANEL_PUBLIC_URL=https://panel.test.example' \
+  'API_PUBLIC_URL=https://api.test.example' \
+  'CORS_ORIGINS=https://panel.test.example' >"$SITE_ROOT/shared/.env"
+chmod 0600 "$SITE_ROOT/shared/.env"
 printf '%s\n' 'RESTIC_REPOSITORY=s3:test' "RESTIC_PASSWORD_FILE=$TMP/restic-password" >"$SITE_ROOT/shared/backup.env"
 printf '%s\n' 'test-password' >"$TMP/restic-password"
 
@@ -45,13 +50,20 @@ if [[ "${1:-}" == "volume" && "${2:-}" == "inspect" ]]; then
   exit 0
 fi
 if [[ "${1:-}" == "run" ]]; then
-  for arg in "$@"; do
-    if [[ "$arg" == *:/backup ]]; then
-      host="${arg%:/backup}"
-      printf 'sites' >"$host/sites.tar.gz"
-      exit 0
+  args=("$@")
+  backup_host=""
+  archive=""
+  for ((i=0; i<${#args[@]}; i++)); do
+    if [[ "${args[$i]}" == *:/backup ]]; then
+      backup_host="${args[$i]%:/backup}"
+    elif [[ "${args[$i]}" == "czf" ]]; then
+      archive="${args[$((i+1))]}"
     fi
   done
+  if [[ -n "$backup_host" ]]; then
+    [[ "$archive" == /backup/*.tar.gz ]] || exit 1
+    printf 'volume-archive' >"$backup_host/${archive#/backup/}"
+  fi
   exit 0
 fi
 if [[ "${1:-}" != "compose" ]]; then
@@ -90,9 +102,46 @@ chmod +x "$FAKE_BIN/docker"
 cat >"$FAKE_BIN/restic" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
+[[ "${RESTIC_REPOSITORY:-}" == "s3:test" ]]
+[[ -r "${RESTIC_PASSWORD_FILE:-}" ]]
 case "${1:-}" in
-  snapshots) printf '[{"short_id":"deadbeef"}]\n' ;;
-  *) exit 0 ;;
+  snapshots)
+    printf '[{"short_id":"deadbeef"}]\n'
+    ;;
+  backup)
+    payload="${!#}"
+    for file in manifest.env sites_data.tar.gz uploads_data.tar.gz caddy_data.tar.gz caddy_config.tar.gz; do
+      cp "$payload/$file" "${FAKE_RESTIC_PAYLOAD:?}/$file"
+    done
+    ;;
+  restore)
+    target=""
+    args=("$@")
+    for ((i=0; i<${#args[@]}; i++)); do
+      if [[ "${args[$i]}" == "--target" ]]; then
+        target="${args[$((i+1))]}"
+      fi
+    done
+    [[ -n "$target" ]] || exit 1
+    payload="$target/site-panel"
+    mkdir -p "$payload"
+    printf 'postgres-dump' >"$payload/postgres.dump"
+    for file in sites_data.tar.gz uploads_data.tar.gz caddy_data.tar.gz caddy_config.tar.gz; do
+      printf 'volume-archive' >"$payload/$file"
+    done
+    cp "${FAKE_SHARED_ENV:?}" "$payload/shared.env"
+    cat >"$payload/manifest.env" <<'MANIFEST'
+manifest_version=2
+backup_policy=production-volumes
+backup_policy_version=1
+included_volumes=sites_data,uploads_data,caddy_data,caddy_config
+excluded_volumes=dsar_data
+excluded_volume_restore_action=clear
+MANIFEST
+    ;;
+  *)
+    exit 0
+    ;;
 esac
 EOF
 chmod +x "$FAKE_BIN/restic"
@@ -118,6 +167,14 @@ assert_fails() {
   fi
 }
 
+assert_not_contains() {
+  local pattern="$1" file="$2" label="$3"
+  if grep -Fq -- "$pattern" "$file"; then
+    printf 'FAIL: unexpected content for %s: %s\n' "$label" "$pattern" >&2
+    exit 1
+  fi
+}
+
 # Explicit, valid deterministic IDs for archive/state assertions.
 OLD=1111111111111111111111111111111111111111
 GOOD=2222222222222222222222222222222222222222
@@ -132,7 +189,8 @@ make_release_tree() {
   cp "$ROOT/scripts/release-manager.sh" "$dir/scripts/release-manager.sh"
   cp "$ROOT/scripts/backup-production.sh" "$dir/scripts/backup-production.sh"
   cp "$ROOT/scripts/restore-production.sh" "$dir/scripts/restore-production.sh"
-  chmod +x "$dir/scripts/"*.sh
+  cp "$ROOT/scripts/validate_production_env.py" "$dir/scripts/validate_production_env.py"
+  chmod +x "$dir/scripts/"*.sh "$dir/scripts/validate_production_env.py"
   ln -s "$SITE_ROOT/shared/.env" "$dir/.env"
 }
 
@@ -156,6 +214,8 @@ make_archive "$BAD"
 
 export PATH="$FAKE_BIN:$PATH"
 export FAKE_DOCKER_LOG="$LOG"
+export FAKE_RESTIC_PAYLOAD="$RESTIC_PAYLOAD"
+export FAKE_SHARED_ENV="$SITE_ROOT/shared/.env"
 export SITE_PANEL_ROOT="$SITE_ROOT"
 export COMPOSE_PROJECT="site-panel"
 export HEALTH_TIMEOUT_SECONDS=1
@@ -166,6 +226,21 @@ assert_eq "$(basename "$(readlink -f "$SITE_ROOT/current")")" "$GOOD" "good rele
 assert_eq "$(basename "$(readlink -f "$SITE_ROOT/previous")")" "$OLD" "old release becomes previous"
 grep -qx 'health=ok' "$TMP/good.out"
 grep -qx 'backup_snapshot=deadbeef' <("$MANAGER" backup test)
+for archive in sites_data.tar.gz uploads_data.tar.gz caddy_data.tar.gz caddy_config.tar.gz; do
+  [[ -s "$RESTIC_PAYLOAD/$archive" ]] || {
+    printf 'FAIL: expected backup archive missing: %s\n' "$archive" >&2
+    exit 1
+  }
+done
+grep -qx 'manifest_version=2' "$RESTIC_PAYLOAD/manifest.env"
+grep -qx 'backup_policy=production-volumes' "$RESTIC_PAYLOAD/manifest.env"
+grep -qx 'backup_policy_version=1' "$RESTIC_PAYLOAD/manifest.env"
+grep -qx 'included_volumes=sites_data,uploads_data,caddy_data,caddy_config' "$RESTIC_PAYLOAD/manifest.env"
+grep -qx 'excluded_volumes=dsar_data' "$RESTIC_PAYLOAD/manifest.env"
+grep -qx 'excluded_volume_restore_action=clear' "$RESTIC_PAYLOAD/manifest.env"
+assert_not_contains 'source "$BACKUP_ENV_FILE"' "$ROOT/scripts/backup-production.sh" "backup dotenv parser"
+assert_not_contains 'source "$BACKUP_ENV_FILE"' "$ROOT/scripts/restore-production.sh" "restore dotenv parser"
+assert_not_contains 'down -v' "$ROOT/scripts/restore-production.sh" "restore volume handling"
 
 export FAKE_FAILED_RELEASE="$BAD"
 assert_fails "$MANAGER" deploy "$BAD"
@@ -181,4 +256,35 @@ assert_fails "$MANAGER" auto-recover
 assert_fails "$MANAGER" install-archive not-a-release-id
 assert_fails "$ROOT/scripts/restore-production.sh" --snapshot deadbeef
 
-printf 'PASS: release manager deploy, backup, rollback, cooldown and restore guard\n'
+cat >"$SITE_ROOT/shared/backup.env" <<EOF
+RESTIC_REPOSITORY=s3:test
+RESTIC_PASSWORD_FILE=$TMP/restic-password
+AWS_ACCESS_KEY_ID=\$(touch "$TMP/allowed-value-executed")
+EOF
+"$MANAGER" backup dotenv-allowed-value >"$TMP/dotenv-allowed-value.out"
+[[ ! -e "$TMP/allowed-value-executed" ]] || {
+  printf 'FAIL: allowlisted backup.env value executed shell code\n' >&2
+  exit 1
+}
+cat >"$SITE_ROOT/shared/backup.env" <<EOF
+RESTIC_REPOSITORY=s3:test
+RESTIC_PASSWORD_FILE=$TMP/restic-password
+UNSAFE=\$(touch "$TMP/dotenv-executed")
+EOF
+assert_fails "$MANAGER" backup dotenv-test
+assert_fails "$ROOT/scripts/restore-production.sh" --snapshot deadbeef --confirm-restore
+[[ ! -e "$TMP/dotenv-executed" ]] || {
+  printf 'FAIL: backup.env executed shell code\n' >&2
+  exit 1
+}
+printf '%s\n' 'RESTIC_REPOSITORY=s3:test' "RESTIC_PASSWORD_FILE=$TMP/restic-password" >"$SITE_ROOT/shared/backup.env"
+
+unset FAKE_FAILED_RELEASE
+"$ROOT/scripts/restore-production.sh" --snapshot deadbeef --confirm-restore >"$TMP/restore.out"
+grep -qx 'restore=ok' "$TMP/restore.out"
+for volume in sites_data uploads_data caddy_data caddy_config dsar_data; do
+  grep -Fq "site-panel_${volume}:/data" "$LOG"
+done
+assert_not_contains 'site-panel_dsar_data:/data:ro' "$LOG" "DSAR backup exclusion"
+
+printf 'PASS: release manager deploy, backup policy, rollback, dotenv parser and restore guard\n'

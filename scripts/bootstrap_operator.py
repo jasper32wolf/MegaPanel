@@ -13,12 +13,23 @@ sys.path.insert(0, str(ROOT / "apps" / "api"))
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Bootstrap the single Site Panel operator")
-    parser.add_argument("--email", required=True)
+    parser.add_argument("--email")
     parser.add_argument("--name", default="Site Panel Operator")
+    parser.add_argument("--interactive", action="store_true")
     parser.add_argument("--tenant-slug", default="operator")
     parser.add_argument("--password-stdin", action="store_true")
     parser.add_argument("--reset-password", action="store_true")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.interactive:
+        if args.password_stdin:
+            parser.error("--interactive cannot be combined with --password-stdin")
+        args.email = input("Operator email: ").strip()
+        name = input("Operator name [Site Panel Operator]: ").strip()
+        if name:
+            args.name = name
+    elif not args.email:
+        parser.error("--email is required unless --interactive is used")
+    return args
 
 
 def read_password(from_stdin: bool) -> str:
@@ -56,7 +67,8 @@ async def bootstrap(args: argparse.Namespace, password: str) -> None:
         user = users[0] if users else None
         if user is not None and user.email != email:
             raise SystemExit(
-                "An operator account already exists. Use its email with --reset-password to reset it."
+                "An operator account already exists. Use its email with "
+                "--reset-password to reset it."
             )
         if user is not None and not args.reset_password:
             raise SystemExit(

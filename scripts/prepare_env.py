@@ -10,7 +10,6 @@ import re
 import secrets
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / ".env.example"
 ENV_PATH = ROOT / ".env"
@@ -50,7 +49,12 @@ def parse_env(text: str) -> dict[str, str]:
     return out
 
 
-def upsert_env(path: Path, updates: dict[str, str], *, only_if_missing_or_placeholder: bool = True) -> None:
+def upsert_env(
+    path: Path,
+    updates: dict[str, str],
+    *,
+    only_if_missing_or_placeholder: bool = True,
+) -> None:
     if path.exists():
         text = path.read_text(encoding="utf-8")
     elif EXAMPLE.exists():
@@ -93,15 +97,94 @@ def upsert_env(path: Path, updates: dict[str, str], *, only_if_missing_or_placeh
     path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
 
 
+def prepare_production_env(
+    output: Path,
+    *,
+    panel_domain: str,
+    api_domain: str,
+    caddy_email: str,
+) -> None:
+    from validate_production_env import validate
+
+    panel_domain = panel_domain.strip().lower()
+    api_domain = api_domain.strip().lower()
+    caddy_email = caddy_email.strip().lower()
+    existing = parse_env(output.read_text(encoding="utf-8")) if output.exists() else {}
+    existing_password = existing.get("POSTGRES_PASSWORD", "")
+    postgres_password = (
+        existing_password
+        if len(existing_password) >= 16 and existing_password != "site_panel_dev"
+        else secrets.token_urlsafe(24)
+    )
+    secret_values = {**_gen_secrets(), "POSTGRES_PASSWORD": postgres_password}
+    runtime_values = {
+        "APP_ENV": "production",
+        "PANEL_DOMAIN": panel_domain,
+        "API_DOMAIN": api_domain,
+        "CADDY_EMAIL": caddy_email,
+        "PANEL_PUBLIC_URL": f"https://{panel_domain}",
+        "API_PUBLIC_URL": f"https://{api_domain}",
+        "CORS_ORIGINS": f"https://{panel_domain}",
+        "POSTGRES_HOST": "postgres",
+        "POSTGRES_PORT": "5432",
+        "POSTGRES_DB": "site_panel",
+        "POSTGRES_USER": "site_panel",
+        "DATABASE_URL": (
+            f"postgresql+asyncpg://site_panel:{postgres_password}@postgres:5432/site_panel"
+        ),
+        "REDIS_URL": "redis://redis:6379/0",
+        "CADDY_ADMIN_URL": "http://caddy:2019",
+        "SITES_ROOT": "/app/dist",
+        "CADDY_SITES_ROOT": "/srv/sites",
+        "UPLOADS_ROOT": "/app/uploads",
+        "DSAR_EXPORTS_ROOT": "/app/dsar",
+        "DSAR_EXPORT_TTL_HOURS": "24",
+        "LOG_LEVEL": "INFO",
+    }
+    upsert_env(output, secret_values, only_if_missing_or_placeholder=True)
+    upsert_env(output, runtime_values, only_if_missing_or_placeholder=False)
+    upsert_env(
+        output,
+        {"POSTGRES_PASSWORD": postgres_password},
+        only_if_missing_or_placeholder=False,
+    )
+    errors = validate(parse_env(output.read_text(encoding="utf-8")))
+    if errors:
+        raise SystemExit("Invalid production environment: " + ", ".join(errors))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Prepare Site Panel .env")
     parser.add_argument("--mode", choices=("local", "docker", "vps"), default="local")
+    parser.add_argument(
+        "--production",
+        action="store_true",
+        help="Write a validated production env file",
+    )
+    parser.add_argument("--output", type=Path, help="Required target file for --production")
+    parser.add_argument("--panel-domain", default="")
+    parser.add_argument("--api-domain", default="")
+    parser.add_argument("--caddy-email", default="")
     parser.add_argument("--force-secrets", action="store_true", help="Overwrite existing secrets")
     parser.add_argument("--demo-db-password", default="site_panel_dev")
     parser.add_argument("--panel-url", default="", help="PANEL_PUBLIC_URL (vps/custom)")
     parser.add_argument("--api-url", default="", help="API_PUBLIC_URL (vps/custom)")
     parser.add_argument("--cors", default="", help="CORS_ORIGINS (comma-separated)")
     args = parser.parse_args()
+
+    if args.production:
+        if not args.output or not (args.panel_domain and args.api_domain and args.caddy_email):
+            parser.error(
+                "--production requires --output, --panel-domain, --api-domain and --caddy-email"
+            )
+        prepare_production_env(
+            args.output,
+            panel_domain=args.panel_domain,
+            api_domain=args.api_domain,
+            caddy_email=args.caddy_email,
+        )
+        print(f"OK: wrote {args.output} (production)")
+        return 0
 
     secrets_map = _gen_secrets()
     upsert_env(ENV_PATH, secrets_map, only_if_missing_or_placeholder=not args.force_secrets)

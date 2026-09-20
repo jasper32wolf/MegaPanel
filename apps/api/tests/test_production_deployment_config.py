@@ -8,6 +8,8 @@ ROOT = Path(__file__).resolve().parents[3]
 COMPOSE_PATH = ROOT / "infra" / "docker" / "docker-compose.production.yml"
 CADDYFILE_PATH = ROOT / "infra" / "caddy" / "Caddyfile.production"
 WORKER_DOCKERFILE_PATH = ROOT / "infra" / "docker" / "Dockerfile.worker"
+PROVISIONER_PATH = ROOT / "scripts" / "install-production-vps.sh"
+DEV_INSTALLER_PATH = ROOT / "scripts" / "install.sh"
 
 
 def production_compose() -> dict:
@@ -56,6 +58,17 @@ def test_worker_image_uses_the_api_owned_delivery_registry():
     assert "COPY apps/api /app/apps/api" in dockerfile
     assert "WORKDIR /app/apps/api" in dockerfile
     assert 'CMD ["arq", "app.worker.WorkerSettings"]' in dockerfile
+
+
+def test_vps_provisioner_uses_immutable_production_release_path():
+    provisioner = PROVISIONER_PATH.read_text(encoding="utf-8")
+    development_installer = DEV_INSTALLER_PATH.read_text(encoding="utf-8")
+
+    assert "release-manager.sh\" deploy" in provisioner
+    assert "git -C \"$SOURCE_DIR\" archive \"$SOURCE_SHA\"" in provisioner
+    assert "docker-compose.yml" not in provisioner
+    assert "install-production-vps.sh" in development_installer
+    assert 'die "VPS production uses:' in development_installer
 
 
 def test_release_worker_runs_only_lead_delivery_tasks():

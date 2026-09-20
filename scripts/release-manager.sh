@@ -19,6 +19,8 @@ LOCK_FILE="$STATE_DIR/release-manager.lock"
 CURRENT_LINK="$SITE_PANEL_ROOT/current"
 PREVIOUS_LINK="$SITE_PANEL_ROOT/previous"
 BIN_DIR="$SITE_PANEL_ROOT/bin"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VALIDATOR="$SCRIPT_DIR/validate_production_env.py"
 
 usage() {
   cat <<'EOF'
@@ -167,6 +169,10 @@ validate_production_env() {
   value="$(shared_env_value CADDY_EMAIL)"
   [[ "$value" == *@* && "$value" != *@example.com && "$value" != *@example.test && "$value" != *@invalid ]] || die "invalid_CADDY_EMAIL"
 
+  [[ -x "$VALIDATOR" ]] || die "production_env_validator_missing"
+  python3 "$VALIDATOR" --env-file "$SHARED_DIR/.env" --require-secure-permissions >/dev/null \
+    || die "production_env_validation_failed"
+
   [[ -f "$SHARED_DIR/backup.env" ]] || die "backup_env_missing"
   [[ -n "$(sed -n 's/^RESTIC_REPOSITORY=//p' "$SHARED_DIR/backup.env" | tail -n 1)" ]] || die "restic_repository_missing"
   value="$(sed -n 's/^RESTIC_PASSWORD_FILE=//p' "$SHARED_DIR/backup.env" | tail -n 1)"
@@ -212,6 +218,7 @@ install_archive() {
   [[ -f "$tmp/scripts/release-manager.sh" ]] || die "release_manager_missing"
   [[ -f "$tmp/scripts/backup-production.sh" ]] || die "backup_script_missing"
   [[ -f "$tmp/scripts/restore-production.sh" ]] || die "restore_script_missing"
+  [[ -f "$tmp/scripts/validate_production_env.py" ]] || die "production_env_validator_missing"
 
   chmod -R go-w "$tmp"
   mv "$tmp" "$target"
@@ -222,6 +229,8 @@ install_archive() {
   install -m 0750 "$target/scripts/release-manager.sh" "$BIN_DIR/release-manager.sh"
   install -m 0750 "$target/scripts/backup-production.sh" "$BIN_DIR/backup-production.sh"
   install -m 0750 "$target/scripts/restore-production.sh" "$BIN_DIR/restore-production.sh"
+  install -o root -g root -m 0755 \
+    "$target/scripts/validate_production_env.py" "$BIN_DIR/validate_production_env.py"
 
   emit "release=$release"
   emit "archive=installed"

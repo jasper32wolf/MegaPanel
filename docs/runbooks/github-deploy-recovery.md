@@ -48,7 +48,9 @@
         └── audit.log             # timestamped non-secret operational events
 ```
 
-Named Docker volumes (`site-panel_pgdata`, `site-panel_sites_data`, `site-panel_uploads_data`, Caddy volumes) не находятся внутри release directory. Поэтому смена кода не уничтожает данные.
+Named Docker volumes (`site-panel_pgdata`, `site-panel_sites_data`, `site-panel_uploads_data`, `site-panel_dsar_data`, `site-panel_caddy_data`, `site-panel_caddy_config`) не находятся внутри release directory. Поэтому смена кода не уничтожает данные.
+
+Backup policy version 1 сохраняет PostgreSQL, sites, uploads, Caddy data/config, shared `.env` и release state. DSAR exports намеренно не сохраняются и при restore очищаются. Эти policy/version записываются в snapshot manifest; restore принимает только snapshots с поддерживаемой manifest policy.
 
 ## 4. Что нужно подготовить до включения workflow
 
@@ -76,89 +78,37 @@ ssh-keygen -t ed25519 -a 100 -f site-panel-recovery -C "github-site-panel-recove
 - `site-panel-recovery` — private key для GitHub Environment `production-recovery`.
 - `.pub` файлы временно безопасно доставьте на VPS для bootstrap. Private keys удалять с VPS нельзя было бы даже случайно: они там вообще не нужны.
 
-### 4.3. Bootstrap VPS
+### 4.3. Automated VPS bootstrap
 
-Скопируйте репозиторий на сервер только для первоначального bootstrap и выполните от root/sudo:
-
-```bash
-cd /opt/site-panel-bootstrap
-sudo bash scripts/bootstrap-github-deploy.sh \
-  --github-public-key-file /root/site-panel-deploy.pub \
-  --github-recovery-public-key-file /root/site-panel-recovery.pub \
-  --root /opt/site-panel \
-  --user sitepanel-deploy
-```
-
-Bootstrap:
-
-- создаёт `sitepanel-deploy` и добавляет его в группу `docker`;
-- создаёт directory layout из §3;
-- устанавливает stable release manager и forced-command gateway;
-- добавляет оба public key в `authorized_keys` с `no-pty`, без port/agent/X11 forwarding;
-- добавляет ежедневный systemd timer encrypted backup в 02:15 UTC со случайной задержкой до 15 минут;
-- создаёт пустые `shared/.env` и `shared/backup.env` с правами 0600.
-
-Если меняется [`github-deploy-gateway.sh`](../../scripts/github-deploy-gateway.sh), повторите bootstrap: gateway намеренно живёт вне mutable release directories.
-
-### 4.4. Production `.env`
-
-Заполните `/opt/site-panel/shared/.env`, затем:
+Для нового supported VPS используйте единственный installer из [README-VPS.md](../../README-VPS.md). Он устанавливает host dependencies, Docker/Compose, restic, deployment account, volume permissions, production `.env`, initial immutable release и first encrypted backup.
 
 ```bash
-sudo chown sitepanel-deploy:sitepanel-deploy /opt/site-panel/shared/.env
-sudo chmod 600 /opt/site-panel/shared/.env
+sudo bash scripts/install-production-vps.sh \
+  --source-dir "$PWD" \
+  --config-file /root/site-panel-public.env \
+  --deploy-public-key-file /root/site-panel-deploy.pub \
+  --recovery-public-key-file /root/site-panel-recovery.pub
 ```
 
-Минимальные требования release manager:
+Installer вызывает [`bootstrap-github-deploy.sh`](../../scripts/bootstrap-github-deploy.sh) только при наличии обеих public keys и сохраняет не-secret phase state в `/opt/site-panel/shared/installer-state.json`. Без ключей initial local release возможен, но `github_environment` остаётся pending: не заменяйте этот security boundary unrestricted SSH account.
 
-```dotenv
-APP_ENV=production
-PANEL_DOMAIN=panel.example.ru
-API_DOMAIN=api.example.ru
-CADDY_EMAIL=ops@example.ru
-POSTGRES_DB=site_panel
-POSTGRES_USER=site_panel
-POSTGRES_PASSWORD=<strong-unique-password>
-APP_SECRET_KEY=<generated-secret>
-APP_PEPPER=<generated-secret>
-BLIND_INDEX_PEPPER=<generated-secret>
-FIELD_ENCRYPTION_KEY=<stable-32-byte-base64-key>
-```
+Firewall и SSH hardening — отдельные opt-in phases: installer не включает их по умолчанию. DNS/TLS, TOTP confirmation, GitHub Environment private-key custody и restore drill также остаются явными operator gates.
 
-Также заполните все обычные production URLs и ключи из [`.env.example`](../../.env.example). Нельзя оставлять `change-me` или `example.com` значения: `release-manager.sh` откажется активировать релиз.
+### 4.4. Production `.env` и restic
 
-### 4.5. Encrypted restic backup
+Installer создаёт `/opt/site-panel/shared/.env` с owner `sitepanel-deploy`, mode `0600`, stable cryptographic secrets и согласованными `PANEL_DOMAIN`, `API_DOMAIN`, HTTPS URLs/CORS. [`validate_production_env.py`](../../scripts/validate_production_env.py) запускается до activation; ручная правка не может оставить placeholder, inconsistent origin или group-readable env.
 
-Установите restic и создайте отдельный парольный файл, доступный только deploy account:
+Restic repository/password/backup credentials запрашиваются защищённо или передаются через VPS-local `0600` files. `backup.env` — строго data-file: разрешены только literal allowlisted `KEY=value` rows; shell expressions и unknown keys не выполняются и отклоняются. Storage credentials должны иметь доступ только к выделенному backup bucket/prefix. Не помещайте `backup.env`, restic password или cloud keys в GitHub artifacts, repository variables, исходники или job summary.
 
-```bash
-sudo install -o sitepanel-deploy -g sitepanel-deploy -m 600 /dev/null /opt/site-panel/shared/restic-password
-sudo -u sitepanel-deploy sh -c 'umask 077; printf "%s\n" "<long-restic-password>" > /opt/site-panel/shared/restic-password'
-sudo install -o sitepanel-deploy -g sitepanel-deploy -m 600 /dev/null /opt/site-panel/shared/backup.env
-```
+Наличие successful `restic init` или initial backup не доказывает restore: installer сохраняет `pending_restore_drill` до восстановления selected snapshot в отдельный disposable VPS.
 
-Пример `/opt/site-panel/shared/backup.env` для S3-compatible storage:
+Если меняется [`github-deploy-gateway.sh`](../../scripts/github-deploy-gateway.sh), повторите gateway bootstrap phase: он намеренно живёт вне mutable release directories.
 
-```dotenv
-RESTIC_REPOSITORY=s3:https://s3.example-storage.net/site-panel-production
-RESTIC_PASSWORD_FILE=/opt/site-panel/shared/restic-password
-AWS_ACCESS_KEY_ID=<backup-only-access-key>
-AWS_SECRET_ACCESS_KEY=<backup-only-secret>
-BACKUP_KEEP_DAILY=7
-BACKUP_KEEP_WEEKLY=4
-BACKUP_KEEP_MONTHLY=12
-BACKUP_RUN_CHECK=1
-```
+### 4.5. First-install failure
 
-Инициализируйте пустой repository один раз от имени deploy account:
+У первого release нет `previous`, поэтому failed first activation не может безопасно выполнить code rollback. Installer сохраняет logs/state, не удаляет volumes/secrets и требует после исправления причины запустить `--resume`. После первого healthy release existing release manager возвращает code only на `previous`; DB restore всегда требует selected snapshot plus explicit confirmation.
 
-```bash
-sudo -u sitepanel-deploy \
-  env SITE_PANEL_ROOT=/opt/site-panel \
-  bash -c 'set -a; . /opt/site-panel/shared/backup.env; set +a; restic init'
-```
-
-Storage credentials должны иметь доступ только к выделенному backup bucket/prefix. Никогда не помещайте `backup.env`, restic password или cloud keys в GitHub artifacts, repository variables, исходники или job summary.
+Storage credentials должны иметь доступ только к выделенному backup bucket/prefix. Никогда не помещайте backup credentials в GitHub artifacts, repository variables, исходники или job summary.
 
 ## 5. Настройка GitHub
 
@@ -290,10 +240,10 @@ confirmation: RESTORE
 
 1. Используйте `status`, чтобы зафиксировать current/previous SHA и backup snapshot.
 2. При необходимости выполните code rollback сначала. Если сервис ожил, data restore не нужен.
-3. Выберите проверенный snapshot: `sudo -u sitepanel-deploy bash -c 'set -a; . /opt/site-panel/shared/backup.env; set +a; restic snapshots'`.
+3. Выберите проверенный snapshot: выполните `restic snapshots`, передав `RESTIC_REPOSITORY`, `RESTIC_PASSWORD_FILE` и, если нужны, AWS credentials явно через `env` как в §4.5. Не исполняйте `backup.env` через `source`.
 4. Запустите manual `restore` только после approval и `confirmation=RESTORE`.
-5. Скрипт останавливает application traffic, восстанавливает DB и sites volume, применяет migration и проверяет API health.
-6. Обязательно вручную проверьте login, tenant isolation, sample site, lead path и external URLs.
+5. Скрипт проверяет manifest policy/version, останавливает application traffic, восстанавливает DB, sites, uploads и Caddy data/config, очищает DSAR exports, применяет migration и проверяет API health.
+6. Обязательно вручную проверьте login, tenant isolation, sample site, upload path, lead path, TLS/external URLs и Caddy.
 
 ### 8.2. Новый VPS после полной потери старого
 

@@ -13,16 +13,22 @@ LOCK_FILE="$STATE_DIR/restore.lock"
 CURRENT_LINK="$SITE_PANEL_ROOT/current"
 BACKUP_ENV_FILE="${BACKUP_ENV_FILE:-$SHARED_DIR/backup.env}"
 HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-180}"
+BACKUP_MANIFEST_VERSION="2"
+BACKUP_POLICY="production-volumes"
+BACKUP_POLICY_VERSION="1"
+BACKUP_INCLUDED_VOLUMES="sites_data,uploads_data,caddy_data,caddy_config"
+BACKUP_EXCLUDED_VOLUMES="dsar_data"
+DSAR_RESTORE_ACTION="clear"
 
 usage() {
   cat <<'EOF'
 Usage:
   restore-production.sh --snapshot <restic-snapshot-id> --confirm-restore
 
-This command stops application traffic, replaces the PostgreSQL contents and the
-sites volume, restores the shared .env from the selected encrypted snapshot, and
-then runs migrations. It does not accept "latest" and cannot run without the
-literal --confirm-restore acknowledgement.
+This command stops application traffic, replaces PostgreSQL plus the sites,
+uploads, and Caddy data/config volumes, clears DSAR exports, restores the shared
+.env from the selected encrypted snapshot, and then runs migrations. It does not
+accept "latest" and cannot run without the literal --confirm-restore acknowledgement.
 EOF
 }
 
@@ -73,13 +79,88 @@ dotenv_value() {
 }
 
 load_backup_env() {
+  local line key value seen_keys=" "
+
   [[ -f "$BACKUP_ENV_FILE" ]] || die "backup_env_missing"
-  # This file is controlled by the VPS operator and must never be in Git.
-  # shellcheck disable=SC1090
-  source "$BACKUP_ENV_FILE"
+  [[ -r "$BACKUP_ENV_FILE" ]] || die "backup_env_unreadable"
+
+  # Treat backup.env as data, not shell code. Only these literal KEY=value
+  # entries are accepted; substitutions, commands, exports, and other keys are
+  # never evaluated or imported.
+  unset RESTIC_REPOSITORY RESTIC_PASSWORD_FILE AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+  unset BACKUP_KEEP_DAILY BACKUP_KEEP_WEEKLY BACKUP_KEEP_MONTHLY BACKUP_RUN_CHECK
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ "$line" =~ ^([A-Z_][A-Z0-9_]*)=(.*)$ ]] || die "backup_env_invalid_line"
+    key="${BASH_REMATCH[1]}"
+    value="${BASH_REMATCH[2]}"
+    case "$key" in
+      RESTIC_REPOSITORY|RESTIC_PASSWORD_FILE|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|BACKUP_KEEP_DAILY|BACKUP_KEEP_WEEKLY|BACKUP_KEEP_MONTHLY|BACKUP_RUN_CHECK)
+        ;;
+      *)
+        die "backup_env_key_not_allowed"
+        ;;
+    esac
+    [[ "$seen_keys" != *" $key "* ]] || die "backup_env_duplicate_key"
+    seen_keys+="$key "
+    case "$key" in
+      RESTIC_REPOSITORY) RESTIC_REPOSITORY="$value" ;;
+      RESTIC_PASSWORD_FILE) RESTIC_PASSWORD_FILE="$value" ;;
+      AWS_ACCESS_KEY_ID) AWS_ACCESS_KEY_ID="$value" ;;
+      AWS_SECRET_ACCESS_KEY) AWS_SECRET_ACCESS_KEY="$value" ;;
+      BACKUP_KEEP_DAILY) BACKUP_KEEP_DAILY="$value" ;;
+      BACKUP_KEEP_WEEKLY) BACKUP_KEEP_WEEKLY="$value" ;;
+      BACKUP_KEEP_MONTHLY) BACKUP_KEEP_MONTHLY="$value" ;;
+      BACKUP_RUN_CHECK) BACKUP_RUN_CHECK="$value" ;;
+    esac
+  done <"$BACKUP_ENV_FILE"
+
   [[ -n "${RESTIC_REPOSITORY:-}" ]] || die "restic_repository_missing"
   [[ -n "${RESTIC_PASSWORD_FILE:-}" ]] || die "restic_password_file_missing"
   [[ -r "$RESTIC_PASSWORD_FILE" ]] || die "restic_password_file_unreadable"
+  export RESTIC_REPOSITORY RESTIC_PASSWORD_FILE
+  [[ -n "${AWS_ACCESS_KEY_ID:-}" ]] && export AWS_ACCESS_KEY_ID
+  [[ -n "${AWS_SECRET_ACCESS_KEY:-}" ]] && export AWS_SECRET_ACCESS_KEY
+}
+
+manifest_value() {
+  local key="$1"
+  local manifest="$2"
+  sed -n "s/^${key}=//p" "$manifest" | tail -n 1
+}
+
+validate_manifest() {
+  local manifest="$1"
+
+  [[ -s "$manifest" ]] || die "restore_manifest_missing"
+  [[ "$(manifest_value manifest_version "$manifest")" == "$BACKUP_MANIFEST_VERSION" ]] || die "restore_manifest_version_unsupported"
+  [[ "$(manifest_value backup_policy "$manifest")" == "$BACKUP_POLICY" ]] || die "restore_manifest_policy_unsupported"
+  [[ "$(manifest_value backup_policy_version "$manifest")" == "$BACKUP_POLICY_VERSION" ]] || die "restore_manifest_policy_version_unsupported"
+  [[ "$(manifest_value included_volumes "$manifest")" == "$BACKUP_INCLUDED_VOLUMES" ]] || die "restore_manifest_volumes_unsupported"
+  [[ "$(manifest_value excluded_volumes "$manifest")" == "$BACKUP_EXCLUDED_VOLUMES" ]] || die "restore_manifest_exclusions_unsupported"
+  [[ "$(manifest_value excluded_volume_restore_action "$manifest")" == "$DSAR_RESTORE_ACTION" ]] || die "restore_manifest_dsar_action_unsupported"
+}
+
+restore_volume() {
+  local volume="$1"
+  local archive_name="$2"
+  local payload="$3"
+
+  docker run --rm \
+    -v "${volume}:/data" \
+    -v "$payload:/restore:ro" \
+    alpine:3.20 \
+    sh -eu -c "find /data -mindepth 1 -maxdepth 1 -exec rm -rf {} +; tar xzf /restore/$archive_name -C /data"
+}
+
+clear_volume() {
+  local volume="$1"
+
+  docker run --rm \
+    -v "${volume}:/data" \
+    alpine:3.20 \
+    sh -eu -c 'find /data -mindepth 1 -maxdepth 1 -exec rm -rf {} +'
 }
 
 parse_args() {
@@ -149,14 +230,18 @@ main() {
   [[ -f "$SHARED_DIR/.env" ]] || die "shared_env_missing"
   [[ -L "$CURRENT_LINK" ]] || die "current_release_missing"
 
-  local stage payload db_name db_user sites_volume current_release
+  local stage payload db_name db_user sites_volume uploads_volume caddy_data_volume caddy_config_volume dsar_volume current_release
   stage="$(mktemp -d "${TMPDIR:-/tmp}/site-panel-restore.XXXXXX")"
   trap 'rm -rf "$stage"' EXIT
   restic restore "$SNAPSHOT" --target "$stage" >/dev/null
   payload="$stage/site-panel"
   [[ -s "$payload/postgres.dump" ]] || die "restore_postgres_dump_missing"
-  [[ -s "$payload/sites.tar.gz" ]] || die "restore_sites_archive_missing"
+  [[ -s "$payload/sites_data.tar.gz" ]] || die "restore_sites_archive_missing"
+  [[ -s "$payload/uploads_data.tar.gz" ]] || die "restore_uploads_archive_missing"
+  [[ -s "$payload/caddy_data.tar.gz" ]] || die "restore_caddy_data_archive_missing"
+  [[ -s "$payload/caddy_config.tar.gz" ]] || die "restore_caddy_config_archive_missing"
   [[ -s "$payload/shared.env" ]] || die "restore_shared_env_missing"
+  validate_manifest "$payload/manifest.env"
 
   # Protect the currently running state before destructive operations. If this
   # pre-restore backup cannot be made, restoration stops rather than replacing data.
@@ -167,7 +252,15 @@ main() {
   db_user="$(dotenv_value POSTGRES_USER)"
   [[ -n "$db_name" && -n "$db_user" ]] || die "postgres_settings_missing"
   sites_volume="${COMPOSE_PROJECT}_sites_data"
+  uploads_volume="${COMPOSE_PROJECT}_uploads_data"
+  caddy_data_volume="${COMPOSE_PROJECT}_caddy_data"
+  caddy_config_volume="${COMPOSE_PROJECT}_caddy_config"
+  dsar_volume="${COMPOSE_PROJECT}_dsar_data"
   docker volume inspect "$sites_volume" >/dev/null 2>&1 || die "sites_volume_missing"
+  docker volume inspect "$uploads_volume" >/dev/null 2>&1 || die "uploads_volume_missing"
+  docker volume inspect "$caddy_data_volume" >/dev/null 2>&1 || die "caddy_data_volume_missing"
+  docker volume inspect "$caddy_config_volume" >/dev/null 2>&1 || die "caddy_config_volume_missing"
+  docker volume inspect "$dsar_volume" >/dev/null 2>&1 || die "dsar_volume_missing"
   current_release="$(basename "$(readlink -f "$CURRENT_LINK")")"
 
   compose stop api worker panel caddy || true
@@ -182,11 +275,13 @@ main() {
     --no-owner \
     --no-privileges <"$payload/postgres.dump"
 
-  docker run --rm \
-    -v "${sites_volume}:/data" \
-    -v "$payload:/restore:ro" \
-    alpine:3.20 \
-    sh -eu -c 'find /data -mindepth 1 -maxdepth 1 -exec rm -rf {} +; tar xzf /restore/sites.tar.gz -C /data'
+  restore_volume "$sites_volume" "sites_data.tar.gz" "$payload"
+  restore_volume "$uploads_volume" "uploads_data.tar.gz" "$payload"
+  restore_volume "$caddy_data_volume" "caddy_data.tar.gz" "$payload"
+  restore_volume "$caddy_config_volume" "caddy_config.tar.gz" "$payload"
+  # DSAR exports are intentionally excluded from off-host backups because they
+  # can contain sensitive one-time exports. Never carry them into a restore.
+  clear_volume "$dsar_volume"
 
   install -m 0600 "$payload/shared.env" "$SHARED_DIR/.env"
   if [[ -f "$payload/release-state.env" ]]; then

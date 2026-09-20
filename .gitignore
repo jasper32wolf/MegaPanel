@@ -21,6 +21,7 @@ apps/panel/dist/
 .env
 .env.*
 !.env.example
+!.env.production.example
 *.pem
 *.key
 secrets/
@@ -31,19 +32,3 @@ secrets/
 *.swp
 Thumbs.db
 .DS_Store
-
-# Local agent settings (may contain credentials)
-.claude/settings.json
-.claude/settings.local.json
-.claude/worktrees/
-
-# Runtime
-/data/
-/uploads/
-/sites/
-*.log
-
-# Geo dumps (too large for git)
-/data/geo/
-*.dump
-*.sql.gz

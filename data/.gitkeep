@@ -1,0 +1,3 @@
+# Installer scripts for Site Panel
+
+Keep this folder so `data/` exists in clones when empty runtime dirs are gitignored.
