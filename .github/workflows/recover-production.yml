@@ -58,7 +58,18 @@ jobs:
         run: |
           set -Eeuo pipefail
           if [[ "$EVENT_NAME" == "schedule" ]]; then
-            : "${PUBLIC_HEALTH_URL:?Set PUBLIC_HEALTH_URL as a repository variable before enabling scheduled recovery}"
+            if [[ -z "$PUBLIC_HEALTH_URL" ]]; then
+              echo 'should_run=false' >>"$GITHUB_OUTPUT"
+              echo 'operation=status' >>"$GITHUB_OUTPUT"
+              echo 'source=scheduled-recovery-not-configured' >>"$GITHUB_OUTPUT"
+              {
+                echo '## Scheduled recovery is disabled'
+                echo
+                echo 'No remote command was run because repository variable `PUBLIC_HEALTH_URL` is unset.'
+                echo 'Configure it before enabling scheduled recovery.'
+              } >>"$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
             if curl --fail --silent --show-error --max-time 15 --retry 1 "$PUBLIC_HEALTH_URL" >/dev/null; then
               echo 'should_run=false' >>"$GITHUB_OUTPUT"
               echo 'operation=status' >>"$GITHUB_OUTPUT"
@@ -182,4 +193,4 @@ jobs:
     if: ${{ needs.select-operation.outputs.should_run == 'false' }}
     runs-on: ubuntu-latest
     steps:
-      - run: echo "Public health probe succeeded; no remote action was taken." >>"$GITHUB_STEP_SUMMARY"
+      - run: echo "Scheduled recovery did not issue a remote command." >>"$GITHUB_STEP_SUMMARY"
