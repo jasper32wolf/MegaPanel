@@ -221,11 +221,11 @@ export COMPOSE_PROJECT="site-panel"
 export HEALTH_TIMEOUT_SECONDS=1
 export AUTO_RECOVERY_COOLDOWN_SECONDS=3600
 
-"$MANAGER" deploy "$GOOD" >"$TMP/good.out"
+bash "$MANAGER" deploy "$GOOD" >"$TMP/good.out"
 assert_eq "$(basename "$(readlink -f "$SITE_ROOT/current")")" "$GOOD" "good release becomes current"
 assert_eq "$(basename "$(readlink -f "$SITE_ROOT/previous")")" "$OLD" "old release becomes previous"
 grep -qx 'health=ok' "$TMP/good.out"
-grep -qx 'backup_snapshot=deadbeef' <("$MANAGER" backup test)
+grep -qx 'backup_snapshot=deadbeef' <(bash "$MANAGER" backup test)
 for archive in sites_data.tar.gz uploads_data.tar.gz caddy_data.tar.gz caddy_config.tar.gz; do
   [[ -s "$RESTIC_PAYLOAD/$archive" ]] || {
     printf 'FAIL: expected backup archive missing: %s\n' "$archive" >&2
@@ -243,25 +243,25 @@ assert_not_contains 'source "$BACKUP_ENV_FILE"' "$ROOT/scripts/restore-productio
 assert_not_contains 'down -v' "$ROOT/scripts/restore-production.sh" "restore volume handling"
 
 export FAKE_FAILED_RELEASE="$BAD"
-assert_fails "$MANAGER" deploy "$BAD"
+assert_fails bash "$MANAGER" deploy "$BAD"
 assert_eq "$(basename "$(readlink -f "$SITE_ROOT/current")")" "$GOOD" "failed deployment restores current release"
 grep -qx 'last_good_release=2222222222222222222222222222222222222222' "$SITE_ROOT/shared/release-state/state.env"
 
 export FAKE_FAILED_RELEASE="$GOOD"
-"$MANAGER" auto-recover >"$TMP/recover.out"
+bash "$MANAGER" auto-recover >"$TMP/recover.out"
 assert_eq "$(basename "$(readlink -f "$SITE_ROOT/current")")" "$OLD" "auto recovery rolls code back"
 grep -qx 'recovery=rollback' "$TMP/recover.out"
 export FAKE_FAILED_RELEASE="$OLD"
-assert_fails "$MANAGER" auto-recover
-assert_fails "$MANAGER" install-archive not-a-release-id
-assert_fails "$ROOT/scripts/restore-production.sh" --snapshot deadbeef
+assert_fails bash "$MANAGER" auto-recover
+assert_fails bash "$MANAGER" install-archive not-a-release-id
+assert_fails bash "$ROOT/scripts/restore-production.sh" --snapshot deadbeef
 
 cat >"$SITE_ROOT/shared/backup.env" <<EOF
 RESTIC_REPOSITORY=s3:test
 RESTIC_PASSWORD_FILE=$TMP/restic-password
 AWS_ACCESS_KEY_ID=\$(touch "$TMP/allowed-value-executed")
 EOF
-"$MANAGER" backup dotenv-allowed-value >"$TMP/dotenv-allowed-value.out"
+bash "$MANAGER" backup dotenv-allowed-value >"$TMP/dotenv-allowed-value.out"
 [[ ! -e "$TMP/allowed-value-executed" ]] || {
   printf 'FAIL: allowlisted backup.env value executed shell code\n' >&2
   exit 1
@@ -271,8 +271,8 @@ RESTIC_REPOSITORY=s3:test
 RESTIC_PASSWORD_FILE=$TMP/restic-password
 UNSAFE=\$(touch "$TMP/dotenv-executed")
 EOF
-assert_fails "$MANAGER" backup dotenv-test
-assert_fails "$ROOT/scripts/restore-production.sh" --snapshot deadbeef --confirm-restore
+assert_fails bash "$MANAGER" backup dotenv-test
+assert_fails bash "$ROOT/scripts/restore-production.sh" --snapshot deadbeef --confirm-restore
 [[ ! -e "$TMP/dotenv-executed" ]] || {
   printf 'FAIL: backup.env executed shell code\n' >&2
   exit 1
@@ -280,7 +280,7 @@ assert_fails "$ROOT/scripts/restore-production.sh" --snapshot deadbeef --confirm
 printf '%s\n' 'RESTIC_REPOSITORY=s3:test' "RESTIC_PASSWORD_FILE=$TMP/restic-password" >"$SITE_ROOT/shared/backup.env"
 
 unset FAKE_FAILED_RELEASE
-"$ROOT/scripts/restore-production.sh" --snapshot deadbeef --confirm-restore >"$TMP/restore.out"
+bash "$ROOT/scripts/restore-production.sh" --snapshot deadbeef --confirm-restore >"$TMP/restore.out"
 grep -qx 'restore=ok' "$TMP/restore.out"
 for volume in sites_data uploads_data caddy_data caddy_config dsar_data; do
   grep -Fq "site-panel_${volume}:/data" "$LOG"
