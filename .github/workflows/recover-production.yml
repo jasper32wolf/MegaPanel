@@ -57,29 +57,35 @@ jobs:
           PUBLIC_HEALTH_URL: ${{ vars.PUBLIC_HEALTH_URL }}
         run: |
           set -Eeuo pipefail
+          write_outputs() {
+            printf '%s\n' "$@" >>"$GITHUB_OUTPUT"
+          }
           if [[ "$EVENT_NAME" == "schedule" ]]; then
             if [[ -z "$PUBLIC_HEALTH_URL" ]]; then
-              echo 'should_run=false' >>"$GITHUB_OUTPUT"
-              echo 'operation=status' >>"$GITHUB_OUTPUT"
-              echo 'source=scheduled-recovery-not-configured' >>"$GITHUB_OUTPUT"
+              write_outputs \
+                'should_run=false' \
+                'operation=status' \
+                'source=scheduled-recovery-not-configured'
               {
                 echo '## Scheduled recovery is disabled'
                 echo
-                echo 'No remote command was run because repository variable `PUBLIC_HEALTH_URL` is unset.'
+                echo "No remote command was run because repository variable PUBLIC_HEALTH_URL is unset."
                 echo 'Configure it before enabling scheduled recovery.'
               } >>"$GITHUB_STEP_SUMMARY"
               exit 0
             fi
             if curl --fail --silent --show-error --max-time 15 --retry 1 "$PUBLIC_HEALTH_URL" >/dev/null; then
-              echo 'should_run=false' >>"$GITHUB_OUTPUT"
-              echo 'operation=status' >>"$GITHUB_OUTPUT"
-              echo 'source=scheduled-public-health-ok' >>"$GITHUB_OUTPUT"
+              write_outputs \
+                'should_run=false' \
+                'operation=status' \
+                'source=scheduled-public-health-ok'
             else
               # The VPS release manager performs an internal health check before
               # restarting anything, protecting against DNS/TLS false positives.
-              echo 'should_run=true' >>"$GITHUB_OUTPUT"
-              echo 'operation=recover' >>"$GITHUB_OUTPUT"
-              echo 'source=scheduled-public-health-failed' >>"$GITHUB_OUTPUT"
+              write_outputs \
+                'should_run=true' \
+                'operation=recover' \
+                'source=scheduled-public-health-failed'
             fi
             exit 0
           fi
@@ -102,10 +108,11 @@ jobs:
               exit 1
               ;;
           esac
-          echo 'should_run=true' >>"$GITHUB_OUTPUT"
-          echo "operation=$REQUESTED_OPERATION" >>"$GITHUB_OUTPUT"
-          echo "snapshot=$REQUESTED_SNAPSHOT" >>"$GITHUB_OUTPUT"
-          echo 'source=manual' >>"$GITHUB_OUTPUT"
+          write_outputs \
+            'should_run=true' \
+            "operation=$REQUESTED_OPERATION" \
+            "snapshot=$REQUESTED_SNAPSHOT" \
+            'source=manual'
 
   recover:
     name: Execute bounded recovery action
