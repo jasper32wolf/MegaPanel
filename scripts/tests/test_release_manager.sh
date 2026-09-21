@@ -32,12 +32,12 @@ printf '%s\n' \
   'APP_PEPPER=test-app-pepper-that-is-long-enough' \
   'BLIND_INDEX_PEPPER=test-blind-index-pepper-that-is-long-enough' \
   'FIELD_ENCRYPTION_KEY=test-field-encryption-key-that-is-long-enough' \
-  'PANEL_DOMAIN=panel.test.example' \
-  'API_DOMAIN=api.test.example' \
-  'CADDY_EMAIL=ops@test.example' \
-  'PANEL_PUBLIC_URL=https://panel.test.example' \
-  'API_PUBLIC_URL=https://api.test.example' \
-  'CORS_ORIGINS=https://panel.test.example' >"$SITE_ROOT/shared/.env"
+  'PANEL_DOMAIN=panel.test' \
+  'API_DOMAIN=api.test' \
+  'CADDY_EMAIL=ops@ops.test' \
+  'PANEL_PUBLIC_URL=https://panel.test' \
+  'API_PUBLIC_URL=https://api.test' \
+  'CORS_ORIGINS=https://panel.test' >"$SITE_ROOT/shared/.env"
 chmod 0600 "$SITE_ROOT/shared/.env"
 printf '%s\n' 'RESTIC_REPOSITORY=s3:test' "RESTIC_PASSWORD_FILE=$TMP/restic-password" >"$SITE_ROOT/shared/backup.env"
 printf '%s\n' 'test-password' >"$TMP/restic-password"
