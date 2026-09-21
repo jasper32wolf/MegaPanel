@@ -222,7 +222,10 @@ export COMPOSE_PROJECT="site-panel"
 export HEALTH_TIMEOUT_SECONDS=1
 export AUTO_RECOVERY_COOLDOWN_SECONDS=3600
 
-bash "$MANAGER" deploy "$GOOD" >"$TMP/good.out"
+if ! bash "$MANAGER" deploy "$GOOD" >"$TMP/good.out"; then
+  cat "$TMP/good.out" >&2
+  exit 1
+fi
 assert_eq "$(basename "$(readlink -f "$SITE_ROOT/current")")" "$GOOD" "good release becomes current"
 assert_eq "$(basename "$(readlink -f "$SITE_ROOT/previous")")" "$OLD" "old release becomes previous"
 grep -qx 'health=ok' "$TMP/good.out"
