@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from app.api.v1.geo import parse_geo_csv
 
 

@@ -92,7 +92,11 @@ async def finops_summary(session: AsyncSession, tenant_id: uuid.UUID | str) -> d
     from app.models import FinopsEntry
 
     tid = uuid.UUID(str(tenant_id))
-    rows = list((await session.execute(select(FinopsEntry).where(FinopsEntry.tenant_id == tid))).scalars().all())
+    rows = list(
+        (await session.execute(select(FinopsEntry).where(FinopsEntry.tenant_id == tid)))
+        .scalars()
+        .all()
+    )
     by_kind: dict[str, float] = {}
     total = 0.0
     for row in rows:

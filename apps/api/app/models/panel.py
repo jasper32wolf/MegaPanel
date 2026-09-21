@@ -44,7 +44,9 @@ class SavedView(Base):
     __tablename__ = "saved_views"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"))
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE")
+    )
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     entity: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -71,7 +73,9 @@ class WebhookSubscription(Base):
     __tablename__ = "webhook_subscriptions"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"))
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE")
+    )
     url: Mapped[str] = mapped_column(String(2048), nullable=False)
     events: Mapped[list] = mapped_column(JSONB, default=list)
     secret: Mapped[str] = mapped_column(String(128), nullable=False)

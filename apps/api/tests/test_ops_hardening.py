@@ -1,3 +1,4 @@
+from app.services.hardening import EgressGuard, FinOpsLedger
 from app.services.ops import (
     detect_decay,
     evergreen_refresh_text,
@@ -5,7 +6,6 @@ from app.services.ops import (
     needs_serp_correction,
     regenerate_meta_local,
 )
-from app.services.hardening import EgressGuard, FinOpsLedger
 
 
 def test_serp_correction_gate():

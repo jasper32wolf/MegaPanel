@@ -2,12 +2,10 @@ from __future__ import annotations
 
 from uuid import UUID, uuid4
 
+from app.models import GeoPlace, MorphCache
+from app.services.morph import city_placeholders, inflect_cases, word_hash
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.models import GeoPlace
-from app.services.morph import city_placeholders, inflect_cases, word_hash
-from app.models import MorphCache
 
 
 async def get_or_compute_forms(session: AsyncSession, word: str) -> dict[str, str]:
@@ -69,8 +67,12 @@ async def upsert_place(
     return place
 
 
-async def validate_toponym(session: AsyncSession, name: str, kind: str | None = None) -> GeoPlace | None:
-    stmt = select(GeoPlace).where(GeoPlace.name.ilike(name.strip()), GeoPlace.is_validated.is_(True))
+async def validate_toponym(
+    session: AsyncSession, name: str, kind: str | None = None
+) -> GeoPlace | None:
+    stmt = select(GeoPlace).where(
+        GeoPlace.name.ilike(name.strip()), GeoPlace.is_validated.is_(True)
+    )
     if kind:
         stmt = stmt.where(GeoPlace.kind == kind)
     result = await session.execute(stmt.limit(1))

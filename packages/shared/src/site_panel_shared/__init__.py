@@ -15,8 +15,8 @@ from site_panel_shared.events import (
 )
 from site_panel_shared.manifests import (
     BlockDef,
-    GeoEntity,
     GenerationJob,
+    GeoEntity,
     PageManifest,
     SiteManifest,
 )

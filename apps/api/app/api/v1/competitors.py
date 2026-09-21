@@ -2,17 +2,16 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.api.deps import AuthContext, require_roles
 from app.db.session import get_db
 from app.models import CompetitorScan, KnowledgeDoc
 from app.schemas.phase3 import KnowledgeOut, ScanCreate, ScanOut
 from app.services.audit import append_audit
 from app.services.competitor import scan_competitor
+from fastapi import APIRouter, Depends, HTTPException
 from site_panel_security import SSRFBlockedError
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
 

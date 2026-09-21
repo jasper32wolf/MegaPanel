@@ -1,11 +1,10 @@
+import app.models  # noqa: F401 — register all models
 from alembic import context
+from app.core.config import get_settings
+from app.db.session import Base
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
-
-from app.core.config import get_settings
-from app.db.session import Base
-import app.models  # noqa: F401 — register all models
 
 config = context.config
 settings = get_settings()

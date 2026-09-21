@@ -4,7 +4,7 @@ import json
 from functools import lru_cache
 from pathlib import Path
 
-from site_panel_blocks.schema import BlockSpec, KitSpec, LIBRARY_VERSION, ThemeProfile
+from site_panel_blocks.schema import LIBRARY_VERSION, BlockSpec, KitSpec, ThemeProfile
 
 KITS_DIR = Path(__file__).resolve().parent / "kits"
 

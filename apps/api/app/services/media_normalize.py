@@ -21,7 +21,12 @@ def decode_image(raw: bytes) -> Image.Image:
             with Image.open(BytesIO(raw)) as source:
                 source.load()
                 return source.copy()
-    except (Image.DecompressionBombError, Image.DecompressionBombWarning, UnidentifiedImageError, OSError) as exc:
+    except (
+        Image.DecompressionBombError,
+        Image.DecompressionBombWarning,
+        UnidentifiedImageError,
+        OSError,
+    ) as exc:
         raise ValueError("Invalid or oversized image") from exc
     finally:
         Image.MAX_IMAGE_PIXELS = previous_limit
@@ -29,7 +34,11 @@ def decode_image(raw: bytes) -> Image.Image:
 
 def average_hash(img: Image.Image, size: int = 8) -> str:
     gray = img.convert("L").resize((size, size))
-    pixels = list(gray.get_flattened_data()) if hasattr(gray, "get_flattened_data") else list(gray.getdata())
+    pixels = (
+        list(gray.get_flattened_data())
+        if hasattr(gray, "get_flattened_data")
+        else list(gray.getdata())
+    )
     avg = sum(pixels) / len(pixels)
     bits = "".join("1" if p >= avg else "0" for p in pixels)
     return f"{int(bits, 2):016x}"

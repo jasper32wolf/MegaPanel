@@ -64,8 +64,8 @@ def test_vps_provisioner_uses_immutable_production_release_path():
     provisioner = PROVISIONER_PATH.read_text(encoding="utf-8")
     development_installer = DEV_INSTALLER_PATH.read_text(encoding="utf-8")
 
-    assert "release-manager.sh\" deploy" in provisioner
-    assert "git -C \"$SOURCE_DIR\" archive \"$SOURCE_SHA\"" in provisioner
+    assert 'release-manager.sh" deploy' in provisioner
+    assert 'git -C "$SOURCE_DIR" archive "$SOURCE_SHA"' in provisioner
     assert "docker-compose.yml" not in provisioner
     assert "install-production-vps.sh" in development_installer
     assert 'die "VPS production uses:' in development_installer

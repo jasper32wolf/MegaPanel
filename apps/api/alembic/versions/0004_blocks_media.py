@@ -2,23 +2,28 @@
 
 from __future__ import annotations
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "0004_blocks_media"
-down_revision: Union[str, None] = "0003_geo_taxonomy"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "0003_geo_taxonomy"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
     op.create_table(
         "content_blocks",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "tenant_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("type", sa.String(64), nullable=False),
         sa.Column("name", sa.String(160), nullable=False),
         sa.Column("hash_class", sa.String(64), nullable=False),
@@ -34,7 +39,12 @@ def upgrade() -> None:
     op.create_table(
         "media_assets",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "tenant_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("path", sa.String(512), nullable=False),
         sa.Column("content_type", sa.String(128), nullable=False),
         sa.Column("source", sa.String(255), nullable=True),
@@ -52,7 +62,12 @@ def upgrade() -> None:
     op.create_table(
         "competitor_scans",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "tenant_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("seed_url", sa.String(1024), nullable=False),
         sa.Column("status", sa.String(32), server_default="pending"),
         sa.Column("urls", postgresql.JSONB(), server_default=sa.text("'[]'::jsonb")),
@@ -67,7 +82,12 @@ def upgrade() -> None:
     op.create_table(
         "knowledge_docs",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "tenant_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("title", sa.String(255), nullable=False),
         sa.Column("kind", sa.String(64), server_default="skeleton"),
         sa.Column("content", postgresql.JSONB(), server_default=sa.text("'{}'::jsonb")),

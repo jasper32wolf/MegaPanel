@@ -75,7 +75,9 @@ def validate_infill(data: dict[str, Any]) -> MicroInfillOut:
         raise ValueError(f"Invalid micro-infill JSON: {exc}") from exc
 
 
-def slot_fill_sentences(seeds: list[str], synonyms: dict[str, list[str]], context: dict[str, str]) -> list[str]:
+def slot_fill_sentences(
+    seeds: list[str], synonyms: dict[str, list[str]], context: dict[str, str]
+) -> list[str]:
     """Combinatorial mutation without LLM (TZ 5.1)."""
     out: list[str] = []
     for seed in seeds:

@@ -1,6 +1,6 @@
+import pytest
 from app.services.competitor import build_skeleton, extract_html, parse_sitemap_xml
 from site_panel_security import SSRFBlockedError, SSRFGuard
-import pytest
 
 
 def test_extract_html_basic():

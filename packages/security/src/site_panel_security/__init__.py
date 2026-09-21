@@ -2,7 +2,7 @@
 
 from site_panel_security.crypto import BlindIndex, FieldEncryptor
 from site_panel_security.sanitizer import sanitize_html
-from site_panel_security.ssrf import SSRFGuard, SSRFBlockedError
+from site_panel_security.ssrf import SSRFBlockedError, SSRFGuard
 
 __all__ = [
     "BlindIndex",

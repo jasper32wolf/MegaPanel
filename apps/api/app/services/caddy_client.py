@@ -7,7 +7,6 @@ from typing import Any
 from uuid import UUID
 
 import httpx
-
 from app.core.config import get_settings
 
 
@@ -133,11 +132,21 @@ class CaddyClient:
         *,
         redirect_id: UUID | str | None = None,
     ) -> dict:
-        route_id = f"redir-{redirect_id}" if redirect_id else f"redir-{hashlib.sha256(f'{hostname}:{from_path}'.encode()).hexdigest()[:16]}"
+        route_id = (
+            f"redir-{redirect_id}"
+            if redirect_id
+            else f"redir-{hashlib.sha256(f'{hostname}:{from_path}'.encode()).hexdigest()[:16]}"
+        )
         route = {
             "@id": route_id,
             "match": [{"host": [hostname], "path": [from_path]}],
-            "handle": [{"handler": "static_response", "headers": {"Location": [to_url]}, "status_code": code}],
+            "handle": [
+                {
+                    "handler": "static_response",
+                    "headers": {"Location": [to_url]},
+                    "status_code": code,
+                }
+            ],
             "terminal": True,
         }
         result = await self._request("PUT", f"/id/{route_id}", route)

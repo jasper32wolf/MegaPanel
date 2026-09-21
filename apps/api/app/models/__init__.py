@@ -244,6 +244,13 @@ class OnboardingSession(Base):
 
 
 # Re-export phase-3 models
+from app.models.ai import (  # noqa: E402
+    ContentHash,
+    DeadLetterJob,
+    GenerationJob,
+    LlmCache,
+    PromptEntry,
+)
 from app.models.blocks import (  # noqa: E402
     BlockKit,
     BlockKitItem,
@@ -253,21 +260,27 @@ from app.models.blocks import (  # noqa: E402
     MediaAsset,
     make_hash_class,
 )
-from app.models.ai import (  # noqa: E402
-    ContentHash,
-    DeadLetterJob,
-    GenerationJob,
-    LlmCache,
-    PromptEntry,
+from app.models.leads import (  # noqa: E402
+    AnalyticsEvent,
+    Consent,
+    Lead,
+    WebhookDelivery,
+    WebhookDeliveryAttempt,
 )
-from app.models.publish import (  # noqa: E402
-    BulkOperation,
-    Domain,
-    Redirect,
-    SiteBuild,
-    SitePage,
+from app.models.ops import (  # noqa: E402
+    ContentDecayEvent,
+    FootprintAudit,
+    SerpCheck,
+    StagingApproval,
 )
-from app.models.leads import AnalyticsEvent, Consent, Lead, WebhookDelivery, WebhookDeliveryAttempt  # noqa: E402
+from app.models.panel import (  # noqa: E402
+    ApiKey,
+    AuthSession,
+    Notification,
+    Plugin,
+    SavedView,
+    WebhookSubscription,
+)
 from app.models.project import (  # noqa: E402
     LeadOutcome,
     PageDraft,
@@ -277,19 +290,18 @@ from app.models.project import (  # noqa: E402
     ProjectGeoPlace,
     ProjectKeyword,
 )
+from app.models.publish import (  # noqa: E402
+    BulkOperation,
+    Domain,
+    Redirect,
+    SiteBuild,
+    SitePage,
+)
 from app.models.system_operation import SystemOperation  # noqa: E402
-from app.models.ops import ContentDecayEvent, FootprintAudit, SerpCheck, StagingApproval  # noqa: E402
-from app.models.panel import (
-    AuthSession,
-    ApiKey,
-    Notification,
-    Plugin,
-    SavedView,
-    WebhookSubscription,
-)  # noqa: E402
 
 __all__ = [
     "AnalyticsEvent",
+    "ApiKey",
     "AuthSession",
     "AuditLog",
     "BlockKit",
@@ -331,6 +343,7 @@ __all__ = [
     "Site",
     "SiteBuild",
     "SitePage",
+    "StagingApproval",
     "SystemOperation",
     "TaxonomyCategory",
     "Tenant",

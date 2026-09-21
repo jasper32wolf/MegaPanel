@@ -6,30 +6,34 @@ import re
 from collections.abc import Iterable
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
-from fastapi.responses import PlainTextResponse
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.api.deps import AuthContext, require_roles
 from app.db.session import get_db
 from app.models import Keyword
 from app.schemas.common import KeywordImportRequest
 from app.services.audit import append_audit
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi.responses import PlainTextResponse
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
 
 _WS = re.compile(r"\s+")
 MAX_IMPORT_BYTES = 10 * 1024 * 1024
 MAX_IMPORT_ROWS = 100_000
-TEMPLATE = "phrase,frequency,group,intent,city,priority\nремонт стиральных машин,1200,ремонт стиральных машин,commercial,Москва,high\n"
+TEMPLATE = (
+    "phrase,frequency,group,intent,city,priority\n"
+    "ремонт стиральных машин,1200,ремонт стиральных машин,commercial,Москва,high\n"
+)
 
 
 def normalize_phrase(phrase: str) -> str:
     return _WS.sub(" ", phrase.strip().lower())
 
 
-def parse_keyword_csv(raw: bytes, *, delimiter: str, phrase_column: str, column_map: dict[str, str]) -> tuple[list[dict], list[dict]]:
+def parse_keyword_csv(
+    raw: bytes, *, delimiter: str, phrase_column: str, column_map: dict[str, str]
+) -> tuple[list[dict], list[dict]]:
     if len(raw) > MAX_IMPORT_BYTES:
         raise ValueError("File exceeds 10 MB")
     if delimiter not in {",", ";", "\t"}:
@@ -56,7 +60,9 @@ def parse_keyword_csv(raw: bytes, *, delimiter: str, phrase_column: str, column_
         rows.append(
             {
                 "phrase": phrase,
-                "category": (source.get(column_map["group"]) or "").strip() if column_map["group"] else None,
+                "category": (source.get(column_map["group"]) or "").strip()
+                if column_map["group"]
+                else None,
                 "meta": {
                     key: (source.get(column) or "").strip()
                     for key, column in column_map.items()
@@ -74,7 +80,9 @@ async def save_keywords(
     items: Iterable[dict],
 ) -> tuple[int, int]:
     existing = set(
-        (await db.execute(select(Keyword.normalized).where(Keyword.tenant_id == tenant_id))).scalars().all()
+        (await db.execute(select(Keyword.normalized).where(Keyword.tenant_id == tenant_id)))
+        .scalars()
+        .all()
     )
     created = 0
     skipped = 0
@@ -186,11 +194,15 @@ async def list_keywords(
     q: str | None = Query(None, min_length=1, max_length=200),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
-    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor", "viewer")),
+    auth: AuthContext = Depends(
+        require_roles("superadmin", "tenant_admin", "manager", "editor", "viewer")
+    ),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     tenant_id = operator_scope(auth)
-    statement = select(Keyword).where(Keyword.tenant_id == tenant_id).order_by(Keyword.created_at.desc())
+    statement = (
+        select(Keyword).where(Keyword.tenant_id == tenant_id).order_by(Keyword.created_at.desc())
+    )
     if q:
         statement = statement.where(Keyword.normalized.ilike(f"%{normalize_phrase(q)}%"))
     rows = list((await db.execute(statement.offset(offset).limit(limit))).scalars().all())

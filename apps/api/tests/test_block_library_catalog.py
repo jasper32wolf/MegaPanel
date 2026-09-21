@@ -1,4 +1,4 @@
-from site_panel_blocks import apply_theme, instantiate_blocks, library_version, list_kits, load_kit
+from site_panel_blocks import library_version, list_kits, load_kit
 
 
 def test_library_version_and_kits():

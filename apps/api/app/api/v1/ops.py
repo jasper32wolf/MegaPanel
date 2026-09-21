@@ -4,16 +4,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.api.deps import AuthContext, require_roles
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.models import Site
-from app.models.ops import ContentDecayEvent, FootprintAudit, SerpCheck, StagingApproval
+from app.models.ops import ContentDecayEvent, SerpCheck, StagingApproval
 from app.models.publish import SitePage
 from app.services.audit import append_audit
 from app.services.ops import (
@@ -24,6 +19,10 @@ from app.services.ops import (
     record_serp_check,
     run_footprint_audit,
 )
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
 settings = get_settings()
@@ -68,7 +67,9 @@ async def serp_check(
     if auth.role != "superadmin" and site.tenant_id != auth.tenant_id:
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    position = body.position if body.position is not None else mock_serp_position(body.query, site.domain)
+    position = (
+        body.position if body.position is not None else mock_serp_position(body.query, site.domain)
+    )
     row = await record_serp_check(
         db,
         tenant_id=site.tenant_id,
@@ -80,7 +81,9 @@ async def serp_check(
     )
     correction = None
     if body.page_id:
-        page = (await db.execute(select(SitePage).where(SitePage.id == body.page_id))).scalar_one_or_none()
+        page = (
+            await db.execute(select(SitePage).where(SitePage.id == body.page_id))
+        ).scalar_one_or_none()
         if page:
             correction = await auto_correct_from_serp(
                 db, site=site, page=page, position=position, days_live=body.days_live
@@ -117,12 +120,16 @@ async def content_decay(
     action = "evergreen" if decayed else "none"
     if decayed and body.page_id:
         # Apply evergreen refresh to on-disk HTML if present
-        page = (await db.execute(select(SitePage).where(SitePage.id == body.page_id))).scalar_one_or_none()
+        page = (
+            await db.execute(select(SitePage).where(SitePage.id == body.page_id))
+        ).scalar_one_or_none()
         if page:
             rel = page.slug.strip("/") or "index"
             path = Path(settings.sites_root) / str(site.id) / "current" / rel / "index.html"
             if path.exists():
-                path.write_text(evergreen_refresh_text(path.read_text(encoding="utf-8")), encoding="utf-8")
+                path.write_text(
+                    evergreen_refresh_text(path.read_text(encoding="utf-8")), encoding="utf-8"
+                )
             action = "evergreen_applied"
 
     evt = ContentDecayEvent(
@@ -205,7 +212,9 @@ async def decide_staging(
     auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "client")),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    row = (await db.execute(select(StagingApproval).where(StagingApproval.id == approval_id))).scalar_one_or_none()
+    row = (
+        await db.execute(select(StagingApproval).where(StagingApproval.id == approval_id))
+    ).scalar_one_or_none()
     if not row:
         raise HTTPException(status_code=404, detail="Not found")
     if auth.role != "superadmin" and row.tenant_id != auth.tenant_id:
@@ -228,7 +237,16 @@ async def list_serp(
     db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
     rows = list(
-        (await db.execute(select(SerpCheck).where(SerpCheck.site_id == site_id).order_by(SerpCheck.checked_at.desc()).limit(50))).scalars().all()
+        (
+            await db.execute(
+                select(SerpCheck)
+                .where(SerpCheck.site_id == site_id)
+                .order_by(SerpCheck.checked_at.desc())
+                .limit(50)
+            )
+        )
+        .scalars()
+        .all()
     )
     return [
         {

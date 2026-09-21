@@ -75,11 +75,15 @@ def probe_tls(hostname: str, timeout: float = 5.0) -> dict[str, Any]:
 
 def domain_probe(hostname: str) -> dict[str, Any]:
     dns = resolve_dns(hostname)
-    tls = probe_tls(hostname) if dns.get("ok") else {
-        "ok": False,
-        "status": "skipped",
-        "error": "dns failed",
-    }
+    tls = (
+        probe_tls(hostname)
+        if dns.get("ok")
+        else {
+            "ok": False,
+            "status": "skipped",
+            "error": "dns failed",
+        }
+    )
     return {
         "dns": dns,
         "tls": tls,

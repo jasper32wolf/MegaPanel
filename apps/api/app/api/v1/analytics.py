@@ -3,14 +3,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.api.deps import AuthContext, require_roles
 from app.core.rate_limit import client_ip, lead_limiter
 from app.db.session import get_db
 from app.models.leads import AnalyticsEvent, Consent
+from fastapi import APIRouter, Depends, Request
+from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
 
@@ -67,7 +66,9 @@ async def revoke_consent(
                     Consent.revoked_at.is_(None),
                 )
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
     now = datetime.now(UTC)
     for r in rows:
@@ -100,8 +101,13 @@ async def collect_event(
 
 
 # Minimal vanilla pixel source for sites
-PIXEL_JS = """(function(){if(!window.__spConsent)return;var d=document,s=d.currentScript,t=s&&s.getAttribute('data-tenant'),i=s&&s.getAttribute('data-site');
-fetch('/api/v1/analytics/collect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tenant_id:t,site_id:i,event:'pageview',path:location.pathname,consent_analytics:!!window.__spConsent.analytics,payload:{}})});})();"""
+PIXEL_JS = (
+    "(function(){if(!window.__spConsent)return;var d=document,s=d.currentScript,"
+    "t=s&&s.getAttribute('data-tenant'),i=s&&s.getAttribute('data-site');"
+    "fetch('/api/v1/analytics/collect',{method:'POST',headers:{'Content-Type':'application/json'},"
+    "body:JSON.stringify({tenant_id:t,site_id:i,event:'pageview',path:location.pathname,"
+    "consent_analytics:!!window.__spConsent.analytics,payload:{}})});})();"
+)
 
 
 @router.get("/pixel.js")

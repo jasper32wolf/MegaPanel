@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import nh3
 
-
 # Allowlist for Block Factory / legal pages — no scripts, no event handlers.
 _ALLOWED_TAGS = {
     "a",

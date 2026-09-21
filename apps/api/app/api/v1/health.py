@@ -1,11 +1,10 @@
 from __future__ import annotations
 
+from app.core.config import get_settings
+from app.schemas.common import HealthResponse
 from fastapi import APIRouter
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from starlette.responses import Response
-
-from app.core.config import get_settings
-from app.schemas.common import HealthResponse
 
 router = APIRouter()
 settings = get_settings()

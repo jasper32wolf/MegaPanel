@@ -1,7 +1,8 @@
-from site_panel_security import sanitize_html
-from site_panel_ssg.templates import fill_slots, render_page
-from site_panel_shared.manifests import BlockDef, PageManifest, SiteManifest
 from uuid import uuid4
+
+from site_panel_security import sanitize_html
+from site_panel_shared.manifests import BlockDef, PageManifest, SiteManifest
+from site_panel_ssg.templates import fill_slots, render_page
 
 
 def test_sanitize_strips_script():

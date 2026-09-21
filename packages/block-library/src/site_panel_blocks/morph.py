@@ -22,11 +22,8 @@ def _hex_to_rgb(h: str) -> tuple[float, float, float]:
 
 
 def _rgb_to_hex(r: float, g: float, b: float) -> str:
-    return "#{:02x}{:02x}{:02x}".format(
-        max(0, min(255, int(r * 255))),
-        max(0, min(255, int(g * 255))),
-        max(0, min(255, int(b * 255))),
-    )
+    channels = (r, g, b)
+    return "#" + "".join(f"{max(0, min(255, int(channel * 255))):02x}" for channel in channels)
 
 
 def _shift_hue(hex_color: str, degrees: float) -> str:
@@ -41,7 +38,7 @@ def apply_theme(seed: str | UUID | int, base: ThemeProfile | None = None) -> dic
     """Deterministic theme morph → CSS custom properties (without -- prefix)."""
     profile = base or ThemeProfile()
     n = _seed_int(seed)
-    hue_shift = ((n % 17) - 8)  # -8..+8
+    hue_shift = (n % 17) - 8  # -8..+8
     radius_step = (n // 17) % 5  # 0..4
     radius = max(0, min(24, profile.radius + (radius_step - 2) * 2))
     gradients = ("none", "soft", "bold")

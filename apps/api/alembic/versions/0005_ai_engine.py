@@ -2,23 +2,28 @@
 
 from __future__ import annotations
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "0005_ai_engine"
-down_revision: Union[str, None] = "0004_blocks_media"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "0004_blocks_media"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
     op.create_table(
         "prompt_registry",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True),
+        sa.Column(
+            "tenant_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=True,
+        ),
         sa.Column("key", sa.String(128), nullable=False),
         sa.Column("version", sa.Integer(), nullable=False, server_default="1"),
         sa.Column("tier", sa.String(32), server_default="micro"),
@@ -32,7 +37,12 @@ def upgrade() -> None:
     op.create_table(
         "generation_jobs",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "tenant_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("site_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("status", sa.String(32), server_default="pending"),
         sa.Column("model_tier", sa.String(32), server_default="micro"),
@@ -59,7 +69,12 @@ def upgrade() -> None:
     op.create_table(
         "content_hashes",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "tenant_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("page_id", sa.String(128), nullable=False),
         sa.Column("simhash", sa.String(32), nullable=False),
         sa.Column("minhash_buckets", postgresql.JSONB(), server_default=sa.text("'[]'::jsonb")),
@@ -71,7 +86,12 @@ def upgrade() -> None:
     op.create_table(
         "dead_letter_jobs",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "tenant_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("job_type", sa.String(64), nullable=False),
         sa.Column("payload", postgresql.JSONB(), server_default=sa.text("'{}'::jsonb")),
         sa.Column("error", sa.Text(), nullable=False),

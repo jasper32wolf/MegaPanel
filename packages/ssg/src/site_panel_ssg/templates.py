@@ -9,7 +9,9 @@ from site_panel_security import sanitize_html
 from site_panel_shared.manifests import PageManifest, SiteManifest
 
 _PLACEHOLDER = re.compile(r"\{([a-z0-9_]+)\}", re.IGNORECASE)
-_FORBIDDEN_CSS = re.compile(r"(?:@import|expression\s*\(|url\s*\(|-moz-binding|behavior\s*:|</style)", re.I)
+_FORBIDDEN_CSS = re.compile(
+    r"(?:@import|expression\s*\(|url\s*\(|-moz-binding|behavior\s*:|</style)", re.I
+)
 
 
 def fill_slots(template: str, context: dict[str, Any]) -> str:
@@ -31,7 +33,9 @@ def _safe_css(value: str) -> str:
     return "" if _FORBIDDEN_CSS.search(value) else value
 
 
-def render_page(site: SiteManifest, page: PageManifest, context: dict[str, Any] | None = None) -> str:
+def render_page(
+    site: SiteManifest, page: PageManifest, context: dict[str, Any] | None = None
+) -> str:
     ctx = {
         "domain": site.domain,
         "locale": site.locale,
@@ -52,8 +56,10 @@ def render_page(site: SiteManifest, page: PageManifest, context: dict[str, Any] 
             css_parts.append(f"  --{key}: {css_value};")
     css_parts.append("}")
     css_parts.append(
-        "body{margin:0;background:var(--sp-bg,var(--bg,#fff));color:var(--sp-text,var(--text,#111));"
-        "font-family:var(--sp-font,system-ui,sans-serif);} main{max-width:960px;margin:0 auto;padding:1rem;}"
+        "body{margin:0;background:var(--sp-bg,var(--bg,#fff));"
+        "color:var(--sp-text,var(--text,#111));"
+        "font-family:var(--sp-font,system-ui,sans-serif);}"
+        " main{max-width:960px;margin:0 auto;padding:1rem;}"
     )
 
     has_hero = any(block.type == "hero" for block in blocks)

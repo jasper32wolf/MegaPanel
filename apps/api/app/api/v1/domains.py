@@ -7,12 +7,6 @@ from typing import Literal
 from urllib.parse import urlparse
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.api.deps import AuthContext, require_roles
 from app.core.config import get_settings
 from app.db.session import get_db
@@ -20,6 +14,11 @@ from app.models import Site
 from app.models.publish import Domain, Redirect
 from app.services.audit import append_audit
 from app.services.caddy_client import CaddyClient
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
 settings = get_settings()
@@ -187,7 +186,10 @@ async def delete_domain(
     await append_audit(
         db,
         action="domain.delete",
-        payload={"hostname": domain.hostname, "site_id": str(domain.site_id) if domain.site_id else None},
+        payload={
+            "hostname": domain.hostname,
+            "site_id": str(domain.site_id) if domain.site_id else None,
+        },
         tenant_id=domain.tenant_id,
         actor_id=auth.user.id,
     )
@@ -237,7 +239,11 @@ async def list_redirects(
     auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "viewer")),
     db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
-    statement = select(Redirect, Site.domain).join(Site, Site.id == Redirect.site_id).order_by(Redirect.created_at.desc())
+    statement = (
+        select(Redirect, Site.domain)
+        .join(Site, Site.id == Redirect.site_id)
+        .order_by(Redirect.created_at.desc())
+    )
     if auth.role != "superadmin":
         if not auth.tenant_id:
             raise HTTPException(status_code=403, detail="Operator scope required")
@@ -273,7 +279,9 @@ async def create_redirect(
         from_path, to_url = validate_redirect(site, body.from_path, body.to_url)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    existing = await db.execute(select(Redirect.id).where(Redirect.site_id == site.id, Redirect.from_path == from_path))
+    existing = await db.execute(
+        select(Redirect.id).where(Redirect.site_id == site.id, Redirect.from_path == from_path)
+    )
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Redirect source already exists")
     redirect = Redirect(
@@ -289,14 +297,21 @@ async def create_redirect(
     except IntegrityError as exc:
         await db.rollback()
         raise HTTPException(status_code=409, detail="Redirect source already exists") from exc
-    caddy = await CaddyClient().add_redirect(site.domain, from_path, to_url, body.code, redirect_id=redirect.id)
+    caddy = await CaddyClient().add_redirect(
+        site.domain, from_path, to_url, body.code, redirect_id=redirect.id
+    )
     if not caddy["ok"]:
         await db.rollback()
         raise HTTPException(status_code=503, detail="Caddy configuration failed")
     await append_audit(
         db,
         action="redirect.create",
-        payload={"redirect_id": str(redirect.id), "from": from_path, "to": to_url, "site_id": str(site.id)},
+        payload={
+            "redirect_id": str(redirect.id),
+            "from": from_path,
+            "to": to_url,
+            "site_id": str(site.id),
+        },
         tenant_id=site.tenant_id,
         actor_id=auth.user.id,
     )
@@ -312,7 +327,11 @@ async def delete_redirect(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     row = (
-        await db.execute(select(Redirect, Site).join(Site, Site.id == Redirect.site_id).where(Redirect.id == redirect_id))
+        await db.execute(
+            select(Redirect, Site)
+            .join(Site, Site.id == Redirect.site_id)
+            .where(Redirect.id == redirect_id)
+        )
     ).one_or_none()
     if not row:
         raise HTTPException(status_code=404, detail="Not found")
@@ -325,7 +344,11 @@ async def delete_redirect(
     await append_audit(
         db,
         action="redirect.delete",
-        payload={"redirect_id": str(redirect.id), "from": redirect.from_path, "site_id": str(site.id)},
+        payload={
+            "redirect_id": str(redirect.id),
+            "from": redirect.from_path,
+            "site_id": str(site.id),
+        },
         tenant_id=redirect.tenant_id,
         actor_id=auth.user.id,
     )

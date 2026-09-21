@@ -2,15 +2,14 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.api.deps import AuthContext, require_roles
 from app.db.session import get_db
 from app.models import TaxonomyCategory
 from app.schemas.phase2 import TaxonomyCreate, TaxonomyOut
 from app.services.audit import append_audit
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
 
@@ -62,9 +61,9 @@ async def create_category(
 @router.get("", response_model=list[TaxonomyOut])
 async def list_categories(
     niche: str | None = None,
-    auth: AuthContext = Depends(require_roles(
-        "superadmin", "tenant_admin", "manager", "editor", "viewer"
-    )),
+    auth: AuthContext = Depends(
+        require_roles("superadmin", "tenant_admin", "manager", "editor", "viewer")
+    ),
     db: AsyncSession = Depends(get_db),
 ) -> list[TaxonomyCategory]:
     if not auth.tenant_id and auth.role != "superadmin":
@@ -81,9 +80,9 @@ async def list_categories(
 @router.get("/{category_id}", response_model=TaxonomyOut)
 async def get_category(
     category_id: UUID,
-    auth: AuthContext = Depends(require_roles(
-        "superadmin", "tenant_admin", "manager", "editor", "viewer"
-    )),
+    auth: AuthContext = Depends(
+        require_roles("superadmin", "tenant_admin", "manager", "editor", "viewer")
+    ),
     db: AsyncSession = Depends(get_db),
 ) -> TaxonomyCategory:
     result = await db.execute(select(TaxonomyCategory).where(TaxonomyCategory.id == category_id))

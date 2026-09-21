@@ -1,16 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from uuid import UUID
-
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AuthContext, require_roles
 from app.db.session import get_db
 from app.services.hardening import egress, finops_summary, record_finops
+from fastapi import APIRouter, Depends
+from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
 

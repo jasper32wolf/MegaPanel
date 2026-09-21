@@ -5,12 +5,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.models import Site
 from app.models.publish import SitePage
 from app.services.indexnow import submit_indexnow
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def promote_drip(
@@ -49,9 +48,16 @@ async def promote_drip(
         site = (await session.execute(select(Site).where(Site.id == site_id))).scalar_one_or_none()
         if not site or not site.indexnow_key:
             continue
-        urls = [f"https://{site.domain}/{p.slug.strip('/')}/" if p.slug.strip("/") else f"https://{site.domain}/" for p in site_pages]
+        urls = [
+            f"https://{site.domain}/{p.slug.strip('/')}/"
+            if p.slug.strip("/")
+            else f"https://{site.domain}/"
+            for p in site_pages
+        ]
         key_loc = f"https://{site.domain}/{site.indexnow_key}.txt"
-        res = await submit_indexnow(host=site.domain, key=site.indexnow_key, key_location=key_loc, urls=urls)
+        res = await submit_indexnow(
+            host=site.domain, key=site.indexnow_key, key_location=key_loc, urls=urls
+        )
         submitted.append({"site_id": str(site_id), **res})
 
     await session.flush()

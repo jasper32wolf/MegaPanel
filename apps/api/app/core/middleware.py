@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import secrets
 
+from app.core.logging import new_correlation_id
+from app.core.security import ACCESS_COOKIE_NAME, CSRF_COOKIE_NAME
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
-
-from app.core.logging import new_correlation_id
-from app.core.security import ACCESS_COOKIE_NAME, CSRF_COOKIE_NAME
 
 
 class CorrelationIdMiddleware(BaseHTTPMiddleware):
@@ -34,7 +33,11 @@ class CsrfMiddleware(BaseHTTPMiddleware):
 
         cookie_token = request.cookies.get(CSRF_COOKIE_NAME, "")
         header_token = request.headers.get("X-CSRF-Token", "")
-        if not cookie_token or not header_token or not secrets.compare_digest(cookie_token, header_token):
+        if (
+            not cookie_token
+            or not header_token
+            or not secrets.compare_digest(cookie_token, header_token)
+        ):
             return JSONResponse({"detail": "CSRF validation failed"}, status_code=403)
         return await call_next(request)
 

@@ -2,24 +2,34 @@
 
 from __future__ import annotations
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "0007_leads"
-down_revision: Union[str, None] = "0006_publish_seo"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "0006_publish_seo"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
     op.create_table(
         "leads",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("site_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("sites.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "tenant_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "site_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("sites.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("page_slug", sa.String(512), nullable=True),
         sa.Column("status", sa.String(32), server_default="new"),
         sa.Column("phone_enc", sa.Text(), nullable=True),
@@ -42,7 +52,12 @@ def upgrade() -> None:
     op.create_table(
         "consents",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "tenant_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("site_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("visitor_id", sa.String(64), nullable=False),
         sa.Column("purposes", postgresql.JSONB(), server_default=sa.text("'{}'::jsonb")),

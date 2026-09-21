@@ -12,7 +12,9 @@ from app.db.session import Base
 
 class PromptEntry(Base):
     __tablename__ = "prompt_registry"
-    __table_args__ = (UniqueConstraint("tenant_id", "key", "version", name="uq_prompt_tenant_key_ver"),)
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "key", "version", name="uq_prompt_tenant_key_ver"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID | None] = mapped_column(

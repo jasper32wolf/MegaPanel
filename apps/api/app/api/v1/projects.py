@@ -344,6 +344,7 @@ async def check_project_domain(
     await db.commit()
     return project.domain_check_meta
 
+
 async def list_fact_revisions(
     project_id: UUID,
     auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor")),
@@ -1380,13 +1381,17 @@ async def materialize_project_build(
         .all()
     ]
     applied_drafts = (
-        await db.execute(
-            select(PageDraft).where(
-                PageDraft.project_id == project.id,
-                PageDraft.state == "applied",
+        (
+            await db.execute(
+                select(PageDraft).where(
+                    PageDraft.project_id == project.id,
+                    PageDraft.state == "applied",
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     drafts_by_slug = {
         str((draft.page_manifest or {}).get("slug") or ""): draft for draft in applied_drafts
     }

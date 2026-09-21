@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import pytest
-
 from app.api.v1.keywords import parse_keyword_csv
 
 
 def test_parse_keyword_csv_maps_optional_columns():
     items, errors = parse_keyword_csv(
-        "phrase,frequency,group,intent,city,priority\nремонт стиральных машин,1200,repair,commercial,Москва,high\n".encode(),
+        (
+            "phrase,frequency,group,intent,city,priority\n"
+            "ремонт стиральных машин,1200,repair,commercial,Москва,high\n"
+        ).encode(),
         delimiter=",",
         phrase_column="phrase",
         column_map={
@@ -24,7 +26,12 @@ def test_parse_keyword_csv_maps_optional_columns():
         {
             "phrase": "ремонт стиральных машин",
             "category": "repair",
-            "meta": {"frequency": "1200", "intent": "commercial", "city": "Москва", "priority": "high"},
+            "meta": {
+                "frequency": "1200",
+                "intent": "commercial",
+                "city": "Москва",
+                "priority": "high",
+            },
         }
     ]
 

@@ -7,7 +7,6 @@ from typing import Any
 
 import httpx
 
-
 INDEXNOW_ENDPOINTS = [
     "https://api.indexnow.org/indexnow",
     "https://yandex.com/indexnow",

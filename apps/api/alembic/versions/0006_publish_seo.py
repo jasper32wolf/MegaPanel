@@ -2,24 +2,34 @@
 
 from __future__ import annotations
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "0006_publish_seo"
-down_revision: Union[str, None] = "0005_ai_engine"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "0005_ai_engine"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
     op.create_table(
         "site_pages",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("site_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("sites.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "site_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("sites.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "tenant_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("slug", sa.String(512), nullable=False),
         sa.Column("title", sa.String(512), nullable=True),
         sa.Column("publish_state", sa.String(32), server_default="draft"),
@@ -39,8 +49,18 @@ def upgrade() -> None:
     op.create_table(
         "domains",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("site_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("sites.id", ondelete="SET NULL"), nullable=True),
+        sa.Column(
+            "tenant_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "site_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("sites.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
         sa.Column("hostname", sa.String(255), nullable=False, unique=True),
         sa.Column("registrar", sa.String(128), nullable=True),
         sa.Column("ssl_status", sa.String(32), server_default="pending"),
@@ -54,8 +74,18 @@ def upgrade() -> None:
     op.create_table(
         "redirects",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("site_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("sites.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "tenant_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "site_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("sites.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("from_path", sa.String(1024), nullable=False),
         sa.Column("to_url", sa.String(2048), nullable=False),
         sa.Column("code", sa.Integer(), server_default="301"),
@@ -66,7 +96,12 @@ def upgrade() -> None:
     op.create_table(
         "bulk_operations",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "tenant_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("op_type", sa.String(64), nullable=False),
         sa.Column("status", sa.String(32), server_default="pending"),
         sa.Column("payload", postgresql.JSONB(), server_default=sa.text("'{}'::jsonb")),
@@ -81,8 +116,18 @@ def upgrade() -> None:
     op.create_table(
         "site_builds",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("site_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("sites.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "site_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("sites.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "tenant_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("status", sa.String(32), server_default="pending"),
         sa.Column("build_hash", sa.String(64), nullable=True),
         sa.Column("previous_build_hash", sa.String(64), nullable=True),
@@ -94,7 +139,9 @@ def upgrade() -> None:
     op.create_index("ix_site_builds_site_id", "site_builds", ["site_id"])
 
     op.add_column("sites", sa.Column("indexnow_key", sa.String(64), nullable=True))
-    op.add_column("sites", sa.Column("caddy_configured", sa.Boolean(), server_default=sa.text("false")))
+    op.add_column(
+        "sites", sa.Column("caddy_configured", sa.Boolean(), server_default=sa.text("false"))
+    )
 
     for table in ("site_pages", "domains", "redirects", "bulk_operations", "site_builds"):
         op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")

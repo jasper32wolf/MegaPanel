@@ -36,7 +36,9 @@ class ContentDecayEvent(Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), index=True
     )
-    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("sites.id", ondelete="CASCADE"))
+    site_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sites.id", ondelete="CASCADE")
+    )
     page_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     metric: Mapped[str] = mapped_column(String(64), nullable=False)
     baseline: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -52,7 +54,9 @@ class FootprintAudit(Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), index=True
     )
-    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("sites.id", ondelete="CASCADE"))
+    site_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sites.id", ondelete="CASCADE")
+    )
     risk_score: Mapped[int] = mapped_column(Integer, default=0)
     findings: Mapped[list] = mapped_column(JSONB, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -65,7 +69,9 @@ class StagingApproval(Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), index=True
     )
-    site_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("sites.id", ondelete="CASCADE"))
+    site_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sites.id", ondelete="CASCADE")
+    )
     build_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="pending")
     reviewer_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)

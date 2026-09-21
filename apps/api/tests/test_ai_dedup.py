@@ -1,10 +1,12 @@
+import pytest
 from app.services.ai_engine import guard_prompt_input, local_micro_infill, slot_fill_sentences
 from app.services.dedup import compare_texts, simhash64
-import pytest
 
 
 def test_simhash_identical():
-    assert simhash64("ремонт стиральных машин москва") == simhash64("ремонт стиральных машин москва")
+    assert simhash64("ремонт стиральных машин москва") == simhash64(
+        "ремонт стиральных машин москва"
+    )
 
 
 def test_simhash_similar_high():

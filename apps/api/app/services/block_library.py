@@ -5,13 +5,12 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.models.blocks import BlockKit, BlockKitItem, ContentBlock, make_hash_class
 from site_panel_blocks import instantiate_blocks, library_version, list_kits, load_kit
 from site_panel_security import sanitize_html
 from site_panel_shared.manifests import BlockDef
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def upsert_global_kits(session: AsyncSession) -> list[str]:
@@ -19,7 +18,9 @@ async def upsert_global_kits(session: AsyncSession) -> list[str]:
     keys: list[str] = []
     for meta in list_kits():
         kit = load_kit(meta["key"])
-        row = (await session.execute(select(BlockKit).where(BlockKit.key == kit.key))).scalar_one_or_none()
+        row = (
+            await session.execute(select(BlockKit).where(BlockKit.key == kit.key))
+        ).scalar_one_or_none()
         if not row:
             row = BlockKit(key=kit.key, name=kit.name, version=kit.version)
             session.add(row)
@@ -27,7 +28,9 @@ async def upsert_global_kits(session: AsyncSession) -> list[str]:
         else:
             # refresh items
             existing = list(
-                (await session.execute(select(BlockKitItem).where(BlockKitItem.kit_id == row.id))).scalars().all()
+                (await session.execute(select(BlockKitItem).where(BlockKitItem.kit_id == row.id)))
+                .scalars()
+                .all()
             )
             for item in existing:
                 await session.delete(item)
@@ -155,7 +158,9 @@ def preview_kit_html(kit_key: str, seed: str = "preview") -> dict[str, Any]:
     css_parts = []
     for b in instances:
         html = fill_slots(b["html"], ctx)
-        parts.append(f'<section class="{b["hash_class"]}" data-block="{b["type"]}">{html}</section>')
+        parts.append(
+            f'<section class="{b["hash_class"]}" data-block="{b["type"]}">{html}</section>'
+        )
         if b["css"]:
             css_parts.append(b["css"])
     body = "\n".join(parts)

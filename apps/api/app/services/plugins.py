@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Awaitable, Callable
-
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from app.models.panel import Plugin
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger("plugins")
 
@@ -22,7 +22,9 @@ def register_hook(event: str, fn: HookFn) -> None:
 
 async def emit_hooks(session: AsyncSession, event: str, payload: dict[str, Any]) -> list[str]:
     """Invoke in-process handlers for enabled plugins that declare the hook."""
-    rows = list((await session.execute(select(Plugin).where(Plugin.enabled.is_(True)))).scalars().all())
+    rows = list(
+        (await session.execute(select(Plugin).where(Plugin.enabled.is_(True)))).scalars().all()
+    )
     fired: list[str] = []
     for plugin in rows:
         hooks = plugin.hooks or []

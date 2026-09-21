@@ -2,11 +2,6 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.api.deps import AuthContext, require_roles
 from app.db.session import get_db
 from app.models.ai import ContentHash, DeadLetterJob, GenerationJob, LlmCache, PromptEntry
@@ -20,8 +15,18 @@ from app.services.ai_engine import (
     validate_infill,
 )
 from app.services.audit import append_audit
-from app.services.dedup import compare_texts, hamming, minhash_buckets, similarity_from_hamming, simhash64
+from app.services.dedup import (
+    compare_texts,
+    hamming,
+    minhash_buckets,
+    simhash64,
+    similarity_from_hamming,
+)
 from app.services.llm_router import generate_micro_infill
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
 
@@ -88,7 +93,11 @@ async def micro_infill(
     try:
         prompt = DEFAULT_MICRO_PROMPT.format(**ctx)
         model_name = "llm-tiered" if body.use_llm else "local-slotfill"
-        key = cache_key(prompt, model_name if body.use_llm else "local-slotfill", {**ctx, "use_llm": body.use_llm})
+        key = cache_key(
+            prompt,
+            model_name if body.use_llm else "local-slotfill",
+            {**ctx, "use_llm": body.use_llm},
+        )
         cached = await db.execute(select(LlmCache).where(LlmCache.cache_key == key))
         hit = cached.scalar_one_or_none()
         provider = "cache"
@@ -120,7 +129,9 @@ async def micro_infill(
                 )
 
         text_blob = " ".join([out.unique_core, out.offer, *out.local_theses])
-        existing = await db.execute(select(ContentHash).where(ContentHash.tenant_id == auth.tenant_id))
+        existing = await db.execute(
+            select(ContentHash).where(ContentHash.tenant_id == auth.tenant_id)
+        )
         max_sim = 0.0
         for row in existing.scalars().all():
             sim = similarity_from_hamming(hamming(row.simhash, simhash64(text_blob)))

@@ -2,23 +2,28 @@
 
 from __future__ import annotations
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "0009_panel_ux"
-down_revision: Union[str, None] = "0008_serp_audit"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "0008_serp_audit"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
     op.create_table(
         "notifications",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "tenant_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("user_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("priority", sa.String(16), server_default="normal"),
         sa.Column("title", sa.String(255), nullable=False),
@@ -32,7 +37,12 @@ def upgrade() -> None:
     op.create_table(
         "saved_views",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "tenant_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("user_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("name", sa.String(128), nullable=False),
         sa.Column("entity", sa.String(64), nullable=False),
@@ -43,7 +53,12 @@ def upgrade() -> None:
     op.create_table(
         "api_keys",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "tenant_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("name", sa.String(128), nullable=False),
         sa.Column("key_prefix", sa.String(16), nullable=False),
         sa.Column("key_hash", sa.String(64), nullable=False),
@@ -56,7 +71,12 @@ def upgrade() -> None:
     op.create_table(
         "webhook_subscriptions",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "tenant_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("url", sa.String(2048), nullable=False),
         sa.Column("events", postgresql.JSONB(), server_default=sa.text("'[]'::jsonb")),
         sa.Column("secret", sa.String(128), nullable=False),
@@ -67,7 +87,12 @@ def upgrade() -> None:
     op.create_table(
         "plugins",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True),
+        sa.Column(
+            "tenant_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=True,
+        ),
         sa.Column("key", sa.String(128), nullable=False),
         sa.Column("name", sa.String(255), nullable=False),
         sa.Column("hooks", postgresql.JSONB(), server_default=sa.text("'[]'::jsonb")),

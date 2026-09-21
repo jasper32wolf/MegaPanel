@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
-
 from app.core.config import get_settings
 from app.services.ai_engine import MicroInfillOut, local_micro_infill, validate_infill
 from app.services.hardening import egress, finops
@@ -147,7 +146,14 @@ async def generate_micro_infill(
     """
     if not use_llm:
         out = local_micro_infill(context)
-        return LlmResult(data=out, model="local-slotfill", tokens_in=0, tokens_out=0, provider="local", cached_local=True)
+        return LlmResult(
+            data=out,
+            model="local-slotfill",
+            tokens_in=0,
+            tokens_out=0,
+            provider="local",
+            cached_local=True,
+        )
 
     errors: list[str] = []
     for name, fn in (

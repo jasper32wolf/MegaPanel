@@ -3,11 +3,6 @@ from __future__ import annotations
 import csv
 import io
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import PlainTextResponse
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.api.deps import AuthContext, require_roles
 from app.db.session import get_db
 from app.models import GeoPlace
@@ -15,13 +10,21 @@ from app.schemas.phase2 import GeoCreate, GeoOut, MorphOut, MorphRequest, Topony
 from app.services.audit import append_audit
 from app.services.geo import place_context, upsert_place, validate_toponym
 from app.services.morph import city_placeholders, inflect_cases
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import PlainTextResponse
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
 
 GEO_KINDS = {"country", "region", "city", "district", "street", "metro", "landmark"}
 MAX_IMPORT_BYTES = 10 * 1024 * 1024
 MAX_IMPORT_ROWS = 50_000
-TEMPLATE = "kind,external_id,name,parent_external_id,lat,lon,timezone,population\ncity,manual-moscow,Москва,,55.7558,37.6173,Europe/Moscow,12600000\ndistrict,manual-moscow-sokol,Сокол,manual-moscow,,,,\n"
+TEMPLATE = (
+    "kind,external_id,name,parent_external_id,lat,lon,timezone,population\n"
+    "city,manual-moscow,Москва,,55.7558,37.6173,Europe/Moscow,12600000\n"
+    "district,manual-moscow-sokol,Сокол,manual-moscow,,,,\n"
+)
 
 
 def parse_geo_csv(raw: bytes, *, delimiter: str) -> tuple[list[dict], list[dict]]:
@@ -62,7 +65,9 @@ def parse_geo_csv(raw: bytes, *, delimiter: str) -> tuple[list[dict], list[dict]
                     "lat": float(source["lat"]) if (source.get("lat") or "").strip() else None,
                     "lon": float(source["lon"]) if (source.get("lon") or "").strip() else None,
                     "timezone": (source.get("timezone") or "").strip() or None,
-                    "population": int(source["population"]) if (source.get("population") or "").strip() else None,
+                    "population": int(source["population"])
+                    if (source.get("population") or "").strip()
+                    else None,
                 }
             )
         except ValueError:
@@ -128,7 +133,9 @@ async def import_geo_csv(
 
     known = {
         row.external_id: row.id
-        for row in (await db.execute(select(GeoPlace).where(GeoPlace.external_id.is_not(None)))).scalars().all()
+        for row in (await db.execute(select(GeoPlace).where(GeoPlace.external_id.is_not(None))))
+        .scalars()
+        .all()
     }
     created_or_updated = 0
     for row in rows:
@@ -136,7 +143,12 @@ async def import_geo_csv(
         parent_id = known.get(parent_external_id) if parent_external_id else None
         if parent_external_id and parent_id is None:
             if len(errors) < 100:
-                errors.append({"line": row["line"], "error": f"Unknown parent_external_id: {parent_external_id}"})
+                errors.append(
+                    {
+                        "line": row["line"],
+                        "error": f"Unknown parent_external_id: {parent_external_id}",
+                    }
+                )
             continue
         place = await upsert_place(
             db,
@@ -170,7 +182,9 @@ async def list_geo(
     q: str | None = Query(None, min_length=1),
     parent_id: str | None = None,
     limit: int = Query(50, ge=1, le=200),
-    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor", "viewer")),
+    auth: AuthContext = Depends(
+        require_roles("superadmin", "tenant_admin", "manager", "editor", "viewer")
+    ),
     db: AsyncSession = Depends(get_db),
 ) -> list[GeoPlace]:
     statement = select(GeoPlace).order_by(GeoPlace.name).limit(limit)

@@ -1,10 +1,8 @@
 from types import SimpleNamespace
 
 import pytest
-
-from pydantic import ValidationError
-
 from app.api.v1.domains import RedirectCreate, normalize_hostname, validate_redirect
+from pydantic import ValidationError
 
 
 @pytest.mark.parametrize(
@@ -65,4 +63,9 @@ def test_validate_redirect_rejects_nonlocal_targets(from_path: str, to_url: str)
 
 def test_redirect_schema_rejects_non_redirect_status_code():
     with pytest.raises(ValidationError):
-        RedirectCreate(site_id="00000000-0000-0000-0000-000000000001", from_path="/old", to_url="https://example.ru/new", code=304)
+        RedirectCreate(
+            site_id="00000000-0000-0000-0000-000000000001",
+            from_path="/old",
+            to_url="https://example.ru/new",
+            code=304,
+        )

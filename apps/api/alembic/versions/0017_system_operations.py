@@ -35,12 +35,16 @@ def upgrade() -> None:
         sa.Column("workflow_url", sa.String(2048), nullable=True),
         sa.Column("status", sa.String(32), nullable=False, server_default="requested"),
         sa.Column("error_code", sa.String(128), nullable=True),
-        sa.Column("details", postgresql.JSONB(), nullable=False, server_default=sa.text("'{}'::jsonb")),
+        sa.Column(
+            "details", postgresql.JSONB(), nullable=False, server_default=sa.text("'{}'::jsonb")
+        ),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()")),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()")),
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
     )
-    op.create_index("ix_system_operations_tenant_created", "system_operations", ["tenant_id", "created_at"])
+    op.create_index(
+        "ix_system_operations_tenant_created", "system_operations", ["tenant_id", "created_at"]
+    )
     op.create_index("ix_system_operations_status", "system_operations", ["status"])
     op.create_index(
         "uq_system_operations_one_active_per_tenant",

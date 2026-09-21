@@ -111,9 +111,7 @@ class ProjectGeoPlace(Base):
 class PagePlan(Base):
     __tablename__ = "page_plans"
     __table_args__ = (
-        UniqueConstraint(
-            "project_id", "slug", "version", name="uq_page_plan_project_slug_version"
-        ),
+        UniqueConstraint("project_id", "slug", "version", name="uq_page_plan_project_slug_version"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

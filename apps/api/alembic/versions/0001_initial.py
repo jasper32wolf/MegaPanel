@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "0001_initial"
-down_revision: Union[str, None] = None
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = None
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
@@ -28,7 +28,11 @@ def upgrade() -> None:
     op.create_table(
         "users",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE")),
+        sa.Column(
+            "tenant_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+        ),
         sa.Column("email", sa.String(320), nullable=False, unique=True),
         sa.Column("password_hash", sa.String(255), nullable=False),
         sa.Column("role", sa.String(50), nullable=False, server_default="viewer"),
@@ -39,7 +43,12 @@ def upgrade() -> None:
     op.create_table(
         "sites",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "tenant_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("domain", sa.String(255), nullable=False, unique=True),
         sa.Column("locale", sa.String(10), server_default="ru"),
         sa.Column("manifest", postgresql.JSONB(), server_default=sa.text("'{}'::jsonb")),
@@ -66,7 +75,12 @@ def upgrade() -> None:
     op.create_table(
         "keywords",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "tenant_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("phrase", sa.Text(), nullable=False),
         sa.Column("normalized", sa.Text(), nullable=False),
         sa.Column("category", sa.String(255), nullable=True),

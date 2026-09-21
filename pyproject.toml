@@ -65,6 +65,13 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "ASYNC"]
 
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = [
+  "fastapi.Depends",
+  "fastapi.File",
+  "app.api.deps.require_roles",
+]
+
 [tool.mypy]
 python_version = "3.12"
 strict = true

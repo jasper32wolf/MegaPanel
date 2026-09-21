@@ -4,17 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.models import Site
-from app.models.ops import ContentDecayEvent, FootprintAudit, SerpCheck
+from app.models.ops import FootprintAudit, SerpCheck
 from app.models.publish import SitePage
 from app.services.indexnow import submit_indexnow
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def record_serp_check(
@@ -42,7 +40,9 @@ async def record_serp_check(
     return row
 
 
-def needs_serp_correction(position: int | None, days_live: int, *, top_n: int = 30, after_days: int = 45) -> bool:
+def needs_serp_correction(
+    position: int | None, days_live: int, *, top_n: int = 30, after_days: int = 45
+) -> bool:
     """If not in TOP-30 after 45 days → regenerate title/h1/FAQ (TZ 7.5)."""
     if days_live < after_days:
         return False
@@ -57,7 +57,9 @@ def regenerate_meta_local(page_title: str, h1: str, city_prep: str, service: str
         "title": f"{service} в {city_prep} — цены, сроки, гарантия | {page_title[:40]}",
         "h1": f"{service} в {city_prep}: выезд сегодня",
         "faq_q": f"Сколько стоит {service} в {city_prep}?",
-        "faq_a": f"Стоимость {service} в {city_prep} зависит от объёма. Даём смету до начала работ.",
+        "faq_a": (
+            f"Стоимость {service} в {city_prep} зависит от объёма. Даём смету до начала работ."
+        ),
     }
 
 
@@ -86,7 +88,9 @@ def footprint_scan_html(html: str, css_vars: dict[str, str], seed: int) -> dict[
 
     # Shared CSS variable fingerprints
     if css_vars.get("primary-color") in {"#1a5f4a", "#7c3aed", "#6366f1"}:
-        findings.append({"code": "shared_css_var", "severity": "common", "detail": "primary-color cluster"})
+        findings.append(
+            {"code": "shared_css_var", "severity": "common", "detail": "primary-color cluster"}
+        )
         risk += 15
 
     # CMS path leftovers
@@ -97,18 +101,28 @@ def footprint_scan_html(html: str, css_vars: dict[str, str], seed: int) -> dict[
     # Identical phone patterns across sites often use same mask
     phones = re.findall(r"\+7\s*\(\d{3}\)\s*\d{3}-\d{2}-\d{2}", html)
     if phones:
-        findings.append({"code": "phone_format", "severity": "low", "detail": f"count={len(phones)}"})
+        findings.append(
+            {"code": "phone_format", "severity": "low", "detail": f"count={len(phones)}"}
+        )
         risk += 5
 
     # Block order entropy from seed
     blocks = re.findall(r'data-block="([^"]+)"', html)
     if blocks and seed % 3 == 0 and blocks == sorted(blocks):
-        findings.append({"code": "sorted_blocks", "severity": "medium", "detail": "deterministic ascending block order"})
+        findings.append(
+            {
+                "code": "sorted_blocks",
+                "severity": "medium",
+                "detail": "deterministic ascending block order",
+            }
+        )
         risk += 20
 
     # Generic class names without hash
     if re.search(r'class="(hero|container|wrapper)"', html):
-        findings.append({"code": "generic_class", "severity": "medium", "detail": "non-hashed class names"})
+        findings.append(
+            {"code": "generic_class", "severity": "medium", "detail": "non-hashed class names"}
+        )
         risk += 15
 
     return {"risk_score": min(risk, 100), "findings": findings}
@@ -138,13 +152,20 @@ async def auto_correct_from_serp(
 ) -> dict[str, Any] | None:
     if not needs_serp_correction(position, days_live):
         return None
-    contacts = (site.manifest or {}).get("contacts") or {}
     service = (page.manifest or {}).get("service") or site.niche or "Услуги"
     city_prep = (page.manifest or {}).get("city_prep") or "городе"
     meta = regenerate_meta_local(page.title or service, service, city_prep, service)
-    page.manifest = {**(page.manifest or {}), "serp_correction": meta, "corrected_at": datetime.now(UTC).isoformat()}
+    page.manifest = {
+        **(page.manifest or {}),
+        "serp_correction": meta,
+        "corrected_at": datetime.now(UTC).isoformat(),
+    }
     if site.indexnow_key:
-        url = f"https://{site.domain}/{page.slug.strip('/')}/" if page.slug.strip("/") else f"https://{site.domain}/"
+        url = (
+            f"https://{site.domain}/{page.slug.strip('/')}/"
+            if page.slug.strip("/")
+            else f"https://{site.domain}/"
+        )
         await submit_indexnow(
             host=site.domain,
             key=site.indexnow_key,

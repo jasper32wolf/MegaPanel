@@ -2,24 +2,34 @@
 
 from __future__ import annotations
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "0008_serp_audit"
-down_revision: Union[str, None] = "0007_leads"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "0007_leads"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
     op.create_table(
         "serp_checks",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("site_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("sites.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "tenant_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "site_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("sites.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("page_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("query", sa.String(512), nullable=False),
         sa.Column("engine", sa.String(32), server_default="yandex"),
@@ -34,8 +44,18 @@ def upgrade() -> None:
     op.create_table(
         "content_decay_events",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("site_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("sites.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "tenant_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "site_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("sites.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("page_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("metric", sa.String(64), nullable=False),
         sa.Column("baseline", sa.Float(), nullable=True),
@@ -48,8 +68,18 @@ def upgrade() -> None:
     op.create_table(
         "footprint_audits",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("site_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("sites.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "tenant_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "site_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("sites.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("risk_score", sa.Integer(), server_default="0"),
         sa.Column("findings", postgresql.JSONB(), server_default=sa.text("'[]'::jsonb")),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()")),
@@ -59,8 +89,18 @@ def upgrade() -> None:
     op.create_table(
         "staging_approvals",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("site_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("sites.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "tenant_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "site_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("sites.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("build_hash", sa.String(64), nullable=False),
         sa.Column("status", sa.String(32), server_default="pending"),
         sa.Column("reviewer_id", postgresql.UUID(as_uuid=True), nullable=True),

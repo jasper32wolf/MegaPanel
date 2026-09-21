@@ -1,6 +1,6 @@
+import pytest
 from site_panel_security.crypto import BlindIndex, FieldEncryptor
 from site_panel_security.ssrf import SSRFBlockedError, SSRFGuard
-import pytest
 
 
 def test_field_encrypt_roundtrip():

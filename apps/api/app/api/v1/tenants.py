@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.api.deps import AuthContext, require_roles
 from app.db.session import get_db
 from app.models import Tenant
 from app.schemas.common import TenantCreate, TenantOut
 from app.services.audit import append_audit
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
 

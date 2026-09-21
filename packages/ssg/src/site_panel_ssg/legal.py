@@ -46,13 +46,19 @@ def render_cookies(org: dict[str, Any]) -> str:
 """
 
 
-COOKIE_BANNER_JS = """(function(){if(localStorage.getItem('sp_consent')){window.__spConsent=JSON.parse(localStorage.getItem('sp_consent'));return;}
-var b=document.createElement('div');b.setAttribute('role','dialog');b.style.cssText='position:fixed;bottom:0;left:0;right:0;padding:12px 16px;background:#1c1917;color:#fafaf9;z-index:9999;font:14px sans-serif';
-b.innerHTML='Мы используем cookie. <button id="sp-ok">Принять необходимые</button> <button id="sp-all">Принять все</button>';
-document.body.appendChild(b);
-function save(a){var c={necessary:true,analytics:!!a,marketing:!!a};localStorage.setItem('sp_consent',JSON.stringify(c));window.__spConsent=c;b.remove();}
-document.getElementById('sp-ok').onclick=function(){save(false)};document.getElementById('sp-all').onclick=function(){save(true)};
-})();"""
+COOKIE_BANNER_JS = (
+    "(function(){if(localStorage.getItem('sp_consent')){"
+    "window.__spConsent=JSON.parse(localStorage.getItem('sp_consent'));return;}"
+    "var b=document.createElement('div');b.setAttribute('role','dialog');"
+    "b.style.cssText='position:fixed;bottom:0;left:0;right:0;padding:12px 16px;"
+    "background:#1c1917;color:#fafaf9;z-index:9999;font:14px sans-serif';"
+    'b.innerHTML=\'Мы используем cookie. <button id="sp-ok">Принять необходимые</button> '
+    '<button id="sp-all">Принять все</button>\';document.body.appendChild(b);'
+    "function save(a){var c={necessary:true,analytics:!!a,marketing:!!a};"
+    "localStorage.setItem('sp_consent',JSON.stringify(c));window.__spConsent=c;b.remove();}"
+    "document.getElementById('sp-ok').onclick=function(){save(false)};"
+    "document.getElementById('sp-all').onclick=function(){save(true)};})();"
+)
 
 
 def write_legal_pack(site_dir, org: dict[str, Any]) -> list[str]:

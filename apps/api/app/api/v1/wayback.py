@@ -4,17 +4,16 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field, HttpUrl
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.api.deps import AuthContext, require_roles
 from app.db.session import get_db
 from app.models import Site
 from app.models.publish import Redirect
 from app.services.audit import append_audit
 from app.services.caddy_client import CaddyClient
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field, HttpUrl
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
 
@@ -33,7 +32,9 @@ async def wayback_301(
 ) -> dict:
     from uuid import UUID
 
-    site = (await db.execute(select(Site).where(Site.id == UUID(body.site_id)))).scalar_one_or_none()
+    site = (
+        await db.execute(select(Site).where(Site.id == UUID(body.site_id)))
+    ).scalar_one_or_none()
     if not site:
         raise HTTPException(status_code=404, detail="Site not found")
     if auth.role != "superadmin" and site.tenant_id != auth.tenant_id:

@@ -1,9 +1,8 @@
 from io import BytesIO
 
 import pytest
-from PIL import Image
-
 from app.services.media_normalize import average_hash, decode_image, normalize_image
+from PIL import Image
 
 
 def test_decode_image_loads_valid_image():
