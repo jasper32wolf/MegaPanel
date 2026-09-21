@@ -167,6 +167,16 @@ assert_fails() {
   fi
 }
 
+assert_line() {
+  local expected="$1" file="$2" label="$3"
+  if ! grep -qx -- "$expected" "$file"; then
+    printf 'FAIL: %s (expected=%s file=%s)\n' "$label" "$expected" "$file" >&2
+    printf '%s\n' 'Actual file contents:' >&2
+    cat "$file" >&2
+    exit 1
+  fi
+}
+
 assert_not_contains() {
   local pattern="$1" file="$2" label="$3"
   if grep -Fq -- "$pattern" "$file"; then
@@ -228,20 +238,20 @@ if ! bash "$MANAGER" deploy "$GOOD" >"$TMP/good.out"; then
 fi
 assert_eq "$(basename "$(readlink -f "$SITE_ROOT/current")")" "$GOOD" "good release becomes current"
 assert_eq "$(basename "$(readlink -f "$SITE_ROOT/previous")")" "$OLD" "old release becomes previous"
-grep -qx 'health=ok' "$TMP/good.out"
-grep -qx 'backup_snapshot=deadbeef' <(bash "$MANAGER" backup test)
+  assert_line 'health=ok' "$TMP/good.out" "good release health"
+  assert_line 'backup_snapshot=deadbeef' <(bash "$MANAGER" backup test) "backup snapshot"
 for archive in sites_data.tar.gz uploads_data.tar.gz caddy_data.tar.gz caddy_config.tar.gz; do
   [[ -s "$RESTIC_PAYLOAD/$archive" ]] || {
     printf 'FAIL: expected backup archive missing: %s\n' "$archive" >&2
     exit 1
   }
 done
-grep -qx 'manifest_version=2' "$RESTIC_PAYLOAD/manifest.env"
-grep -qx 'backup_policy=production-volumes' "$RESTIC_PAYLOAD/manifest.env"
-grep -qx 'backup_policy_version=1' "$RESTIC_PAYLOAD/manifest.env"
-grep -qx 'included_volumes=sites_data,uploads_data,caddy_data,caddy_config' "$RESTIC_PAYLOAD/manifest.env"
-grep -qx 'excluded_volumes=dsar_data' "$RESTIC_PAYLOAD/manifest.env"
-grep -qx 'excluded_volume_restore_action=clear' "$RESTIC_PAYLOAD/manifest.env"
+  assert_line 'manifest_version=2' "$RESTIC_PAYLOAD/manifest.env" "backup manifest version"
+  assert_line 'backup_policy=production-volumes' "$RESTIC_PAYLOAD/manifest.env" "backup policy"
+  assert_line 'backup_policy_version=1' "$RESTIC_PAYLOAD/manifest.env" "backup policy version"
+  assert_line 'included_volumes=sites_data,uploads_data,caddy_data,caddy_config' "$RESTIC_PAYLOAD/manifest.env" "included volumes"
+  assert_line 'excluded_volumes=dsar_data' "$RESTIC_PAYLOAD/manifest.env" "excluded volumes"
+  assert_line 'excluded_volume_restore_action=clear' "$RESTIC_PAYLOAD/manifest.env" "excluded volume action"
 assert_not_contains 'source "$BACKUP_ENV_FILE"' "$ROOT/scripts/backup-production.sh" "backup dotenv parser"
 assert_not_contains 'source "$BACKUP_ENV_FILE"' "$ROOT/scripts/restore-production.sh" "restore dotenv parser"
 assert_not_contains 'down -v' "$ROOT/scripts/restore-production.sh" "restore volume handling"
@@ -249,12 +259,12 @@ assert_not_contains 'down -v' "$ROOT/scripts/restore-production.sh" "restore vol
 export FAKE_FAILED_RELEASE="$BAD"
 assert_fails bash "$MANAGER" deploy "$BAD"
 assert_eq "$(basename "$(readlink -f "$SITE_ROOT/current")")" "$GOOD" "failed deployment restores current release"
-grep -qx 'last_good_release=2222222222222222222222222222222222222222' "$SITE_ROOT/shared/release-state/state.env"
+  assert_line 'last_good_release=2222222222222222222222222222222222222222' "$SITE_ROOT/shared/release-state/state.env" "last good release"
 
 export FAKE_FAILED_RELEASE="$GOOD"
 bash "$MANAGER" auto-recover >"$TMP/recover.out"
 assert_eq "$(basename "$(readlink -f "$SITE_ROOT/current")")" "$OLD" "auto recovery rolls code back"
-grep -qx 'recovery=rollback' "$TMP/recover.out"
+  assert_line 'recovery=rollback' "$TMP/recover.out" "auto recovery result"
 export FAKE_FAILED_RELEASE="$OLD"
 assert_fails bash "$MANAGER" auto-recover
 assert_fails bash "$MANAGER" install-archive not-a-release-id
@@ -285,7 +295,7 @@ printf '%s\n' 'RESTIC_REPOSITORY=s3:test' "RESTIC_PASSWORD_FILE=$TMP/restic-pass
 
 unset FAKE_FAILED_RELEASE
 bash "$ROOT/scripts/restore-production.sh" --snapshot deadbeef --confirm-restore >"$TMP/restore.out"
-grep -qx 'restore=ok' "$TMP/restore.out"
+  assert_line 'restore=ok' "$TMP/restore.out" "restore result"
 for volume in sites_data uploads_data caddy_data caddy_config dsar_data; do
   grep -Fq "site-panel_${volume}:/data" "$LOG"
 done
