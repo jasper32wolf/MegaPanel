@@ -307,7 +307,7 @@ activate_release() {
   require_release_id "$release"
   target="$(release_dir "$release")"
   [[ -d "$target" ]] || die "release_not_found"
-  validate_production_env
+  validate_production_env || die "production_env_validation_failed"
   link_shared_env "$release"
 
   previous_path=""
@@ -316,10 +316,10 @@ activate_release() {
     previous_path="$(readlink -f "$CURRENT_LINK")"
   fi
 
-  run_predeploy_backup "$release"
+  run_predeploy_backup "$release" || die "predeploy_backup_failed"
 
   # Build before traffic points at the new release. It does not change running containers.
-  compose_for_release "$release" build
+  compose_for_release "$release" build || die "release_build_failed"
   atomic_link "$CURRENT_LINK" "$target"
 
   if start_release "$release" && wait_for_health "$release"; then
