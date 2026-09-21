@@ -437,6 +437,12 @@ textarea:focus-visible {
   margin-bottom: var(--space-2);
 }
 
+.success {
+  color: var(--ok);
+  margin: 0.5rem 0;
+  font-size: 0.92rem;
+}
+
 .error {
   color: var(--danger);
   margin: 0.5rem 0;

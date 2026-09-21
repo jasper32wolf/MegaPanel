@@ -15,6 +15,7 @@ import { ProjectsPage } from "./pages/ProjectsPage";
 import { ProjectWorkspacePage } from "./pages/ProjectWorkspacePage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { SitesPage } from "./pages/SitesPage";
+import { SystemOperationsPage } from "./pages/SystemOperationsPage";
 import { useAuth } from "./lib/auth";
 
 export default function App() {
@@ -45,6 +46,7 @@ export default function App() {
                 <Route path="/leads" element={<LeadsPage />} />
                 <Route path="/ops" element={<OpsPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
+                <Route path="/system" element={<SystemOperationsPage />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </Shell>

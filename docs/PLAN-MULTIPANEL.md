@@ -4,7 +4,7 @@
 
 ## Текущий статус
 
-Site Panel — кандидат self-hosted VPS-релиза для одного оператора. Реализованы single-operator bootstrap, cookie/TOTP access, project/facts/semantic/geo/PagePlan workflow, deterministic draft/QA/apply, candidate build/preview/publish/rollback, encrypted lead inbox, manual lead outcomes, per-site webhook, durable delivery и production VPS installer. Контрактные проверки подтверждают **79 маршрутов OpenAPI / 93 операции** и **158 API-тестов**.
+Site Panel — кандидат self-hosted VPS-релиза для одного оператора. Реализованы single-operator bootstrap, cookie/TOTP access, project/facts/semantic/geo/PagePlan workflow, deterministic draft/QA/apply, candidate build/preview/publish/rollback, encrypted lead inbox, manual lead outcomes, per-site webhook, durable delivery, production VPS installer и безопасный panel control plane для GitHub-managed update/recovery. Контрактные проверки подтверждают **174 API-теста**; workflow control всё ещё требует реального GitHub/staging proof.
 
 Docker/VPS, PostgreSQL/RLS, Caddy/TLS, worker runtime, браузерный сценарий, публичная форма и restore drill ещё не доказаны end-to-end. До их выполнения продукт нельзя объявлять production-ready.
 

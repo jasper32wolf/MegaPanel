@@ -921,7 +921,79 @@ sudo bash scripts/install-production-vps.sh \
 - произвольные команды;
 - произвольную запись файлов через SCP.
 
-### Что всё равно нужно настроить в GitHub
+### Управление обновлениями из панели
+
+После настройки GitHub deploy/recovery контур можно дополнительно включить экраном **«Обновления»** в панели. Он не даёт панели shell-доступ к VPS: панель создаёт только строго ограниченный `workflow_dispatch` запрос в GitHub Actions, а дальше продолжают работать protected Environments, pinned SSH host key, forced-command gateway и `release-manager`.
+
+#### 1. Создайте отдельный GitHub fine-grained token
+
+Создайте token только для repository Site Panel. Минимально необходимы:
+
+- **Actions: Read and write** — получить успешные CI releases и запустить fixed deploy/recovery workflows;
+- **Contents: Read** — GitHub API/repository metadata, нужные workflow provenance check.
+
+Не используйте personal token с доступом ко всем repositories, `admin:org`, `workflow` для всех проектов или SSH private key вместо token. Token не должен попадать в browser, GitHub Actions artifact, Git repository, screenshot или support chat.
+
+#### 2. Запишите token только в VPS-local production env
+
+Откройте файл на VPS:
+
+```bash
+sudo nano /opt/site-panel/shared/.env
+```
+
+Добавьте реальные значения:
+
+```dotenv
+GITHUB_REPOSITORY=owner/repository
+GITHUB_CONTROL_TOKEN=<fine-grained-token>
+GITHUB_API_URL=https://api.github.com
+```
+
+Замените `owner/repository` на имя GitHub repository. Сохраните файл, затем сохраните его restrictive permissions и перезапустите только API:
+
+```bash
+sudo chown sitepanel-deploy:sitepanel-deploy /opt/site-panel/shared/.env
+sudo chmod 600 /opt/site-panel/shared/.env
+
+RELEASE="$(readlink -f /opt/site-panel/current)"
+sudo -u sitepanel-deploy docker compose \
+  --project-name site-panel \
+  --env-file "$RELEASE/.env" \
+  -f "$RELEASE/infra/docker/docker-compose.production.yml" \
+  up -d --force-recreate api
+```
+
+Никогда не добавляйте фактический `GITHUB_CONTROL_TOKEN` в `.env.production.example`, commit, release archive или frontend variables. Если token отсутствует, ручной путь через GitHub Actions остаётся единственным и безопасным способом обновления.
+
+#### 3. Используйте экран «Обновления»
+
+После входа под единственным оператором с подтверждённым TOTP:
+
+1. откройте **Система → Обновления**;
+2. убедитесь, что GitHub control показывает `настроен`;
+3. выберите SHA только из списка successful CI commits в `main`;
+4. введите `DEPLOY` и отправьте запрос;
+5. при необходимости подтвердите protected Environment review в GitHub;
+6. наблюдайте queued/in-progress/success/failure status и GitHub run link в панели.
+
+Панель не может запросить branch name, arbitrary archive, arbitrary workflow или SHA без successful CI. Update запускает existing `Deploy production` workflow: он делает pre-deploy encrypted backup, build, health check и code rollback на `previous` при неудаче. Database restore при update невозможен.
+
+#### Recovery из панели
+
+В том же экране доступны строго allowlisted действия:
+
+|Действие|Что делает|
+|---|---|
+|`STATUS`|Запрашивает current/previous SHA, health и последний backup snapshot.|
+|`RESTART`|Контролируемо перезапускает API, worker, panel и Caddy.|
+|`ROLLBACK`|Меняет только code release `current ↔ previous` с health probe.|
+|`RECOVER`|Ограниченная последовательность restart → code rollback.|
+|`RESTORE`|Заменяет данные строго выбранным restic snapshot после ввода snapshot ID и точного `RESTORE` confirmation.|
+
+`RESTORE` — destructive операция. Перед ней workflow обязан создать новый encrypted pre-restore backup; если это не получается, restore не начинается. Ни GitHub schedule, ни panel button не могут автоматически выполнить PostgreSQL restore, schema downgrade, volume deletion или `docker compose down -v`.
+
+Если панель или GitHub control недоступны, используйте ручные **Deploy production** / **Recover production** workflows в GitHub Actions или доверенную console/sudo procedure из runbook.
 
 Installer не может и не должен без явного отдельного доверия создавать GitHub secrets. Настройте вручную:
 
@@ -1248,7 +1320,7 @@ sudo -u sitepanel-deploy docker compose \
 - другой сервис занял порт;
 - домен проходит через CDN/proxy с неподходящими настройками;
 - email/домен в config содержит опечатку;
-- Caddy не может записать данные сертификата в свой volume.
+- Caddy не может записать данные сертификата в свой volume: в актуальном production release volumes `caddy_data` и `caddy_config` инициализируются installer-ом для UID `10001`, а Compose использует `nocopy`, чтобы Docker не перезаписал эти права при первом старте. Обновите code release и повторите installer phase `volumes`; не удаляйте volumes.
 
 Не отключайте TLS-проверку браузера как «решение». Сначала устраните причину.
 

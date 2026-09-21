@@ -119,6 +119,14 @@ def test_site_build_route_is_available_in_the_release_api():
     assert "post" in paths["/api/v1/sites/{site_id}/build"]
 
 
+def test_system_control_routes_are_registered_in_the_release_api():
+    paths = app.openapi()["paths"]
+
+    assert "/api/v1/system/control" in paths
+    assert "post" in paths["/api/v1/system/updates"]
+    assert "post" in paths["/api/v1/system/recovery"]
+
+
 def test_security_session_routes_are_registered():
     paths = app.openapi()["paths"]
 

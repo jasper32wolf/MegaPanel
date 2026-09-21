@@ -186,7 +186,20 @@ CI сейчас не зелёный из-за существующего Ruff ba
 
 Ручной deploy не предназначен для обхода CI и не принимает branch name, tag, произвольный archive или SHA из другой ветки.
 
-### 6.3. Runtime audit
+### 6.3. Запрос из панели
+
+Экран **Система → Обновления** — дополнительный, а не привилегированный путь. Он доступен только единственному активному superadmin после MFA login и отправляет API только в два жёстко заданных workflow с `ref=main`:
+
+- `deploy-production.yml` — SHA длиной 40/64 символов из списка successful `ci.yml` runs и точное подтверждение `DEPLOY`;
+- `recover-production.yml` — `status`, `restart`, `rollback`, `recover` либо `restore`; для последнего обязательны hexadecimal snapshot и точное `RESTORE`.
+
+API создаёт audit-safe запись операции до dispatch, запрещает вторую queued/in-progress операцию и передаёт сгенерированный UUID `request_id`. Для panel-triggered workflow этот UUID является GitHub run name, поэтому панель может показать ссылку и статус конкретного run. Она не получает Docker socket, SSH key, restic credentials, произвольный workflow/ref или raw GitHub response.
+
+Для включения создайте отдельный fine-grained token, ограниченный этим repository: **Actions: Read and write** и **Contents: Read**. Сохраните его только в `/opt/site-panel/shared/.env` как `GITHUB_CONTROL_TOKEN`, вместе с `GITHUB_REPOSITORY=owner/repository`; mode файла — `0600`. После изменения пересоздайте API container. Отсутствие или неверная конфигурация token не ломает manual GitHub Actions path.
+
+GitHub Environment approval по-прежнему обязателен: запрос из панели не обходит required reviewer, branch policy, pinned `known_hosts` или forced-command gateway. При недоступности GitHub/панели используйте ручной workflow из §6.2/§7.2.
+
+### 6.4. Runtime audit
 
 Результат каждого deploy/recovery виден в:
 

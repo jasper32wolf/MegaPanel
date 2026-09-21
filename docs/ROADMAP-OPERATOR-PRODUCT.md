@@ -22,7 +22,7 @@
 | **Проверено** | Для возможности есть указанный автоматический тест или реальный runtime-прогон. |
 | **Предлагается** | Направление будущей работы; не является доступной функцией. |
 
-На текущем этапе реализованы базовые single-user access, TOTP/cookie sessions, curated sites, encrypted lead inbox, per-site webhooks, durable delivery и ограниченный release API. Автоматические проверки подтверждают контрактный уровень, но Docker/VPS, PostgreSQL/RLS, Caddy/TLS и browser end-to-end сценарии ещё требуют отдельного доказательства.
+На текущем этапе реализованы базовые single-user access, TOTP/cookie sessions, curated sites, encrypted lead inbox, per-site webhooks, durable delivery и ограниченный GitHub-managed update/recovery control plane. Автоматические проверки подтверждают контрактный уровень, но GitHub dispatch, Docker/VPS, PostgreSQL/RLS, Caddy/TLS и browser end-to-end сценарии ещё требуют отдельного доказательства.
 
 ## Граница первого релиза
 
@@ -113,9 +113,7 @@
 
 ### 8. Наблюдаемость и восстановление
 
-**Предлагается.** Наблюдаемость должна показывать фактическое состояние API, worker, build, delivery, TLS, диска и backup, без ложного зелёного статуса.
-
-Нужны измеримые readiness/alerts, off-host encrypted backups, регулярный restore drill и зафиксированные RPO/RTO. Пока такие прогоны не выполнены, recovery и SLA нельзя называть подтверждёнными.
+**Частично реализовано.** Безопасный экран panel update/recovery, immutable release scripts, encrypted off-host backup и bounded code rollback существуют. Нужны измеримые readiness/alerts, реальный GitHub dispatch, регулярный restore drill и зафиксированные RPO/RTO. Пока такие прогоны не выполнены, recovery и SLA нельзя называть подтверждёнными.
 
 ## Порядок и зависимости
 

@@ -53,7 +53,7 @@
 1. Остановите автоматические deploy и зафиксируйте incident time.
 2. Выполните `status`; выберите **явный** restic snapshot ID, не `latest`.
 3. Убедитесь, что snapshot проходил `restic check` или заранее проверенный restore drill.
-4. В GitHub запустите `Recover production` с параметрами:
+4. В GitHub запустите `Recover production` **или** в панели откройте **Система → Обновления**, выберите `RESTORE` и укажите:
 
    ```text
    operation: restore

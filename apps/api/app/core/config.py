@@ -31,6 +31,12 @@ class Settings(BaseSettings):
     sentry_dsn: str = ""
     log_level: str = "INFO"
 
+    # Optional GitHub Actions control plane for the authenticated operator UI.
+    # Values remain VPS-local environment secrets and are never returned by API.
+    github_repository: str = ""
+    github_control_token: str = ""
+    github_api_url: str = "https://api.github.com"
+
     access_token_ttl_minutes: int = 15
     refresh_token_ttl_days: int = 14
 

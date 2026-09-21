@@ -277,6 +277,7 @@ from app.models.project import (  # noqa: E402
     ProjectGeoPlace,
     ProjectKeyword,
 )
+from app.models.system_operation import SystemOperation  # noqa: E402
 from app.models.ops import ContentDecayEvent, FootprintAudit, SerpCheck, StagingApproval  # noqa: E402
 from app.models.panel import (
     AuthSession,
@@ -330,7 +331,7 @@ __all__ = [
     "Site",
     "SiteBuild",
     "SitePage",
-    "StagingApproval",
+    "SystemOperation",
     "TaxonomyCategory",
     "Tenant",
     "User",

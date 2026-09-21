@@ -28,6 +28,7 @@ const groups = [
     label: "Система",
     links: [
       { to: "/ops", label: "Статус" },
+      { to: "/system", label: "Обновления" },
       { to: "/settings", label: "Настройки" },
     ],
   },

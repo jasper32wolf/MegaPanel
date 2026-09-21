@@ -47,7 +47,17 @@
       "Bash(powershell -NoProfile -Command \"[void][scriptblock]::Create\\(\\(Get-Content -Raw 'scripts/install.ps1'\\)\\); [void][scriptblock]::Create\\(\\(Get-Content -Raw 'scripts/start.ps1'\\)\\); [void][scriptblock]::Create\\(\\(Get-Content -Raw 'scripts/stop.ps1'\\)\\)\")",
       "Bash(git restore *)",
       "Bash(python -m py_compile scripts/setup_wizard.py scripts/prepare_env.py scripts/validate_production_env.py scripts/bootstrap_operator.py)",
-      "Bash(git check-ignore *)"
+      "Bash(git check-ignore *)",
+      "Bash(python -m py_compile apps/api/app/services/github_control.py apps/api/app/models/system_operation.py apps/api/app/schemas/system.py apps/api/app/api/v1/system.py apps/api/alembic/versions/0017_system_operations.py)",
+      "Bash(python -m pytest apps/api/tests/test_github_control.py apps/api/tests/test_system_operation_schemas.py apps/api/tests/test_single_operator.py -q)",
+      "Bash(bash -n scripts/release-manager.sh scripts/backup-production.sh scripts/restore-production.sh scripts/install-production-vps.sh)",
+      "Bash(python -m ruff check apps/api/app/api/v1/system.py apps/api/app/models/system_operation.py apps/api/app/schemas/system.py apps/api/app/services/github_control.py apps/api/tests/test_github_control.py apps/api/tests/test_system_operation_schemas.py apps/api/tests/test_single_operator.py)",
+      "Bash(python -m alembic -c apps/api/alembic.ini heads)",
+      "Bash(bash -n scripts/install-production-vps.sh scripts/release-manager.sh scripts/backup-production.sh scripts/restore-production.sh scripts/bootstrap-github-deploy.sh)",
+      "Bash(command -v actionlint)",
+      "Bash(actionlint .github/workflows/deploy-production.yml .github/workflows/recover-production.yml)",
+      "Bash(python -m ruff format apps/api/app/api/v1/system.py apps/api/app/models/system_operation.py apps/api/app/schemas/system.py apps/api/app/services/github_control.py apps/api/tests/test_github_control.py apps/api/tests/test_system_operation_schemas.py apps/api/tests/test_single_operator.py)",
+      "Bash(python -m ruff check --fix apps/api/tests/test_system_operation_schemas.py)"
     ]
   }
 }

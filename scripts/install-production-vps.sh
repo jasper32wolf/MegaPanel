@@ -346,7 +346,8 @@ initialize_volumes() {
   local volume
   for volume in sites_data uploads_data dsar_data caddy_data caddy_config; do
     docker volume create "site-panel_${volume}" >/dev/null
-    docker run --rm -v "site-panel_${volume}:/data" alpine:3.20 sh -eu -c 'chown -R 10001:10001 /data'
+    docker run --rm -v "site-panel_${volume}:/data" alpine:3.20 \
+      sh -eu -c 'chown -R 10001:10001 /data && chmod -R u+rwX /data'
     docker run --rm --user 10001:10001 -v "site-panel_${volume}:/data" alpine:3.20 \
       sh -eu -c 'touch /data/.site-panel-write-probe; rm /data/.site-panel-write-probe'
   done
