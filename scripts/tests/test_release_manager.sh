@@ -203,6 +203,7 @@ make_archive() {
   cp "$ROOT/scripts/release-manager.sh" "$payload/scripts/release-manager.sh"
   cp "$ROOT/scripts/backup-production.sh" "$payload/scripts/backup-production.sh"
   cp "$ROOT/scripts/restore-production.sh" "$payload/scripts/restore-production.sh"
+  cp "$ROOT/scripts/validate_production_env.py" "$payload/scripts/validate_production_env.py"
   chmod +x "$payload/scripts/"*.sh
   tar -C "$payload" -czf "$SITE_ROOT/incoming/$id.tar.gz" .
 }
