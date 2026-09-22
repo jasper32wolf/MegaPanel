@@ -55,6 +55,17 @@ die() {
   exit 1
 }
 
+backup_unexpected_error() {
+  local status="$?"
+  emit "result=error"
+  emit "error=unexpected_backup_failure_line_${BASH_LINENO[0]}_status_${status}"
+  printf '%s action=backup result=error message=unexpected_failure line=%s status=%s\n' \
+    "$(now_utc)" "${BASH_LINENO[0]}" "$status" >>"$AUDIT_FILE" 2>/dev/null || true
+  exit "$status"
+}
+
+trap backup_unexpected_error ERR
+
 state_set() {
   local key="$1"
   local value="$2"
