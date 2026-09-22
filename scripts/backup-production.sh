@@ -176,8 +176,12 @@ load_backup_env() {
   [[ "$BACKUP_RUN_CHECK" == "0" || "$BACKUP_RUN_CHECK" == "1" ]] || die "invalid_backup_run_check"
 
   export RESTIC_REPOSITORY RESTIC_PASSWORD_FILE
-  [[ -n "${AWS_ACCESS_KEY_ID:-}" ]] && export AWS_ACCESS_KEY_ID
-  [[ -n "${AWS_SECRET_ACCESS_KEY:-}" ]] && export AWS_SECRET_ACCESS_KEY
+  if [[ -n "${AWS_ACCESS_KEY_ID:-}" ]]; then
+    export AWS_ACCESS_KEY_ID
+  fi
+  if [[ -n "${AWS_SECRET_ACCESS_KEY:-}" ]]; then
+    export AWS_SECRET_ACCESS_KEY
+  fi
 }
 
 archive_volume() {
