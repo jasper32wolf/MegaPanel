@@ -279,8 +279,13 @@ run_predeploy_backup() {
   current="$(release_id_for_link "$CURRENT_LINK")"
   [[ -n "$current" ]] || return 0
   [[ -x "$BIN_DIR/backup-production.sh" ]] || die "backup_manager_missing"
-  SITE_PANEL_ROOT="$SITE_PANEL_ROOT" COMPOSE_PROJECT="$COMPOSE_PROJECT" \
-    "$BIN_DIR/backup-production.sh" --reason "pre-deploy-$target_release"
+  if ! backup_output="$(
+    SITE_PANEL_ROOT="$SITE_PANEL_ROOT" COMPOSE_PROJECT="$COMPOSE_PROJECT" \
+      "$BIN_DIR/backup-production.sh" --reason "pre-deploy-$target_release" 2>&1
+  )"; then
+    printf '%s\n' "$backup_output" >&2
+    return 1
+  fi
 }
 
 cleanup_old_releases() {

@@ -179,7 +179,8 @@ archive_volume() {
     -v "${volume}:/data:ro" \
     -v "$payload:/backup" \
     alpine:3.20 \
-    tar czf "/backup/$archive_name" -C /data .
+    tar czf "/backup/$archive_name" -C /data . \
+    || die "${archive_name%.tar.gz}_archive_command_failed"
   [[ -s "$payload/$archive_name" ]] || die "${archive_name%.tar.gz}_archive_empty"
 }
 
@@ -220,7 +221,8 @@ main() {
   dump="$payload/postgres.dump"
   mkdir -p "$payload"
 
-  compose exec -T postgres pg_dump -U "$db_user" -Fc "$db_name" >"$dump"
+  compose exec -T postgres pg_dump -U "$db_user" -Fc "$db_name" >"$dump" \
+    || die "postgres_dump_failed"
   [[ -s "$dump" ]] || die "postgres_dump_empty"
 
   archive_volume "$sites_volume" "sites_data.tar.gz" "$payload"
@@ -255,16 +257,18 @@ EOF
     --tag site-panel \
     --tag "reason-$BACKUP_REASON" \
     --tag "release-$current_release" \
-    "$payload" >/dev/null
+    "$payload" >/dev/null \
+    || die "restic_backup_failed"
   restic forget --prune \
     --keep-daily "$BACKUP_KEEP_DAILY" \
     --keep-weekly "$BACKUP_KEEP_WEEKLY" \
-    --keep-monthly "$BACKUP_KEEP_MONTHLY" >/dev/null
+    --keep-monthly "$BACKUP_KEEP_MONTHLY" >/dev/null \
+    || die "restic_prune_failed"
   if [[ "$BACKUP_RUN_CHECK" == "1" ]]; then
-    restic check --read-data-subset=1/50 >/dev/null
+    restic check --read-data-subset=1/50 >/dev/null || die "restic_check_failed"
   fi
 
-  snapshot="$(snapshot_id)"
+  snapshot="$(snapshot_id)" || die "restic_snapshot_query_failed"
   [[ -n "$snapshot" ]] || die "restic_snapshot_missing"
   state_set last_backup_snapshot "$snapshot"
   state_set last_backup_at "$(now_utc)"
