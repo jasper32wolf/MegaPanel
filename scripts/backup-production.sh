@@ -19,6 +19,7 @@ BACKUP_POLICY_VERSION="1"
 BACKUP_INCLUDED_VOLUMES="sites_data,uploads_data,caddy_data,caddy_config"
 BACKUP_EXCLUDED_VOLUMES="dsar_data"
 DSAR_RESTORE_ACTION="clear"
+RESTIC_OPTIONS=()
 
 usage() {
   cat <<'EOF'
@@ -135,7 +136,7 @@ load_backup_env() {
   # entries are accepted; substitutions, commands, exports, and other keys are
   # never evaluated or imported.
   unset RESTIC_REPOSITORY RESTIC_PASSWORD_FILE AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
-  unset BACKUP_KEEP_DAILY BACKUP_KEEP_WEEKLY BACKUP_KEEP_MONTHLY BACKUP_RUN_CHECK
+  unset BACKUP_KEEP_DAILY BACKUP_KEEP_WEEKLY BACKUP_KEEP_MONTHLY BACKUP_RUN_CHECK RESTIC_S3_BUCKET_LOOKUP
   while IFS= read -r line || [[ -n "$line" ]]; do
     line="${line%$'\r'}"
     [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
@@ -143,7 +144,7 @@ load_backup_env() {
     key="${BASH_REMATCH[1]}"
     value="${BASH_REMATCH[2]}"
     case "$key" in
-      RESTIC_REPOSITORY|RESTIC_PASSWORD_FILE|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|BACKUP_KEEP_DAILY|BACKUP_KEEP_WEEKLY|BACKUP_KEEP_MONTHLY|BACKUP_RUN_CHECK)
+      RESTIC_REPOSITORY|RESTIC_PASSWORD_FILE|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|RESTIC_S3_BUCKET_LOOKUP|BACKUP_KEEP_DAILY|BACKUP_KEEP_WEEKLY|BACKUP_KEEP_MONTHLY|BACKUP_RUN_CHECK)
         ;;
       *)
         die "backup_env_key_not_allowed"
@@ -156,6 +157,7 @@ load_backup_env() {
       RESTIC_PASSWORD_FILE) RESTIC_PASSWORD_FILE="$value" ;;
       AWS_ACCESS_KEY_ID) AWS_ACCESS_KEY_ID="$value" ;;
       AWS_SECRET_ACCESS_KEY) AWS_SECRET_ACCESS_KEY="$value" ;;
+      RESTIC_S3_BUCKET_LOOKUP) RESTIC_S3_BUCKET_LOOKUP="$value" ;;
       BACKUP_KEEP_DAILY) BACKUP_KEEP_DAILY="$value" ;;
       BACKUP_KEEP_WEEKLY) BACKUP_KEEP_WEEKLY="$value" ;;
       BACKUP_KEEP_MONTHLY) BACKUP_KEEP_MONTHLY="$value" ;;
@@ -170,10 +172,13 @@ load_backup_env() {
   BACKUP_KEEP_WEEKLY="${BACKUP_KEEP_WEEKLY:-4}"
   BACKUP_KEEP_MONTHLY="${BACKUP_KEEP_MONTHLY:-12}"
   BACKUP_RUN_CHECK="${BACKUP_RUN_CHECK:-1}"
+  RESTIC_S3_BUCKET_LOOKUP="${RESTIC_S3_BUCKET_LOOKUP:-auto}"
   require_uint backup_keep_daily "$BACKUP_KEEP_DAILY"
   require_uint backup_keep_weekly "$BACKUP_KEEP_WEEKLY"
   require_uint backup_keep_monthly "$BACKUP_KEEP_MONTHLY"
   [[ "$BACKUP_RUN_CHECK" == "0" || "$BACKUP_RUN_CHECK" == "1" ]] || die "invalid_backup_run_check"
+  [[ "$RESTIC_S3_BUCKET_LOOKUP" == "auto" || "$RESTIC_S3_BUCKET_LOOKUP" == "dns" || "$RESTIC_S3_BUCKET_LOOKUP" == "path" ]] || die "invalid_restic_s3_bucket_lookup"
+  RESTIC_OPTIONS=("-o" "s3.bucket-lookup=$RESTIC_S3_BUCKET_LOOKUP")
 
   export RESTIC_REPOSITORY RESTIC_PASSWORD_FILE
   if [[ -n "${AWS_ACCESS_KEY_ID:-}" ]]; then
