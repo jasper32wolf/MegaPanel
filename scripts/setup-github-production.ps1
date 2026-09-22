@@ -230,9 +230,18 @@ function New-ActionKeyPairIfMissing {
   }
 
   New-Item -ItemType Directory -Force -Path (Split-Path -Parent $PrivatePath) | Out-Null
-  Invoke-Checked "ssh-keygen" @(
-    "-t", "ed25519", "-a", "100", "-N", "", "-f", $PrivatePath, "-C", $Comment
-  ) "Could not generate the GitHub Actions key pair"
+  $previousPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = "Continue"
+    @("", "") | & ssh-keygen -t ed25519 -a 100 -f $PrivatePath -C $Comment
+    $exitCode = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previousPreference
+  }
+  if ($exitCode -ne 0) {
+    Remove-Item -LiteralPath $PrivatePath, $publicPath -Force -ErrorAction SilentlyContinue
+    throw "Could not generate the GitHub Actions key pair (exit code $exitCode)"
+  }
   return $publicPath
 }
 
