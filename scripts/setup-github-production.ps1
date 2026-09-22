@@ -45,7 +45,7 @@ function Write-Ok([string]$Message) {
   Write-Host ("OK: {0}" -f $Message) -ForegroundColor Green
 }
 
-function Require-Command([string]$Name, [string]$Hint) {
+function Test-RequiredCommand([string]$Name, [string]$Hint) {
   if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
     throw ("Required command '{0}' was not found. {1}" -f $Name, $Hint)
   }
@@ -126,20 +126,20 @@ function Invoke-GitHub {
   return $output
 }
 
-function Ensure-GitHubAuth {
+function Connect-GitHubCli {
   & $script:GitHubCli auth status --hostname github.com 2>$null 1>$null
   if ($LASTEXITCODE -eq 0) {
     Write-Ok "GitHub CLI is authenticated"
     return
   }
 
-  Write-Host "Откроется браузер для безопасной авторизации GitHub CLI; token в чат вводить не нужно." -ForegroundColor Yellow
+  Write-Host "A browser window will open for GitHub CLI authentication. Do not paste a token into chat." -ForegroundColor Yellow
   Invoke-Checked $script:GitHubCli @("auth", "login", "--hostname", "github.com", "--git-protocol", "ssh", "--web") `
     "GitHub CLI authentication failed"
   Write-Ok "GitHub CLI authenticated"
 }
 
-function Ensure-ActionKeyPair {
+function New-ActionKeyPairIfMissing {
   param(
     [Parameter(Mandatory = $true)]
     [string]$PrivatePath,
@@ -183,7 +183,7 @@ function Get-PinnedKnownHosts {
   )
 
   $globalPath = Join-Path $env:USERPROFILE ".ssh\known_hosts"
-  $matches = @()
+  $hostKeyLines = @()
   if (Test-Path -LiteralPath $globalPath) {
     foreach ($line in (Get-Content -LiteralPath $globalPath)) {
       if ([string]::IsNullOrWhiteSpace($line) -or $line.StartsWith("#")) {
@@ -192,12 +192,12 @@ function Get-PinnedKnownHosts {
       $hostField = ($line -split "\s+", 2)[0]
       $hostNames = $hostField.Split(",")
       if ($hostNames -contains $HostName -or $hostNames -contains "[$HostName]:$Port") {
-        $matches += $line
+        $hostKeyLines += $line
       }
     }
   }
 
-  if ($matches.Count -eq 0) {
+  if ($hostKeyLines.Count -eq 0) {
     $scan = @(& ssh-keyscan -p $Port -T 10 $HostName 2>$null)
     if ($LASTEXITCODE -ne 0 -or $scan.Count -eq 0) {
       throw "Could not obtain a VPS host key from $HostName`:$Port"
@@ -205,14 +205,14 @@ function Get-PinnedKnownHosts {
     Write-AsciiFile -Path $OutputPath -Lines $scan
     $fingerprint = (& ssh-keygen -lf $OutputPath -E sha256 2>$null | Out-String).Trim()
     Write-Host "VPS host-key fingerprint candidate: $fingerprint" -ForegroundColor Yellow
-    $confirmation = Read-Host "Сверьте fingerprint с консолью провайдера и введите YES"
+    $confirmation = Read-Host "Verify the fingerprint in the provider console, then type YES"
     if ($confirmation -cne "YES") {
       throw "VPS host key was not confirmed"
     }
   } else {
-    Write-AsciiFile -Path $OutputPath -Lines $matches
+    Write-AsciiFile -Path $OutputPath -Lines $hostKeyLines
     $fingerprint = (& ssh-keygen -lf $OutputPath -E sha256 2>$null | Out-String).Trim()
-    Write-Host "Использован уже сохранённый VPS host key: $fingerprint" -ForegroundColor Yellow
+    Write-Host "Using the previously pinned VPS host key: $fingerprint" -ForegroundColor Yellow
   }
 
   return $OutputPath
@@ -352,7 +352,7 @@ function Invoke-RemoteSetup {
 
   $sshArgs = Get-SshArguments -KnownHostsPath $KnownHostsPath
   $sshArgs += @("$VpsUser@$VpsHost", "bash -s")
-  Write-Host "Если root использует пароль, SSH запросит его локально; пароль никуда не записывается." -ForegroundColor Yellow
+  Write-Host "SSH may ask for the root password locally. The password is never stored." -ForegroundColor Yellow
   $output = Get-Content -LiteralPath $ScriptPath -Raw | & ssh @sshArgs 2>&1
   $code = $LASTEXITCODE
   $output | ForEach-Object { Write-Host $_ }
@@ -429,7 +429,7 @@ function Wait-ForCi {
   throw "Timed out waiting for CI for $Sha"
 }
 
-function Dispatch-Deploy {
+function Start-Deploy {
   param(
     [Parameter(Mandatory = $true)]
     [string]$Sha
@@ -456,18 +456,18 @@ function Dispatch-Deploy {
 Write-Host "Site Panel GitHub production setup" -ForegroundColor Green
 Write-Host ("VPS: {0}@{1}:{2}" -f $VpsUser, $VpsHost, $VpsPort)
 
-Require-Command "ssh" "OpenSSH client is required"
-Require-Command "ssh-keygen" "OpenSSH client is required"
-Require-Command "git" "Git is required"
+Test-RequiredCommand "ssh" "OpenSSH client is required"
+Test-RequiredCommand "ssh-keygen" "OpenSSH client is required"
+Test-RequiredCommand "git" "Git is required"
 $Repository = Get-RepositorySlug
 $script:GitHubCli = Get-GitHubCli
-Ensure-GitHubAuth
+Connect-GitHubCli
 
 $actionKeyDir = Join-Path $env:USERPROFILE ".ssh"
 $deployKey = Join-Path $actionKeyDir "site-panel-actions-deploy"
 $recoveryKey = Join-Path $actionKeyDir "site-panel-actions-recovery"
-$deployPublic = Ensure-ActionKeyPair $deployKey "site-panel-actions-deploy"
-$recoveryPublic = Ensure-ActionKeyPair $recoveryKey "site-panel-actions-recovery"
+$deployPublic = New-ActionKeyPairIfMissing $deployKey "site-panel-actions-deploy"
+$recoveryPublic = New-ActionKeyPairIfMissing $recoveryKey "site-panel-actions-recovery"
 
 $stage = Join-Path $env:TEMP ("site-panel-actions-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
@@ -533,7 +533,7 @@ try {
       throw "Working tree is not clean; commit and push changes before deploying."
     }
     Wait-ForCi -Sha $sha
-    Dispatch-Deploy -Sha $sha
+    Start-Deploy -Sha $sha
   } else {
     Write-Host "Setup complete. Deploy was skipped by -SkipDeploy." -ForegroundColor Yellow
   }
@@ -542,4 +542,4 @@ try {
 }
 
 Write-Host ""
-Write-Host "Готово. Приватные ключи сохранены только локально и в GitHub Environment secrets." -ForegroundColor Green
+Write-Host "Done. Private keys exist only on this computer and in GitHub Environment secrets." -ForegroundColor Green
