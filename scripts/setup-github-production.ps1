@@ -437,11 +437,17 @@ function Invoke-RemoteSetup {
   $sshArgs = Get-SshArguments -KnownHostsPath $KnownHostsPath
   $sshArgs += @("$VpsUser@$VpsHost", "bash -s")
   Write-Host "SSH may ask for the root password locally. The password is never stored." -ForegroundColor Yellow
-  $output = Get-Content -LiteralPath $ScriptPath -Raw | & ssh @sshArgs 2>&1
-  $code = $LASTEXITCODE
+  $previousPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = "Continue"
+    $output = Get-Content -LiteralPath $ScriptPath -Raw | & ssh @sshArgs 2>&1
+    $exitCode = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previousPreference
+  }
   $output | ForEach-Object { Write-Host $_ }
-  if ($code -ne 0) {
-    throw "VPS bootstrap failed (exit code $code)"
+  if ($exitCode -ne 0) {
+    throw "VPS bootstrap failed (exit code $exitCode)"
   }
   return @($output | ForEach-Object { [string]$_ })
 }
