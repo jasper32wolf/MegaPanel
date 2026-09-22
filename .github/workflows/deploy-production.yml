@@ -92,6 +92,8 @@ jobs:
         run: |
           set -Eeuo pipefail
           printf 'commit=%s\n' "$RELEASE_SHA" > .site-panel-release
+          archive="site-panel-${RELEASE_SHA}.tar.gz"
+          temporary_archive="$RUNNER_TEMP/$archive"
           tar \
             --exclude-vcs \
             --exclude=.env \
@@ -106,8 +108,9 @@ jobs:
             --exclude=uploads \
             --exclude=sites \
             --exclude='*.log' \
-            -czf "site-panel-${RELEASE_SHA}.tar.gz" .
-          sha256sum "site-panel-${RELEASE_SHA}.tar.gz" > release-archive.sha256
+            -czf "$temporary_archive" .
+          mv "$temporary_archive" "$archive"
+          sha256sum "$archive" > release-archive.sha256
 
       - uses: actions/upload-artifact@v4
         with:
