@@ -158,8 +158,15 @@ function Invoke-GitHub {
 }
 
 function Connect-GitHubCli {
-  & $script:GitHubCli auth status --hostname github.com 2>$null 1>$null
-  if ($LASTEXITCODE -eq 0) {
+  $previousPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = "Continue"
+    & $script:GitHubCli auth status --hostname github.com 2>$null 1>$null
+    $authStatus = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previousPreference
+  }
+  if ($authStatus -eq 0) {
     Write-Ok "GitHub CLI is authenticated"
     return
   }
@@ -255,7 +262,7 @@ function Get-SshArguments {
     [string]$KnownHostsPath
   )
 
-  $args = @(
+  $commandArguments = @(
     "-p", $VpsPort,
     "-o", "ConnectTimeout=20",
     "-o", "StrictHostKeyChecking=yes",
@@ -265,9 +272,9 @@ function Get-SshArguments {
     "-o", "PasswordAuthentication=yes"
   )
   if (-not [string]::IsNullOrWhiteSpace($AdminKeyPath)) {
-    $args += @("-i", $AdminKeyPath)
+    $commandArguments += @("-i", $AdminKeyPath)
   }
-  return $args
+  return $commandArguments
 }
 
 function New-RemoteSetupScript {
@@ -410,11 +417,11 @@ function Set-GitHubVariable {
     [string]$Value,
     [string]$EnvironmentName = ""
   )
-  $args = @("variable", "set", $Name, "--repo", $Repository, "--body", $Value)
+  $commandArguments = @("variable", "set", $Name, "--repo", $Repository, "--body", $Value)
   if ($EnvironmentName) {
-    $args += @("--env", $EnvironmentName)
+    $commandArguments += @("--env", $EnvironmentName)
   }
-  Invoke-GitHub $args "Could not set GitHub variable $Name" | Out-Null
+  Invoke-GitHub $commandArguments "Could not set GitHub variable $Name" | Out-Null
 }
 
 function Set-GitHubSecretFile {
@@ -427,8 +434,8 @@ function Set-GitHubSecretFile {
     [string]$EnvironmentName
   )
   $content = Get-Content -LiteralPath $Path -Raw
-  $args = @("secret", "set", $Name, "--repo", $Repository, "--env", $EnvironmentName)
-  $content | & $script:GitHubCli @args 2>&1 | Out-Null
+  $commandArguments = @("secret", "set", $Name, "--repo", $Repository, "--env", $EnvironmentName)
+  $content | & $script:GitHubCli @commandArguments 2>&1 | Out-Null
   if ($LASTEXITCODE -ne 0) {
     throw "Could not set GitHub secret $Name"
   }
