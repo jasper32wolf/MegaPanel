@@ -205,7 +205,7 @@ archive_volume() {
 }
 
 snapshot_id() {
-  restic snapshots --latest 1 --json | python3 -c '
+  restic "${RESTIC_OPTIONS[@]}" snapshots --latest 1 --json | python3 -c '
 import json, sys
 rows = json.load(sys.stdin)
 print(rows[-1]["short_id"] if rows else "")
@@ -273,7 +273,7 @@ caddy_config_volume=$caddy_config_volume
 EOF
   chmod 0600 "$payload/manifest.env"
 
-  restic backup \
+  restic "${RESTIC_OPTIONS[@]}" backup \
     --tag site-panel \
     --tag "reason-$BACKUP_REASON" \
     --tag "release-$current_release" \

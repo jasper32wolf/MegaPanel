@@ -174,19 +174,39 @@ chown "$user:$user" "$root/shared/restic-password"
 {
   printf 'RESTIC_REPOSITORY=%s\n' "$repository"
   printf 'RESTIC_PASSWORD_FILE=%s\n' "$root/shared/restic-password"
+  printf 'RESTIC_S3_BUCKET_LOOKUP=path\n'
   printf 'AWS_ACCESS_KEY_ID=%s\n' "$access_key"
   printf 'AWS_SECRET_ACCESS_KEY=%s\n' "$secret_key"
 } >"$root/shared/backup.env"
 chown "$user:$user" "$root/shared/backup.env"
 chmod 0600 "$root/shared/backup.env"
 restic_env=(RESTIC_REPOSITORY="$repository" RESTIC_PASSWORD_FILE="$root/shared/restic-password" AWS_ACCESS_KEY_ID="$access_key" AWS_SECRET_ACCESS_KEY="$secret_key")
-if ! runuser -u "$user" -- env "${restic_env[@]}" restic snapshots --latest 1 --json >/dev/null 2>&1; then
-  runuser -u "$user" -- env "${restic_env[@]}" restic init >/dev/null 2>&1 || {
-    printf '%s\n' 'BACKUP_ERROR=restic_repository_unavailable_or_password_mismatch'
+restic_options=(-o s3.bucket-lookup=path)
+probe_output=""
+if ! probe_output="$(runuser -u "$user" -- env "${restic_env[@]}" restic "${restic_options[@]}" snapshots --latest 1 --json 2>&1)"; then
+  init_code=0
+  init_output="$(runuser -u "$user" -- env "${restic_env[@]}" restic "${restic_options[@]}" init 2>&1)" || init_code=$?
+  if (( init_code != 0 )); then
+    combined="$probe_output $init_output"
+    case "$combined" in
+      *InvalidAccessKeyId*|*AccessDenied*|*SignatureDoesNotMatch*|*Unauthorized*)
+        error_code="s3_credentials_or_permissions"
+        ;;
+      *wrong\ password*|*no\ key\ found*|*config\ file*|*master\ key*)
+        error_code="restic_password_or_existing_repository"
+        ;;
+      *NoSuchBucket*|*PermanentRedirect*|*Endpoint*)
+        error_code="s3_endpoint_or_bucket"
+        ;;
+      *)
+        error_code="restic_init_failed"
+        ;;
+    esac
+    printf 'BACKUP_ERROR=%s\n' "$error_code"
     exit 21
-  }
+  fi
 fi
-runuser -u "$user" -- env "${restic_env[@]}" restic snapshots --latest 1 --json >/dev/null 2>&1 || {
+runuser -u "$user" -- env "${restic_env[@]}" restic "${restic_options[@]}" snapshots --latest 1 --json >/dev/null 2>&1 || {
   printf '%s\n' 'BACKUP_ERROR=restic_repository_check_failed'
   exit 22
 }
