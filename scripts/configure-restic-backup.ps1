@@ -17,6 +17,7 @@ param(
   [string]$InstallRoot = "/opt/site-panel",
   [string]$DeployUser = "sitepanel-deploy",
   [string]$Repository = "s3:https://s3.regru.cloud/my-site-panel-backups",
+  [switch]$RotateResticPassword,
   [switch]$SkipDeploy
 )
 
@@ -85,16 +86,23 @@ function Convert-SecureStringToPlainText {
 }
 
 function Get-OrCreateResticPassword {
+  param([switch]$Rotate)
   $directory = Join-Path $env:USERPROFILE ".site-panel"
   $path = Join-Path $directory "restic-password.txt"
   New-Item -ItemType Directory -Force -Path $directory | Out-Null
   if (Test-Path -LiteralPath $path) {
-    $existing = (Get-Content -LiteralPath $path -Raw).Trim()
-    if ($existing.Length -ge 24) {
-      Write-Host ("Using the existing local Restic password copy: {0}" -f $path) -ForegroundColor Yellow
-      return @{ Value = $existing; Path = $path }
+    if ($Rotate) {
+      $archive = "$path.compromised-$([DateTime]::UtcNow.ToString('yyyyMMddHHmmss'))"
+      Move-Item -LiteralPath $path -Destination $archive
+      Write-Host ("Moved the exposed Restic password copy to: {0}" -f $archive) -ForegroundColor Yellow
+    } else {
+      $existing = (Get-Content -LiteralPath $path -Raw).Trim()
+      if ($existing.Length -ge 24) {
+        Write-Host ("Using the existing local Restic password copy: {0}" -f $path) -ForegroundColor Yellow
+        return @{ Value = $existing; Path = $path }
+      }
+      throw "The local Restic password file exists but is too short: $path"
     }
-    throw "The local Restic password file exists but is too short: $path"
   }
 
   $bytes = New-Object byte[] 32
@@ -283,7 +291,7 @@ try {
   $secretSecure = Read-Host "Enter S3 secret access key (local only)" -AsSecureString
   $secretKey = Convert-SecureStringToPlainText $secretSecure
   if ([string]::IsNullOrWhiteSpace($secretKey)) { throw "S3 secret access key is required" }
-  $password = Get-OrCreateResticPassword
+  $password = Get-OrCreateResticPassword -Rotate:$RotateResticPassword
   $remoteScript = New-RemoteBackupScript -StagePath $stage -AccessKey $accessKey -SecretKey $secretKey -ResticPassword $password.Value
   $output = Invoke-RemoteScript -ScriptPath $remoteScript -KnownHostsPath $knownHosts
   if (-not ($output -contains "BACKUP_STATUS=ready")) {
