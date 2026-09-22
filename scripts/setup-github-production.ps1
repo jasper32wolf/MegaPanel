@@ -233,11 +233,12 @@ function New-ActionKeyPairIfMissing {
   $previousPreference = $ErrorActionPreference
   try {
     $ErrorActionPreference = "Continue"
-    @("", "") | & ssh-keygen -t ed25519 -a 100 -f $PrivatePath -C $Comment
+    $output = @("", "") | & ssh-keygen -t ed25519 -a 100 -f $PrivatePath -C $Comment 2>&1
     $exitCode = $LASTEXITCODE
   } finally {
     $ErrorActionPreference = $previousPreference
   }
+  $output | ForEach-Object { Write-Host $_ }
   if ($exitCode -ne 0) {
     Remove-Item -LiteralPath $PrivatePath, $publicPath -Force -ErrorAction SilentlyContinue
     throw "Could not generate the GitHub Actions key pair (exit code $exitCode)"
