@@ -162,10 +162,12 @@ jobs:
           RELEASE_SHA: ${{ needs.resolve-release.outputs.release_sha }}
           DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
           DEPLOY_USER: ${{ vars.DEPLOY_USER }}
-          DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
-          DEPLOY_ROOT: ${{ vars.DEPLOY_ROOT || '/opt/site-panel' }}
+          DEPLOY_PORT: ${{ vars.DEPLOY_PORT }}
+          DEPLOY_ROOT: ${{ vars.DEPLOY_ROOT }}
         run: |
           set -Eeuo pipefail
+          DEPLOY_PORT="${DEPLOY_PORT:-22}"
+          DEPLOY_ROOT="${DEPLOY_ROOT:-/opt/site-panel}"
           [[ -n "$DEPLOY_HOST" ]] || {
             printf '%s\n' '::error::production_deploy_host_missing'
             exit 1
