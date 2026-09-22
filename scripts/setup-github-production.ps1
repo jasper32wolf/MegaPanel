@@ -59,15 +59,29 @@ function Invoke-Checked {
     [string]$FailureMessage = "Command failed"
   )
 
-  & $FilePath @ArgumentList
-  if ($LASTEXITCODE -ne 0) {
-    throw ("{0}: {1} (exit code {2})" -f $FailureMessage, $FilePath, $LASTEXITCODE)
+  $previousPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = "Continue"
+    & $FilePath @ArgumentList
+    $exitCode = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previousPreference
+  }
+  if ($exitCode -ne 0) {
+    throw ("{0}: {1} (exit code {2})" -f $FailureMessage, $FilePath, $exitCode)
   }
 }
 
 function Get-RepositorySlug {
-  $remote = (& git remote get-url origin 2>$null | Select-Object -First 1)
-  if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($remote)) {
+  $previousPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = "Continue"
+    $remote = (& git remote get-url origin 2>$null | Select-Object -First 1)
+    $exitCode = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previousPreference
+  }
+  if ($exitCode -ne 0 -or [string]::IsNullOrWhiteSpace($remote)) {
     return $Repository
   }
   $remote = $remote.Trim()
@@ -92,12 +106,28 @@ function Get-GitHubCli {
     return $knownPath
   }
 
+  $portableRoot = Join-Path $env:LOCALAPPDATA "SitePanel\tools\gh"
+  if (Test-Path -LiteralPath $portableRoot) {
+    $cachedPortable = Get-ChildItem -LiteralPath $portableRoot -Filter "gh.exe" -File -Recurse |
+      Select-Object -First 1
+    if ($cachedPortable) {
+      return $cachedPortable.FullName
+    }
+  }
+
   $winget = Get-Command winget -ErrorAction SilentlyContinue
   if ($winget) {
     Write-Step "Installing GitHub CLI"
-    & $winget.Source install --id GitHub.cli --exact --source winget `
-      --accept-source-agreements --accept-package-agreements
-    if ($LASTEXITCODE -eq 0) {
+    $previousPreference = $ErrorActionPreference
+    try {
+      $ErrorActionPreference = "Continue"
+      & $winget.Source install --id GitHub.cli --exact --source winget `
+        --accept-source-agreements --accept-package-agreements
+      $wingetExitCode = $LASTEXITCODE
+    } finally {
+      $ErrorActionPreference = $previousPreference
+    }
+    if ($wingetExitCode -eq 0) {
       if (Test-Path -LiteralPath $knownPath) {
         return $knownPath
       }
@@ -148,10 +178,16 @@ function Invoke-GitHub {
     [string]$FailureMessage = "GitHub CLI command failed"
   )
 
-  $output = & $script:GitHubCli @Arguments 2>&1
-  $code = $LASTEXITCODE
-  if ($code -ne 0) {
-    $safeOutput = ($output | ForEach-Object { [string]$_ }) -join "\n"
+  $previousPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = "Continue"
+    $output = & $script:GitHubCli @Arguments 2>&1
+    $exitCode = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previousPreference
+  }
+  if ($exitCode -ne 0) {
+    $safeOutput = ($output | ForEach-Object { [string]$_ }) -join "`n"
     throw ("{0}: {1}" -f $FailureMessage, $safeOutput.Trim())
   }
   return $output
@@ -186,10 +222,10 @@ function New-ActionKeyPairIfMissing {
   )
 
   $publicPath = "$PrivatePath.pub"
-  if (Test-Path -LiteralPath $PrivatePath -and Test-Path -LiteralPath $publicPath) {
+  if ((Test-Path -LiteralPath $PrivatePath) -and (Test-Path -LiteralPath $publicPath)) {
     return $publicPath
   }
-  if (Test-Path -LiteralPath $PrivatePath -or Test-Path -LiteralPath $publicPath) {
+  if ((Test-Path -LiteralPath $PrivatePath) -or (Test-Path -LiteralPath $publicPath)) {
     throw "Incomplete action key pair exists at $PrivatePath; rename it and rerun."
   }
 
