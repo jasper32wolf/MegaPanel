@@ -160,6 +160,9 @@ access_key="$(cat "$tmp/access")"
 secret_key="$(cat "$tmp/secret")"
 password="$(cat "$tmp/password")"
 [[ "$repository" != *$'\n'* && "$access_key" != *$'\n'* && "$secret_key" != *$'\n'* && "$password" != *$'\n'* ]]
+for file in "$root/bin/"*.sh "$root/bin/"*.py; do
+  [[ -f "$file" ]] && sed -i 's/\r$//' "$file"
+done
 command -v restic >/dev/null 2>&1 || {
   printf '%s\n' 'BACKUP_ERROR=restic_missing'
   exit 20

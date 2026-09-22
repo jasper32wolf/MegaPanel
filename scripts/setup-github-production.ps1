@@ -373,6 +373,9 @@ decode "$tmp/scripts/github-deploy-gateway.sh" "__github-deploy-gateway.sh__" 07
 decode "$tmp/scripts/validate_production_env.py" "__validate_production_env.py__" 0755
 decode "$tmp/keys/deploy.pub" "__deploy_pub__" 0644
 decode "$tmp/keys/recovery.pub" "__recovery_pub__" 0644
+for file in "$tmp/scripts/"*.sh "$tmp/scripts/"*.py; do
+  [[ -f "$file" ]] && sed -i 's/\r$//' "$file"
+done
 bash "$tmp/scripts/bootstrap-github-deploy.sh" \
   --root "$root" \
   --user "$user" \
