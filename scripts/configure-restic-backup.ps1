@@ -17,6 +17,7 @@ param(
   [string]$InstallRoot = "/opt/site-panel",
   [string]$DeployUser = "sitepanel-deploy",
   [string]$Repository = "s3:https://s3.regru.cloud/my-site-panel-backups",
+  [string]$AdminKeyPath = "",
   [switch]$RotateResticPassword,
   [switch]$SkipDeploy
 )
@@ -256,7 +257,14 @@ function Invoke-RemoteScript {
     "$VpsUser@$VpsHost",
     "bash -s"
   )
-  Write-Host "SSH will ask for the root password locally. It is never stored." -ForegroundColor Yellow
+  if (-not [string]::IsNullOrWhiteSpace($AdminKeyPath)) {
+    $sshOptions = @(
+      "-i", $AdminKeyPath
+    ) + $sshOptions
+    Write-Host "Using the supplied admin SSH key." -ForegroundColor Green
+  } else {
+    Write-Host "SSH will ask for the root password locally. It is never stored." -ForegroundColor Yellow
+  }
   $previousPreference = $ErrorActionPreference
   try {
     $ErrorActionPreference = "Continue"
