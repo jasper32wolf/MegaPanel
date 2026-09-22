@@ -51,7 +51,7 @@ jobs:
             scripts/github-deploy-gateway.sh \
             scripts/bootstrap-github-deploy.sh \
             scripts/tests/test_release_manager.sh
-          python3 scripts/validate_production_env.py --help
+          python3 scripts/validate_production_env.py --help >/dev/null
           bash scripts/tests/test_release_manager.sh
 
   panel:

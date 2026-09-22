@@ -120,8 +120,12 @@ load_backup_env() {
   [[ -n "${RESTIC_PASSWORD_FILE:-}" ]] || die "restic_password_file_missing"
   [[ -r "$RESTIC_PASSWORD_FILE" ]] || die "restic_password_file_unreadable"
   export RESTIC_REPOSITORY RESTIC_PASSWORD_FILE
-  [[ -n "${AWS_ACCESS_KEY_ID:-}" ]] && export AWS_ACCESS_KEY_ID
-  [[ -n "${AWS_SECRET_ACCESS_KEY:-}" ]] && export AWS_SECRET_ACCESS_KEY
+  if [[ -n "${AWS_ACCESS_KEY_ID:-}" ]]; then
+    export AWS_ACCESS_KEY_ID
+  fi
+  if [[ -n "${AWS_SECRET_ACCESS_KEY:-}" ]]; then
+    export AWS_SECRET_ACCESS_KEY
+  fi
 }
 
 manifest_value() {
