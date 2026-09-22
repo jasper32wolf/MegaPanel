@@ -414,7 +414,7 @@ printf 'SETUP_BACKUP=%s\n' "$backup_status"
     "__recovery_pub__" = $recoveryPubB64
   }
   foreach ($name in $sourceNames) {
-    $replacements["__$name__"] = $encoded[$name]
+    $replacements["__${name}__"] = $encoded[$name]
   }
   foreach ($key in $replacements.Keys) {
     $template = $template.Replace($key, $replacements[$key])
