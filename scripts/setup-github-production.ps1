@@ -87,27 +87,58 @@ function Get-GitHubCli {
     return $command.Source
   }
 
-  $winget = Get-Command winget -ErrorAction SilentlyContinue
-  if (-not $winget) {
-    throw "GitHub CLI (gh) is required. Install it from https://cli.github.com/ and rerun this script."
-  }
-
-  Write-Step "Installing GitHub CLI"
-  & $winget.Source install --id GitHub.cli --exact --source winget `
-    --accept-source-agreements --accept-package-agreements
-  if ($LASTEXITCODE -ne 0) {
-    throw "GitHub CLI installation failed"
-  }
-
   $knownPath = Join-Path ${env:ProgramFiles} "GitHub CLI\gh.exe"
   if (Test-Path -LiteralPath $knownPath) {
     return $knownPath
   }
-  $command = Get-Command gh -ErrorAction SilentlyContinue
-  if ($command) {
-    return $command.Source
+
+  $winget = Get-Command winget -ErrorAction SilentlyContinue
+  if ($winget) {
+    Write-Step "Installing GitHub CLI"
+    & $winget.Source install --id GitHub.cli --exact --source winget `
+      --accept-source-agreements --accept-package-agreements
+    if ($LASTEXITCODE -eq 0) {
+      if (Test-Path -LiteralPath $knownPath) {
+        return $knownPath
+      }
+      $command = Get-Command gh -ErrorAction SilentlyContinue
+      if ($command) {
+        return $command.Source
+      }
+    }
   }
-  throw "GitHub CLI was installed but is not available in PATH. Restart PowerShell and rerun this script."
+
+  Write-Step "Downloading portable GitHub CLI"
+  try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $headers = @{
+      Accept = "application/vnd.github+json"
+      "User-Agent" = "site-panel-production-setup"
+    }
+    $release = Invoke-RestMethod `
+      -Uri "https://api.github.com/repos/cli/cli/releases/latest" `
+      -Headers $headers
+    $asset = $release.assets |
+      Where-Object { $_.name -match "windows_amd64\.zip$" } |
+      Select-Object -First 1
+    if (-not $asset) {
+      throw "No Windows amd64 GitHub CLI archive was found"
+    }
+    $toolRoot = Join-Path $env:LOCALAPPDATA "SitePanel\tools\gh"
+    $zipPath = Join-Path $env:TEMP $asset.name
+    New-Item -ItemType Directory -Force -Path $toolRoot | Out-Null
+    Invoke-WebRequest -UseBasicParsing -Uri $asset.browser_download_url -OutFile $zipPath
+    Expand-Archive -LiteralPath $zipPath -DestinationPath $toolRoot -Force
+    Remove-Item -LiteralPath $zipPath -Force -ErrorAction SilentlyContinue
+    $portable = Get-ChildItem -LiteralPath $toolRoot -Filter "gh.exe" -File -Recurse |
+      Select-Object -First 1
+    if (-not $portable) {
+      throw "Downloaded GitHub CLI archive did not contain gh.exe"
+    }
+    return $portable.FullName
+  } catch {
+    throw ("Could not install or download GitHub CLI: {0}" -f $_.Exception.Message)
+  }
 }
 
 function Invoke-GitHub {
