@@ -138,12 +138,22 @@ jobs:
           DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
         run: |
           set -Eeuo pipefail
+          [[ -n "$DEPLOY_SSH_KEY" ]] || {
+            printf '%s\n' '::error::production_deploy_key_missing'
+            exit 1
+          }
+          [[ -n "$DEPLOY_KNOWN_HOSTS" ]] || {
+            printf '%s\n' '::error::production_known_hosts_missing'
+            exit 1
+          }
           umask 077
           mkdir -p ~/.ssh
           printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          test -s ~/.ssh/id_ed25519
-          test -s ~/.ssh/known_hosts
+          ssh-keygen -yf ~/.ssh/id_ed25519 >/dev/null 2>&1 || {
+            printf '%s\n' '::error::production_deploy_key_invalid'
+            exit 1
+          }
           chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
 
       - id: activate
@@ -156,19 +166,31 @@ jobs:
           DEPLOY_ROOT: ${{ vars.DEPLOY_ROOT || '/opt/site-panel' }}
         run: |
           set -Eeuo pipefail
-          : "${DEPLOY_HOST:?Set DEPLOY_HOST as a production-deploy environment variable}"
-          : "${DEPLOY_USER:?Set DEPLOY_USER as a production-deploy environment variable}"
+          [[ -n "$DEPLOY_HOST" ]] || {
+            printf '%s\n' '::error::production_deploy_host_missing'
+            exit 1
+          }
+          [[ -n "$DEPLOY_USER" ]] || {
+            printf '%s\n' '::error::production_deploy_user_missing'
+            exit 1
+          }
           archive="site-panel-${RELEASE_SHA}.tar.gz"
-          sha256sum -c release-archive.sha256
+          sha256sum -c release-archive.sha256 || {
+            printf '%s\n' '::error::release_archive_checksum_failed'
+            exit 1
+          }
           # -O forces legacy SCP. The VPS forced-command gateway permits only
           # this exact incoming release filename, never arbitrary file writes.
-          scp -O \
+          if ! scp -O \
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
             -o IdentitiesOnly=yes \
             -P "$DEPLOY_PORT" \
             "$archive" \
-            "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_ROOT/incoming/$RELEASE_SHA.tar.gz"
+            "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_ROOT/incoming/$RELEASE_SHA.tar.gz"; then
+            printf '%s\n' '::error::release_archive_upload_failed'
+            exit 1
+          fi
           output="$(ssh \
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
@@ -177,6 +199,7 @@ jobs:
             "$DEPLOY_USER@$DEPLOY_HOST" \
             "site-panel-release deploy $RELEASE_SHA" 2>&1)" || {
               printf '%s\n' "$output"
+              printf '%s\n' '::error::remote_release_activation_failed'
               exit 1
             }
           printf '%s\n' "$output"
