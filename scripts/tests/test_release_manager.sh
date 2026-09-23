@@ -104,7 +104,13 @@ cat >"$FAKE_BIN/restic" <<'EOF'
 set -Eeuo pipefail
 [[ "${RESTIC_REPOSITORY:-}" == "s3:test" ]]
 [[ -r "${RESTIC_PASSWORD_FILE:-}" ]]
-case "${1:-}" in
+while [[ "${1:-}" == "-o" ]]; do
+  [[ "${2:-}" == s3.bucket-lookup=* ]] || exit 1
+  shift 2
+done
+command="${1:-}"
+shift || true
+case "$command" in
   snapshots)
     printf '[{"short_id":"deadbeef"}]\n'
     ;;

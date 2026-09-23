@@ -126,6 +126,9 @@ load_backup_env() {
   if [[ -n "${AWS_SECRET_ACCESS_KEY:-}" ]]; then
     export AWS_SECRET_ACCESS_KEY
   fi
+  RESTIC_S3_BUCKET_LOOKUP="${RESTIC_S3_BUCKET_LOOKUP:-auto}"
+  [[ "$RESTIC_S3_BUCKET_LOOKUP" == "auto" || "$RESTIC_S3_BUCKET_LOOKUP" == "dns" || "$RESTIC_S3_BUCKET_LOOKUP" == "path" ]] || die "invalid_restic_s3_bucket_lookup"
+  RESTIC_OPTIONS=("-o" "s3.bucket-lookup=$RESTIC_S3_BUCKET_LOOKUP")
 }
 
 manifest_value() {
@@ -237,7 +240,7 @@ main() {
   local stage payload db_name db_user sites_volume uploads_volume caddy_data_volume caddy_config_volume dsar_volume current_release
   stage="$(mktemp -d "${TMPDIR:-/tmp}/site-panel-restore.XXXXXX")"
   trap 'rm -rf "${stage:-}"' EXIT
-  restic restore "$SNAPSHOT" --target "$stage" >/dev/null
+  restic "${RESTIC_OPTIONS[@]}" restore "$SNAPSHOT" --target "$stage" >/dev/null
   payload="$stage/site-panel"
   [[ -s "$payload/postgres.dump" ]] || die "restore_postgres_dump_missing"
   [[ -s "$payload/sites_data.tar.gz" ]] || die "restore_sites_archive_missing"

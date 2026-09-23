@@ -279,13 +279,13 @@ EOF
     --tag "release-$current_release" \
     "$payload" >/dev/null \
     || die "restic_backup_failed"
-  restic forget --prune \
+  restic "${RESTIC_OPTIONS[@]}" forget --prune \
     --keep-daily "$BACKUP_KEEP_DAILY" \
     --keep-weekly "$BACKUP_KEEP_WEEKLY" \
     --keep-monthly "$BACKUP_KEEP_MONTHLY" >/dev/null \
     || die "restic_prune_failed"
   if [[ "$BACKUP_RUN_CHECK" == "1" ]]; then
-    restic check --read-data-subset=1/50 >/dev/null || die "restic_check_failed"
+    restic "${RESTIC_OPTIONS[@]}" check --read-data-subset=1/50 >/dev/null || die "restic_check_failed"
   fi
 
   snapshot="$(snapshot_id)" || die "restic_snapshot_query_failed"
