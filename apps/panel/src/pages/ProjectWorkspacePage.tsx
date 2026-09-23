@@ -10,9 +10,11 @@ type ProjectKeyword = { keyword_id: string; phrase: string; cluster: string | nu
 type GeoPlace = { id: string; name: string; kind: string; is_validated?: boolean };
 type ProjectGeo = { geo_id: string; name: string; kind: string; validated: boolean; role: "primary" | "service_area" | "reference"; position: number };
 type Plan = { id: string; slug: string; objective: string; intent: string | null; kit_key: string; state: string; version: number; decision_reason: string | null };
-type Draft = { id: string; page_plan_id: string; revision: number; state: string; content_hash: string | null; last_qa_verdict: string | null; qa_runs: { verdict: string; findings: { verdict: string; rule: string; evidence: string }[] }[]; page_manifest: Record<string, unknown> };
+type Draft = { id: string; page_plan_id: string; revision: number; state: string; content_hash: string | null; last_qa_verdict: string | null; qa_runs: { verdict: string; findings: { verdict: string; rule: string; evidence: string }[] }[]; page_manifest: Record<string, unknown>; failure_message: string | null };
 type Coverage = { selected: number; covered: number; uncovered: { keyword_id: string; phrase: string }[]; plans: number };
 type Build = { id: string; status: string; build_hash: string | null; previous_build_hash: string | null; pages_built: number; created_at: string | null; activated_at: string | null };
+type AIProvider = { id: string; label: string; provider_id: string; enabled: boolean };
+type AIDraftQuote = { provider_id: string; model_id: string; estimated_cost_usd: number; max_cost_usd: number; input_snapshot_hash: string; pricing_source: string; pricing_observed_at: string };
 
 function tone(state: string) {
   if (["approved", "applied", "pass", "confirmed"].includes(state)) return "ok" as const;
@@ -32,6 +34,15 @@ export function ProjectWorkspacePage() {
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [coverage, setCoverage] = useState<Coverage | null>(null);
   const [builds, setBuilds] = useState<Build[]>([]);
+  const [aiProviders, setAiProviders] = useState<AIProvider[]>([]);
+  const [aiProviderId, setAiProviderId] = useState("");
+  const [aiModel, setAiModel] = useState("");
+  const [aiPlanId, setAiPlanId] = useState("");
+  const [aiMaxCost, setAiMaxCost] = useState("0.05");
+  const [aiMaxOutput, setAiMaxOutput] = useState("2048");
+  const [aiQuote, setAiQuote] = useState<AIDraftQuote | null>(null);
+  const [aiConsent, setAiConsent] = useState(false);
+  const [aiProviderError, setAiProviderError] = useState<string | null>(null);
   const [organization, setOrganization] = useState("");
   const [service, setService] = useState("");
   const [phone, setPhone] = useState("");
@@ -77,6 +88,22 @@ export function ProjectWorkspacePage() {
     setCoverage(nextCoverage);
     setBuilds(nextBuilds);
   }
+
+  useEffect(() => {
+    api<AIProvider[]>("/api/v1/ai/providers", {}, token)
+      .then((items) => {
+        const active = items.filter((item) => item.enabled);
+        setAiProviders(active);
+        if (!active.some((item) => item.id === aiProviderId)) {
+          setAiProviderId(active.length === 1 ? active[0].id : "");
+        }
+        setAiProviderError(null);
+      })
+      .catch((cause) => {
+        setAiProviders([]);
+        setAiProviderError(cause instanceof Error ? cause.message : "Нет доступа к AI-провайдерам");
+      });
+  }, [token]);
 
   useEffect(() => {
     if (!projectId) return;
@@ -141,6 +168,67 @@ export function ProjectWorkspacePage() {
 
   async function generate(plan: Plan) {
     await run(`generate:${plan.id}`, () => api(`/api/v1/projects/${projectId}/page-plans/${plan.id}/drafts`, { method: "POST", body: "{}" }, token), "Черновик создан. Запустите проверку качества.");
+  }
+
+  async function quoteAIDraft() {
+    if (!aiPlanId || !aiProviderId || !aiModel.trim()) {
+      setError("Выберите утверждённый план, провайдера и модель.");
+      return;
+    }
+    setBusy("ai-quote");
+    setError(null);
+    setMessage(null);
+    setAiQuote(null);
+    setAiConsent(false);
+    try {
+      const quote = await api<AIDraftQuote>(
+        `/api/v1/projects/${projectId}/page-plans/${aiPlanId}/drafts/ai/quote`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            provider_connection_id: aiProviderId,
+            model: aiModel.trim(),
+            max_cost_usd: Number(aiMaxCost),
+            max_output_tokens: Number(aiMaxOutput),
+          }),
+        },
+        token,
+      );
+      setAiQuote(quote);
+      setMessage("Предварительная оценка рассчитана без вызова внешнего провайдера.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Не удалось рассчитать стоимость AI-черновика");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function generateAIDraft() {
+    if (!aiPlanId || !aiQuote || !aiConsent) return;
+    const quote = aiQuote;
+    await run(
+      `ai-draft:${aiPlanId}`,
+      () => api(
+        `/api/v1/projects/${projectId}/page-plans/${aiPlanId}/drafts/ai`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            provider_connection_id: aiProviderId,
+            model: aiModel.trim(),
+            max_cost_usd: Number(aiMaxCost),
+            max_output_tokens: Number(aiMaxOutput),
+            operator_confirmed_external_processing: true,
+            operator_confirmed_provider_budget: true,
+            confirmed_estimated_cost_usd: quote.estimated_cost_usd,
+            quote_snapshot_hash: quote.input_snapshot_hash,
+          }),
+        },
+        token,
+      ),
+      "AI PageDraft создан. Запустите обязательный QA перед отправкой на ручную проверку.",
+    );
+    setAiQuote(null);
+    setAiConsent(false);
   }
 
   async function qa(draft: Draft) {
@@ -222,8 +310,25 @@ export function ProjectWorkspacePage() {
         </form>
         {plans.length === 0 ? <EmptyState title="Планов страниц пока нет" /> : <DataTable headers={["Путь", "Цель", "Статус", "Действия"]}>{plans.map((plan) => <tr key={plan.id}><td>{plan.slug}</td><td>{plan.objective}</td><td><StatusPill tone={tone(plan.state)}>{plan.state}</StatusPill></td><td className="row">{plan.state === "draft" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => decision(plan, "submit-review")}>На проверку</button>}{plan.state === "review" && <><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => decision(plan, "approve")}>Одобрить</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => decision(plan, "reject")}>Отклонить</button></>}{plan.state === "approved" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => generate(plan)}>Создать черновик</button>}</td></tr>)}</DataTable>}
       </Surface>
+      <Surface title="4.1. AI-черновик текста и SEO">
+        {aiProviderError && <p className="muted" role="status">AI-операции недоступны: {aiProviderError}. Основной проектный workflow продолжает работать.</p>}
+        <p className="muted">Доступен только для утверждённых PagePlan. AI изменяет текстовые поля нового PageDraft, сохраняет curated blocks и не применяет результат к сайту. После генерации обязателен обычный QA и ручная проверка.</p>
+        <div className="stack">
+          <label className="field">Утверждённый план<select value={aiPlanId} onChange={(event) => { setAiPlanId(event.target.value); setAiQuote(null); setAiConsent(false); }}><option value="">Выберите PagePlan</option>{plans.filter((plan) => plan.state === "approved").map((plan) => <option key={plan.id} value={plan.id}>{plan.slug} — {plan.objective}</option>)}</select></label>
+          <label className="field">Активный AI provider<select value={aiProviderId} onChange={(event) => { setAiProviderId(event.target.value); setAiQuote(null); setAiConsent(false); }}><option value="">Выберите подключение</option>{aiProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.label} ({provider.provider_id})</option>)}</select></label>
+          <label className="field">Model ID<input value={aiModel} onChange={(event) => { setAiModel(event.target.value); setAiQuote(null); setAiConsent(false); }} placeholder="Model ID из каталога подключения" /></label>
+          <div className="detail-grid">
+            <label className="field">Лимит оценки, USD<input type="number" min="0.000001" max="100" step="0.000001" value={aiMaxCost} onChange={(event) => { setAiMaxCost(event.target.value); setAiQuote(null); setAiConsent(false); }} /></label>
+            <label className="field">Лимит выходных токенов<input type="number" min="128" max="4096" step="1" value={aiMaxOutput} onChange={(event) => { setAiMaxOutput(event.target.value); setAiQuote(null); setAiConsent(false); }} /></label>
+          </div>
+          <button className="btn btn-ghost" type="button" disabled={busy !== null || !aiPlanId || !aiProviderId || !aiModel.trim()} onClick={quoteAIDraft}>{busy === "ai-quote" ? "Расчёт…" : "Рассчитать до внешнего вызова"}</button>
+          {aiQuote && <div className="surface"><strong>Предварительная оценка: ${aiQuote.estimated_cost_usd.toFixed(6)}</strong><p className="muted">Лимит ${aiQuote.max_cost_usd.toFixed(6)} · источник {aiQuote.pricing_source} · тариф на {aiQuote.pricing_observed_at}. Это оценка, не гарантия фактического счёта.</p></div>}
+          <label className="field"><span><input type="checkbox" checked={aiConsent} disabled={!aiQuote} onChange={(event) => setAiConsent(event.target.checked)} /> Подтверждаю показанную оценку, отправку контекста этому провайдеру и настроенный у него spending limit.</span></label>
+          <button className="btn" type="button" disabled={busy !== null || !aiQuote || !aiConsent} onClick={generateAIDraft}>{busy?.startsWith("ai-draft:") ? "Генерация…" : "Подтвердить оценку и создать AI PageDraft"}</button>
+        </div>
+      </Surface>
       <Surface title="5. Черновики и проверка качества">
-        {drafts.length === 0 ? <EmptyState title="Черновиков пока нет" hint="Одобрите план страницы, затем создайте детерминированный черновик." /> : <DataTable headers={["План", "Версия", "Статус", "QA", "Действия"]}>{drafts.map((draft) => <tr key={draft.id}><td>{plans.find((plan) => plan.id === draft.page_plan_id)?.slug || draft.page_plan_id}</td><td>{draft.revision}</td><td><StatusPill tone={tone(draft.state)}>{draft.state}</StatusPill></td><td><StatusPill tone={tone(draft.last_qa_verdict || "draft")}>{draft.last_qa_verdict || "не запускалась"}</StatusPill>{draft.qa_runs.at(-1)?.findings.map((finding) => <p className="muted" key={finding.rule}>{finding.rule}: {finding.evidence}</p>)}</td><td className="row">{draft.state === "draft" && <><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => qa(draft)}>Проверить</button>{draft.last_qa_verdict && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => submitDraft(draft)}>На ручную проверку</button>}</>}{draft.state === "review" && draft.last_qa_verdict !== "block" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => apply(draft)}>Применить</button>}</td></tr>)}</DataTable>}
+        {drafts.length === 0 ? <EmptyState title="Черновиков пока нет" hint="Одобрите план страницы, затем создайте детерминированный черновик." /> : <DataTable headers={["План", "Версия", "Статус", "QA", "Действия"]}>{drafts.map((draft) => <tr key={draft.id}><td>{plans.find((plan) => plan.id === draft.page_plan_id)?.slug || draft.page_plan_id}</td><td>{draft.revision}</td><td><StatusPill tone={tone(draft.state)}>{draft.state}</StatusPill>{draft.failure_message && <p className="error" role="alert">{draft.failure_message}</p>}</td><td><StatusPill tone={tone(draft.last_qa_verdict || "draft")}>{draft.last_qa_verdict || "не запускалась"}</StatusPill>{draft.qa_runs.at(-1)?.findings.map((finding) => <p className="muted" key={finding.rule}>{finding.rule}: {finding.evidence}</p>)}</td><td className="row">{draft.state === "draft" && <><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => qa(draft)}>Проверить</button>{draft.last_qa_verdict && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => submitDraft(draft)}>На ручную проверку</button>}</>}{draft.state === "review" && draft.last_qa_verdict !== "block" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => apply(draft)}>Применить</button>}</td></tr>)}</DataTable>}
       </Surface>
       <Surface title="6. Candidate-сборки, preview и публикация">
         <p className="muted">Candidate создаётся без активации. Preview приватен, публикация и откат требуют отдельного подтверждения.</p>

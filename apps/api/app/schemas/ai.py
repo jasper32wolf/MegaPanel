@@ -101,6 +101,48 @@ class ArchitectureQuoteOut(BaseModel):
     pricing_observed_at: str
 
 
+class AIDraftGenerationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider_connection_id: UUID
+    model: str = Field(min_length=1, max_length=256)
+    max_cost_usd: float = Field(gt=0, le=100, allow_inf_nan=False)
+    max_output_tokens: int = Field(default=2048, ge=128, le=4096)
+    operator_confirmed_external_processing: bool = False
+    operator_confirmed_provider_budget: bool = False
+    confirmed_estimated_cost_usd: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    quote_snapshot_hash: str | None = Field(default=None, min_length=64, max_length=64)
+
+
+class AIDraftTextOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=70)
+    h1: str = Field(min_length=1, max_length=255)
+    meta_description: str = Field(min_length=1, max_length=170)
+    unique_core: str = Field(min_length=1, max_length=8000)
+    fact_keys: list[str] = Field(default_factory=list, max_length=100)
+
+
+class AIRunOut(BaseModel):
+    id: UUID
+    action: str
+    status: str
+    provider_id: str | None
+    model_id: str | None
+    prompt_id: str
+    prompt_version: str
+    prompt_hash: str
+    input_snapshot_hash: str
+    output: dict
+    usage: dict
+    cost_usd: float | None
+    error_code: str | None
+    created_at: str | None
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class PageProposal(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

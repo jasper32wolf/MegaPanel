@@ -4,9 +4,9 @@
 
 ## Текущий статус
 
-Site Panel — кандидат self-hosted VPS-релиза для одного оператора. В дополнение к базовому проектному workflow в working tree добавлен первый AI-срез: encrypted VPS-wide provider connections (GLM/Zhipu + OpenAI-compatible gateways), versioned Markdown prompts/evals, pricing snapshot, architecture proposal, ручное approval и отдельный импорт draft PagePlan. Генерация SEO/content/block slots, pricing discovery, гарантированное upstream spend enforcement, browser E2E и PostgreSQL/RLS runtime пока не завершены.
+Site Panel — кандидат self-hosted VPS-релиза для одного оператора. В дополнение к базовому проектному workflow есть AI-срез: encrypted VPS-wide provider connections (GLM/Zhipu + OpenAI-compatible gateways), pricing quote до запроса, versioned Markdown prompts/evals, architecture proposal с approval→draft PagePlan и quote-gated PageDraft copy/SEO metadata. Полные SEO briefs, slot/block generation, pricing discovery, daily quota enforcement и DB/provider/browser runtime proof остаются незавершёнными.
 
-Полный API suite: **189 passed**; panel build проходит. Docker/VPS, PostgreSQL/RLS, Caddy/TLS, worker runtime, authenticated browser flow и restore drill ещё не доказаны end-to-end. До их выполнения продукт нельзя объявлять production-ready.
+Полный API suite: **197 passed**; panel build проходит. Docker/VPS, PostgreSQL/RLS, Caddy/TLS, worker runtime, authenticated browser flow и restore drill ещё не доказаны end-to-end. До их выполнения продукт нельзя объявлять production-ready.
 
 ## Какой документ использовать
 
@@ -22,7 +22,7 @@ Site Panel — кандидат self-hosted VPS-релиза для одного
 
 1. Доказать текущий release-контур на staging VPS: миграции, single operator, Caddy/TLS, browser, форма лида, webhook retries/DLQ и restore.
 2. Завершить незакрытые части уже реализованного operator workflow: idempotent backfill legacy sites, production worker orchestration, accessible dialogs, Russian slug UX и закрытие legacy direct-publish bypass.
-3. Довести AI vertical slice: provider/model catalog и pricing freshness, browser workflow tests, structured page-plan approval/import, затем отдельные SEO/content/block prompt chains и deterministic QA.
+3. Довести AI vertical slice: provider/model catalog and pricing freshness, authenticated browser + PostgreSQL proof, extend PageDraft copy/metadata slice to separate SEO briefs, block selection/slots and deterministic QA.
 4. Автоматизировать доказанные PostgreSQL/Docker/browser проверки в CI, наблюдаемость и восстановление.
 5. Только затем рассматривать внешние источники, аналитику и масштабирование.
 

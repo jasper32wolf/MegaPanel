@@ -14,6 +14,7 @@ from app.db.session import get_db
 from app.models import AIProviderConnection, AIRun, PagePlan, Project
 from app.providers import ProviderError, StructuredRequest
 from app.schemas.ai import (
+    AIRunOut,
     ArchitectureProposalOut,
     ArchitectureProposalRequest,
     ArchitectureQuoteOut,
@@ -52,6 +53,25 @@ def _proposal_out(run: AIRun) -> ArchitectureProposalOut:
     )
 
 
+def _run_out(run: AIRun) -> AIRunOut:
+    return AIRunOut(
+        id=run.id,
+        action=run.action,
+        status=run.status,
+        provider_id=run.provider_id,
+        model_id=run.model_id,
+        prompt_id=run.prompt_id,
+        prompt_version=run.prompt_version,
+        prompt_hash=run.prompt_hash,
+        input_snapshot_hash=run.input_snapshot_hash,
+        output=run.output or {},
+        usage=run.usage or {},
+        cost_usd=run.cost_usd,
+        error_code=run.error_code,
+        created_at=run.created_at.isoformat() if run.created_at else None,
+    )
+
+
 async def _record_failed_run(
     *,
     db: AsyncSession,
@@ -62,6 +82,7 @@ async def _record_failed_run(
     prompt: Any,
     snapshot: dict[str, Any],
     error_code: str,
+    action: str = "architecture.site-map",
     usage: dict[str, int] | None = None,
     cost_usd: float | None = None,
     request_id: str | None = None,
@@ -69,7 +90,7 @@ async def _record_failed_run(
     run = AIRun(
         tenant_id=auth.tenant_id,
         project_id=project_id,
-        action="architecture.site-map",
+        action=action,
         status="failed",
         provider_id=provider_id,
         model_id=model_id,
@@ -88,10 +109,11 @@ async def _record_failed_run(
     await db.flush()
     await append_audit(
         db,
-        action="ai.architecture.proposal.failed",
+        action="ai.run.failed",
         payload={
             "run_id": str(run.id),
             "project_id": str(project_id),
+            "action": action,
             "provider_id": provider_id,
             "model_id": model_id,
             "error_code": error_code,
@@ -187,7 +209,6 @@ async def _prepare_architecture_context(
     if observed_at.tzinfo is None or age.days > 30 or age.total_seconds() < -3600:
         raise HTTPException(status_code=409, detail={"code": "model_pricing_stale"})
 
-    prompt = load_prompt("architecture/propose-site-map.md")
     facts_revision = await _confirmed_facts(db, project)
     keyword_snapshot, geo_snapshot, blockers = await _selection_snapshots(db, project)
     if blockers:
@@ -466,18 +487,18 @@ async def propose_architecture(
     return _proposal_out(run)
 
 
-@router.get("/runs/{run_id}", response_model=ArchitectureProposalOut)
+@router.get("/runs/{run_id}", response_model=AIRunOut)
 async def get_ai_run(
     run_id: UUID,
     auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor")),
     db: AsyncSession = Depends(get_db),
-) -> ArchitectureProposalOut:
+) -> AIRunOut:
     run = (
         await db.execute(select(AIRun).where(AIRun.id == run_id, AIRun.tenant_id == auth.tenant_id))
     ).scalar_one_or_none()
     if not run:
         raise HTTPException(status_code=404, detail="AI run not found")
-    return _proposal_out(run)
+    return _run_out(run)
 
 
 @router.post("/runs/{run_id}/decision", response_model=ArchitectureProposalOut)
@@ -498,6 +519,10 @@ async def decide_ai_run(
     ).scalar_one_or_none()
     if not run:
         raise HTTPException(status_code=404, detail="AI run not found")
+    if run.action != "architecture.site-map":
+        raise HTTPException(
+            status_code=409, detail="This AI action has no approval decision endpoint"
+        )
     if run.status != "pending_approval":
         raise HTTPException(status_code=409, detail="AI run is not awaiting approval")
     run.operator_decision = decision["decision"]
@@ -529,6 +554,8 @@ async def create_page_plans_from_proposal(
     ).scalar_one_or_none()
     if not run:
         raise HTTPException(status_code=404, detail="AI run not found")
+    if run.action != "architecture.site-map":
+        raise HTTPException(status_code=409, detail="This AI action cannot create PagePlans")
     if run.status != "approved" or run.operator_decision != "approve":
         raise HTTPException(status_code=409, detail="Approve the architecture proposal first")
     if run.output.get("page_plans_imported"):
