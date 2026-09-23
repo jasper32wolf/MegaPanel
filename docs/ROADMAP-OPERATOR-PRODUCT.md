@@ -117,7 +117,7 @@
 
 ### 9. AI-ассистированная структура сайтов, блоки и SEO
 
-**Первый технический срез реализован; workflow ещё частичный и не прошёл PostgreSQL/browser/provider runtime proof.** VPS-wide provider registry/configuration, encrypted write-only keys, GLM/Zhipu и OpenAI-compatible gateways, versioned Markdown prompts, pricing quote, architecture proposal с approval→draft PagePlan и quote-gated plain-text copy/SEO metadata для утверждённого PagePlan существуют в working tree. Полный SEO brief/slot generation, AI block selection, Gemini/Mistral native adapters, provider discovery, per-run/daily budget enforcement, async jobs и E2E пока не реализованы.
+**Первый технический срез реализован; workflow ещё частичный и не прошёл PostgreSQL/browser/provider runtime proof.** VPS-wide provider registry/configuration, encrypted write-only keys, GLM/Zhipu и OpenAI-compatible gateways, versioned Markdown prompts, pricing quote, architecture proposal с approval→draft PagePlan, validated curated block selection и quote-gated plain-text copy/SEO metadata для утверждённого PagePlan существуют в working tree. Полный SEO brief/slot generation, AI block selection, typed catalog slot schemas, Gemini/Mistral native adapters, provider discovery, per-run/daily budget enforcement, async jobs и E2E пока не реализованы.
 
 - Поддерживать прямые native adapters и OpenAI-compatible endpoints для OpenRouter, gateway и operator-configured providers; произвольный endpoint требует серверного egress allowlist.
 - Тариф/free metadata должны иметь источник и timestamp; бесплатная модель выбирается только оператором и не является гарантией цены, квоты или uptime.

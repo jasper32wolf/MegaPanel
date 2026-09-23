@@ -44,6 +44,17 @@ def create_page_draft(
         str(project.id),
         service=service or "Услуги",
     )
+    selected_block_ids = (getattr(plan, "block_selection", None) or {}).get("blocks")
+    if selected_block_ids is not None:
+        blocks_by_type = {block.type: block for block in blocks}
+        if len(selected_block_ids) != len(set(selected_block_ids)) or any(
+            block_id not in blocks_by_type for block_id in selected_block_ids
+        ):
+            raise ValueError("PagePlan contains an invalid curated block selection")
+        blocks = [
+            blocks_by_type[block_id].model_copy(update={"order": order})
+            for order, block_id in enumerate(selected_block_ids)
+        ]
     city_prep = (primary_geo.get("forms") or {}).get("prep") or city
     title = f"{service} в {city_prep}".strip() if city else service
     manifest = PageManifest(

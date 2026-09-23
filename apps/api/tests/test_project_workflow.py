@@ -113,7 +113,51 @@ def test_generation_uses_confirmed_snapshot_only():
     assert snapshot["generator_meta"]["tokens"] == 0
 
 
-def test_qa_blocks_missing_confirmed_facts_and_warns_on_thin_candidate():
+def test_generation_applies_approved_curated_block_selection() -> None:
+    project = SimpleNamespace(id=uuid4(), domain="example.test")
+    plan = SimpleNamespace(
+        slug="/repair",
+        kit_key="service-local-v1",
+        version=3,
+        block_selection={"blocks": ["hero", "faq"]},
+        keyword_snapshot={"items": []},
+        geo_snapshot={
+            "items": [
+                {
+                    "geo_id": str(uuid4()),
+                    "name": "Казань",
+                    "forms": {"prep": "Казани"},
+                    "role": "primary",
+                }
+            ]
+        },
+    )
+    facts = SimpleNamespace(
+        id=uuid4(),
+        facts_hash="b" * 64,
+        facts={"service": "Ремонт техники", "contacts": {"phone": "+79990000000"}},
+    )
+
+    page, _, _ = create_page_draft(project=project, plan=plan, facts=facts)
+
+    assert [block["type"] for block in page["blocks"]] == ["hero", "faq"]
+    assert [block["order"] for block in page["blocks"]] == [0, 1]
+
+
+def test_generation_rejects_unknown_curated_block_selection() -> None:
+    project = SimpleNamespace(id=uuid4(), domain="example.test")
+    plan = SimpleNamespace(
+        slug="/repair",
+        kit_key="service-local-v1",
+        version=1,
+        block_selection={"blocks": ["not-a-curated-block"]},
+        keyword_snapshot={"items": []},
+        geo_snapshot={"items": []},
+    )
+    facts = SimpleNamespace(id=uuid4(), facts_hash="c" * 64, facts={"service": "Ремонт"})
+
+    with pytest.raises(ValueError, match="invalid curated block selection"):
+        create_page_draft(project=project, plan=plan, facts=facts)
     page = {
         "slug": "/repair",
         "title_template": "Ремонт",
