@@ -42,19 +42,38 @@ def upgrade() -> None:
         sa.Column("base_url", sa.String(2048), nullable=True),
         sa.Column("encrypted_api_key", sa.Text(), nullable=False),
         sa.Column("credential_last4", sa.String(4), nullable=True),
-        sa.Column("model_ids", postgresql.JSONB(), nullable=False, server_default=sa.text("'[]'::jsonb")),
-        sa.Column("metadata_json", postgresql.JSONB(), nullable=False, server_default=sa.text("'{}'::jsonb")),
+        sa.Column(
+            "model_ids", postgresql.JSONB(), nullable=False, server_default=sa.text("'[]'::jsonb")
+        ),
+        sa.Column(
+            "metadata_json",
+            postgresql.JSONB(),
+            nullable=False,
+            server_default=sa.text("'{}'::jsonb"),
+        ),
         sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.false()),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()")),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()")),
     )
-    op.create_index("ix_ai_provider_connections_provider_id", "ai_provider_connections", ["provider_id"])
+    op.create_index(
+        "ix_ai_provider_connections_provider_id", "ai_provider_connections", ["provider_id"]
+    )
 
     op.create_table(
         "ai_runs",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("tenant_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("project_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("projects.id", ondelete="SET NULL"), nullable=True),
+        sa.Column(
+            "tenant_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "project_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("projects.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
         sa.Column("action", sa.String(64), nullable=False),
         sa.Column("status", sa.String(32), nullable=False, server_default="pending_approval"),
         sa.Column("provider_id", sa.String(64), nullable=True),
@@ -64,9 +83,18 @@ def upgrade() -> None:
         sa.Column("prompt_hash", sa.String(64), nullable=False),
         sa.Column("input_snapshot_hash", sa.String(64), nullable=False),
         sa.Column("request_id", sa.String(128), nullable=True),
-        sa.Column("input_snapshot", postgresql.JSONB(), nullable=False, server_default=sa.text("'{}'::jsonb")),
-        sa.Column("output", postgresql.JSONB(), nullable=False, server_default=sa.text("'{}'::jsonb")),
-        sa.Column("usage", postgresql.JSONB(), nullable=False, server_default=sa.text("'{}'::jsonb")),
+        sa.Column(
+            "input_snapshot",
+            postgresql.JSONB(),
+            nullable=False,
+            server_default=sa.text("'{}'::jsonb"),
+        ),
+        sa.Column(
+            "output", postgresql.JSONB(), nullable=False, server_default=sa.text("'{}'::jsonb")
+        ),
+        sa.Column(
+            "usage", postgresql.JSONB(), nullable=False, server_default=sa.text("'{}'::jsonb")
+        ),
         sa.Column("cost_usd", sa.Float(), nullable=True),
         sa.Column("operator_decision", sa.String(32), nullable=True),
         sa.Column("error_code", sa.String(128), nullable=True),
