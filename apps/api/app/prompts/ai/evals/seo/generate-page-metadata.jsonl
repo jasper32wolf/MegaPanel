@@ -1,0 +1,2 @@
+{"name":"metadata-limits","input":{"approved_seo_brief":{"title":"Короткий заголовок","description":"Короткое описание","canonical_path":"/","robots":"index,follow"},"approved_page_plan":{"slug":"/"}},"assert":{"valid":true}}
+{"name":"missing-brief","input":{"approved_seo_brief":{},"approved_page_plan":{}},"assert":{"valid":false}}

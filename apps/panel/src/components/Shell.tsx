@@ -16,6 +16,13 @@ const groups = [
     ],
   },
   {
+    label: "AI",
+    links: [
+      { to: "/ai", label: "AI workspace" },
+      { to: "/ai/providers", label: "Провайдеры" },
+    ],
+  },
+  {
     label: "Публикация",
     links: [
       { to: "/domains", label: "Домены" },

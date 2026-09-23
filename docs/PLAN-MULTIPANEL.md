@@ -4,9 +4,9 @@
 
 ## Текущий статус
 
-Site Panel — кандидат self-hosted VPS-релиза для одного оператора. Реализованы single-operator bootstrap, cookie/TOTP access, project/facts/semantic/geo/PagePlan workflow, deterministic draft/QA/apply, candidate build/preview/publish/rollback, encrypted lead inbox, manual lead outcomes, per-site webhook, durable delivery, production VPS installer и безопасный panel control plane для GitHub-managed update/recovery. Контрактные проверки подтверждают **174 API-теста**; workflow control всё ещё требует реального GitHub/staging proof.
+Site Panel — кандидат self-hosted VPS-релиза для одного оператора. В дополнение к базовому проектному workflow в working tree добавлен первый AI-срез: encrypted VPS-wide provider connections (GLM/Zhipu + OpenAI-compatible gateways), versioned Markdown prompts/evals, pricing snapshot, architecture proposal, ручное approval и отдельный импорт draft PagePlan. Генерация SEO/content/block slots, pricing discovery, гарантированное upstream spend enforcement, browser E2E и PostgreSQL/RLS runtime пока не завершены.
 
-Docker/VPS, PostgreSQL/RLS, Caddy/TLS, worker runtime, браузерный сценарий, публичная форма и restore drill ещё не доказаны end-to-end. До их выполнения продукт нельзя объявлять production-ready.
+Полный API suite: **189 passed**; panel build проходит. Docker/VPS, PostgreSQL/RLS, Caddy/TLS, worker runtime, authenticated browser flow и restore drill ещё не доказаны end-to-end. До их выполнения продукт нельзя объявлять production-ready.
 
 ## Какой документ использовать
 
@@ -22,7 +22,8 @@ Docker/VPS, PostgreSQL/RLS, Caddy/TLS, worker runtime, браузерный сц
 
 1. Доказать текущий release-контур на staging VPS: миграции, single operator, Caddy/TLS, browser, форма лида, webhook retries/DLQ и restore.
 2. Завершить незакрытые части уже реализованного operator workflow: idempotent backfill legacy sites, production worker orchestration, accessible dialogs, Russian slug UX и закрытие legacy direct-publish bypass.
-3. Автоматизировать доказанные PostgreSQL/Docker/browser проверки в CI, наблюдаемость и восстановление.
-4. Только затем рассматривать внешние источники, generation providers, аналитику и масштабирование.
+3. Довести AI vertical slice: provider/model catalog и pricing freshness, browser workflow tests, structured page-plan approval/import, затем отдельные SEO/content/block prompt chains и deterministic QA.
+4. Автоматизировать доказанные PostgreSQL/Docker/browser проверки в CI, наблюдаемость и восстановление.
+5. Только затем рассматривать внешние источники, аналитику и масштабирование.
 
-> Пункты в [ROADMAP-OPERATOR-PRODUCT.md](./ROADMAP-OPERATOR-PRODUCT.md) разделены на реализованный базовый контур и оставшееся предлагаемое развитие. Реализованное остаётся `partial`, пока не появятся нужные runtime-проверки и запись в фактологическом журнале.
+> Текущий AI-код ещё не подтверждён runtime-проверкой провайдеров или реальным браузерным сценарным тестом. Статус и остаток работ ведутся в [ХОД-РАБОТ.md](./ХОД-РАБОТ.md) и [ROADMAP-OPERATOR-PRODUCT.md](./ROADMAP-OPERATOR-PRODUCT.md).

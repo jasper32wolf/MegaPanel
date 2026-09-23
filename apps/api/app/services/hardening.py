@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import ipaddress
 import uuid
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
+from app.core.config import get_settings
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,6 +15,10 @@ DEFAULT_ALLOWLIST = {
     "api.deepseek.com",
     "api.anthropic.com",
     "api.openai.com",
+    "open.bigmodel.cn",
+    "openrouter.ai",
+    "api.groq.com",
+    "generativelanguage.googleapis.com",
     "nominatim.openstreetmap.org",
     "api.indexnow.org",
     "yandex.com",
@@ -28,6 +34,12 @@ DEFAULT_ALLOWLIST = {
 class EgressGuard:
     allowlist: set[str] = field(default_factory=lambda: set(DEFAULT_ALLOWLIST))
 
+    def __post_init__(self) -> None:
+        configured = get_settings().ai_endpoint_allowlist
+        self.allowlist.update(
+            item.strip().lower().rstrip(".") for item in configured.split(",") if item.strip()
+        )
+
     def check(self, url: str) -> bool:
         host = urlparse(url).hostname or ""
         host = host.lower()
@@ -35,7 +47,66 @@ class EgressGuard:
             return True
         return any(host.endswith("." + parent) for parent in self.allowlist)
 
+    def assert_safe_endpoint(self, url: str) -> str:
+        parsed = urlparse(url)
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise PermissionError(
+                "Provider endpoint must be HTTPS without credentials or query data"
+            )
+        host = parsed.hostname.lower()
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:
+            address = None
+        if address and (
+            address.is_private
+            or address.is_loopback
+            or address.is_link_local
+            or address.is_reserved
+        ):
+            raise PermissionError(
+                "Provider endpoint must not target a private or link-local address"
+            )
+        return host
+
+    async def assert_public_dns(self, url: str) -> None:
+        host = self.assert_safe_endpoint(url)
+        if self._is_ip_address(host):
+            return
+        import asyncio
+        import socket
+
+        loop = asyncio.get_running_loop()
+        try:
+            records = await loop.getaddrinfo(
+                host, urlparse(url).port or 443, type=socket.SOCK_STREAM
+            )
+        except OSError as exc:
+            raise PermissionError("Provider endpoint hostname did not resolve") from exc
+        if not records:
+            raise PermissionError("Provider endpoint hostname did not resolve")
+        for record in records:
+            address = ipaddress.ip_address(record[4][0])
+            if not address.is_global:
+                raise PermissionError("Provider endpoint resolves to a non-public address")
+
+    @staticmethod
+    def _is_ip_address(host: str) -> bool:
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            return False
+        return True
+
     def assert_allowed(self, url: str) -> None:
+        self.assert_safe_endpoint(url)
         if not self.check(url):
             raise PermissionError(f"Egress blocked for host in URL: {url}")
 

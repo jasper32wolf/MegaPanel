@@ -1,0 +1,1 @@
+{"name":"empty-fact-set","input":{"approved_page_plan":{},"block":{"id":"hero.service","slot_schema":{"headline":{"type":"string","required":true}}},"confirmed_facts":[]},"assert":{"slots":{},"warnings":["insufficient"]}}

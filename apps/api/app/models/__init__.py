@@ -251,6 +251,7 @@ from app.models.ai import (  # noqa: E402
     LlmCache,
     PromptEntry,
 )
+from app.models.ai_provider import AIProviderConnection, AIRun  # noqa: E402
 from app.models.blocks import (  # noqa: E402
     BlockKit,
     BlockKitItem,
@@ -300,6 +301,8 @@ from app.models.publish import (  # noqa: E402
 from app.models.system_operation import SystemOperation  # noqa: E402
 
 __all__ = [
+    "AIRun",
+    "AIProviderConnection",
     "AnalyticsEvent",
     "ApiKey",
     "AuthSession",

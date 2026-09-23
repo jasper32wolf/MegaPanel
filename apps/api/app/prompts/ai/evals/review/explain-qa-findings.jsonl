@@ -1,0 +1,1 @@
+{"name":"blocked-finding","input":{"finding":{"severity":"block","rule":"fact-support","message":"Источник не указан","artifact_id":"draft-1"},"artifact":{},"operator_context":{}},"assert":{"severity":"block","cannot_override":true}}

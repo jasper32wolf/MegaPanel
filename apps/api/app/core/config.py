@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     llm_micro_model_deepseek: str = "deepseek-chat"
     llm_micro_model_anthropic: str = "claude-3-5-haiku-latest"
     llm_micro_model_openai: str = "gpt-4o-mini"
+    ai_endpoint_allowlist: str = ""
 
     @property
     def cors_origin_list(self) -> list[str]:

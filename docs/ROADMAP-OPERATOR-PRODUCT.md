@@ -1,6 +1,6 @@
 # Roadmap операторского продукта
 
-> **Статус документа: предложение, не реализация.** Здесь описано развитие Site Panel после доказательства текущего single-user VPS release-кандидата. Источник фактов о существующем коде, проверках и ограничениях — [ХОД-РАБОТ.md](./ХОД-РАБОТ.md). Этот roadmap не добавляет API, экранов, фоновых задач, сроков или гарантий.
+> **Статус документа: roadmap и остаток предлагаемого развития; не является общим утверждением об отсутствии реализации.** Уже реализованные AI provider/architecture slices и их непроверенные ограничения перечислены только как факты в [ХОД-РАБОТ.md](./ХОД-РАБОТ.md). Здесь описаны дальнейшие направления; roadmap не добавляет API, экранов, фоновых задач, сроков или гарантий.
 
 ## Реализованный срез 2026-09-20
 
@@ -109,19 +109,32 @@
 
 **Частично реализован.** Project workspace и базовые loading/error/status states есть; остаются accessible confirm dialog, complete keyboard/browser E2E and axe checks.
 
-Приоритеты: очереди задач, статусы и причины блокировки, loading/empty/error/retry состояния, безопасные подтверждения, controlled reveal PII, keyboard navigation и browser-проверки основных действий. Новые разделы навигации нельзя добавлять до появления полноценного workflow.
+Приоритеты: очереди задач, статусы и причины блокировки, loading/empty/error/retry состояния, безопасные подтверждения, controlled reveal PII, keyboard navigation и browser-проверки основных действий. Раздел AI в навигации ограничен текущим provider setup и архитектурным proposal→approval→draft PagePlan срезом; будущие content/SEO/block функции не объявляются доступными до реализации.
 
 ### 8. Наблюдаемость и восстановление
 
 **Частично реализовано.** Безопасный экран panel update/recovery, immutable release scripts, encrypted off-host backup и bounded code rollback существуют. Нужны измеримые readiness/alerts, реальный GitHub dispatch, регулярный restore drill и зафиксированные RPO/RTO. Пока такие прогоны не выполнены, recovery и SLA нельзя называть подтверждёнными.
 
+### 9. AI-ассистированная структура сайтов, блоки и SEO
+
+**Первый технический срез реализован; workflow ещё частичный и не прошёл PostgreSQL/browser/provider runtime proof.** VPS-wide provider registry/configuration, encrypted write-only keys, GLM/Zhipu и OpenAI-compatible gateways, versioned Markdown prompts, cost metadata, architecture proposal, human approval и импорт только в draft PagePlan существуют в working tree. Gemini/Mistral native adapters, SEO/content/block generation, provider discovery, full budget enforcement, async jobs и E2E пока не реализованы.
+
+- Поддерживать прямые native adapters и OpenAI-compatible endpoints для OpenRouter, gateway и operator-configured providers; произвольный endpoint требует серверного egress allowlist.
+- Тариф/free metadata должны иметь источник и timestamp; бесплатная модель выбирается только оператором и не является гарантией цены, квоты или uptime.
+- Для каждого действия хранить отдельный Markdown prompt или prompt chain с input/output schema, hard constraints, insufficiency behavior и eval fixtures; prompt ID/version/hash сохраняются с run.
+- Контекст ограничен подтверждёнными facts, выбранными keywords/geo и curated kit/block IDs. Не отправлять lead PII/secrets; результат модели не может содержать исполняемый HTML/CSS/JS.
+- Каждый генеративный запрос требует явного выбора модели, подтверждения передачи данных и стоимости/лимита; результат сначала остаётся proposal. Human approval предшествует draft PagePlan creation; submit-review, approve, content draft, QA, apply, build, preview и publish — отдельные gates.
+
+**Готовность:** provider/secret/egress/pricing tests, mocked adapter tests без платных вызовов в CI, полный page-plan → content/SEO → QA → apply → private preview E2E и staging smoke с подтверждённой стоимостью.
+
 ## Порядок и зависимости
 
 1. Сначала завершить release gate текущего VPS-кандидата: PostgreSQL/RLS, Docker/Caddy, browser, public lead journey и restore drill.
-2. Затем формализовать данные бизнеса, ручную семантику/географию и page plan.
-3. После одобряемого page plan связывать с ним generation/QA, build и publish.
-4. После устойчивой работы лидов добавлять ручную feedback-петлю.
-5. Наблюдаемость, backup и проверка восстановления идут сквозным потоком, но становятся фактом только после измеримого proof.
+2. Затем формализовать данные бизнеса, ручную семантику/географию и page plan inputs.
+3. AI может предложить архитектуру и только после ручного approval подготовить draft PagePlan; без активированного провайдера и подтверждения расходов generation не запускается.
+4. После утверждения PagePlan связывать с ним content/SEO generation, QA, apply, build и publish — каждый переход отдельно подтверждает оператор.
+5. После устойчивой работы лидов добавлять ручную feedback-петлю.
+6. Наблюдаемость, backup и проверка восстановления идут сквозным потоком, но становятся фактом только после измеримого proof.
 
 ## Явные не-цели
 

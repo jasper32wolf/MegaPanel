@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from app.api.v1 import (
+    ai_providers,
+    ai_workspace,
     auth,
     blocks,
     bulk,
@@ -37,3 +39,5 @@ api_router.include_router(leads.router, prefix="/leads", tags=["leads"])
 api_router.include_router(panel.router, prefix="/panel", tags=["panel"])
 api_router.include_router(projects.router, prefix="/projects", tags=["projects"])
 api_router.include_router(system.router, prefix="/system", tags=["system"])
+api_router.include_router(ai_workspace.router, prefix="/ai", tags=["ai-workspace"])
+api_router.include_router(ai_providers.router, prefix="/ai/providers", tags=["ai-providers"])
