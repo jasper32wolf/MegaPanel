@@ -119,11 +119,17 @@ def test_draft_provider_request_omits_full_internal_fact_snapshot(monkeypatch) -
         return plan
 
     class Session:
+        def __init__(self):
+            self.calls = 0
+
         async def get(self, _model, _id):
             return connection
 
         async def execute(self, _statement):
-            return SimpleNamespace(scalar_one_or_none=lambda: facts)
+            self.calls += 1
+            if self.calls == 1:
+                return SimpleNamespace(scalar_one_or_none=lambda: facts)
+            return SimpleNamespace(scalar_one=lambda: 0.0)
 
     monkeypatch.setattr(ai_content, "_project_or_404", project_lookup)
     monkeypatch.setattr(ai_content, "_plan_or_404", plan_lookup)

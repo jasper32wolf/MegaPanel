@@ -159,6 +159,13 @@ async def _prepare_draft_context(
                 "estimated_cost_usd": round(estimated_cost, 8),
             },
         )
+    from app.services.ai_budget import enforce_ai_budget
+
+    await enforce_ai_budget(
+        db,
+        tenant_id=auth.tenant_id,
+        estimated_cost_usd=estimated_cost,
+    )
     quote_hash = _hash_json(
         {
             **snapshot,

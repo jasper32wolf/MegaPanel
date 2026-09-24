@@ -143,6 +143,23 @@ class AIRunOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class AIRunSummary(BaseModel):
+    id: UUID
+    project_id: UUID | None
+    action: str
+    status: str
+    provider_id: str | None
+    model_id: str | None
+    prompt_id: str
+    prompt_version: str
+    prompt_hash: str
+    input_snapshot_hash: str
+    usage: dict
+    cost_usd: float | None
+    error_code: str | None
+    created_at: str | None
+
+
 class SEOBriefOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

@@ -15,6 +15,7 @@ from app.models import AIProviderConnection, AIRun, PagePlan, Project
 from app.providers import ProviderError, StructuredRequest
 from app.schemas.ai import (
     AIRunOut,
+    AIRunSummary,
     ArchitectureProposalOut,
     ArchitectureProposalRequest,
     ArchitectureQuoteOut,
@@ -66,6 +67,25 @@ def _run_out(run: AIRun) -> AIRunOut:
         prompt_hash=run.prompt_hash,
         input_snapshot_hash=run.input_snapshot_hash,
         output=run.output or {},
+        usage=run.usage or {},
+        cost_usd=run.cost_usd,
+        error_code=run.error_code,
+        created_at=run.created_at.isoformat() if run.created_at else None,
+    )
+
+
+def _summary_out(run: AIRun) -> AIRunSummary:
+    return AIRunSummary(
+        id=run.id,
+        project_id=run.project_id,
+        action=run.action,
+        status=run.status,
+        provider_id=run.provider_id,
+        model_id=run.model_id,
+        prompt_id=run.prompt_id,
+        prompt_version=run.prompt_version,
+        prompt_hash=run.prompt_hash,
+        input_snapshot_hash=run.input_snapshot_hash,
         usage=run.usage or {},
         cost_usd=run.cost_usd,
         error_code=run.error_code,
@@ -266,6 +286,13 @@ async def _prepare_architecture_context(
                 "estimated_cost_usd": round(estimated_cost, 8),
             },
         )
+    from app.services.ai_budget import enforce_ai_budget
+
+    await enforce_ai_budget(
+        db,
+        tenant_id=auth.tenant_id,
+        estimated_cost_usd=estimated_cost,
+    )
     return {
         "project": project,
         "connection": connection,
@@ -277,6 +304,7 @@ async def _prepare_architecture_context(
         "catalogs": catalogs,
         "snapshot": snapshot,
         "user_prompt": user_prompt,
+        "estimated_cost": estimated_cost,
         "quote_snapshot_hash": _hash_snapshot(
             {
                 **snapshot,
@@ -484,6 +512,29 @@ async def propose_architecture(
     await db.commit()
     await db.refresh(run)
     return _proposal_out(run)
+
+
+@router.get("/runs", response_model=list[AIRunSummary])
+async def list_ai_runs(
+    project_id: UUID | None = None,
+    action: str | None = None,
+    status: str | None = None,
+    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor")),
+    db: AsyncSession = Depends(get_db),
+) -> list[AIRunSummary]:
+    if auth.tenant_id is None:
+        raise HTTPException(status_code=403, detail="Tenant required")
+    statement = select(AIRun).where(AIRun.tenant_id == auth.tenant_id)
+    if project_id is not None:
+        statement = statement.where(AIRun.project_id == project_id)
+    if action is not None:
+        statement = statement.where(AIRun.action == action)
+    if status is not None:
+        statement = statement.where(AIRun.status == status)
+    runs = (
+        (await db.execute(statement.order_by(AIRun.created_at.desc()).limit(100))).scalars().all()
+    )
+    return [_summary_out(run) for run in runs]
 
 
 @router.get("/runs/{run_id}", response_model=AIRunOut)

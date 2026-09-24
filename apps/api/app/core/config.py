@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from urllib.parse import urlparse
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     llm_micro_model_anthropic: str = "claude-3-5-haiku-latest"
     llm_micro_model_openai: str = "gpt-4o-mini"
     ai_endpoint_allowlist: str = ""
+    ai_disabled: bool = False
+    ai_daily_budget_usd: float = Field(default=10.0, ge=0, allow_inf_nan=False)
+    ai_monthly_budget_usd: float = Field(default=100.0, ge=0, allow_inf_nan=False)
 
     @property
     def cors_origin_list(self) -> list[str]:

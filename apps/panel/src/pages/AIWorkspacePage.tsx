@@ -29,9 +29,29 @@ type Proposal = {
   requires_operator_approval: true;
 };
 
+type RunSummary = {
+  id: string;
+  action: string;
+  status: string;
+  provider_id: string | null;
+  model_id: string | null;
+  prompt_id: string;
+  prompt_version: string;
+  prompt_hash: string;
+  input_snapshot_hash: string;
+  usage: { input_tokens?: number; output_tokens?: number };
+  cost_usd: number | null;
+  error_code: string | null;
+  created_at: string | null;
+};
+
 export function AIWorkspacePage() {
   const { token } = useAuth();
   const [providers, setProviders] = useState<Provider[]>([]);
+  const [runs, setRuns] = useState<RunSummary[]>([]);
+  const [runProjectId, setRunProjectId] = useState("");
+  const [runAction, setRunAction] = useState("");
+  const [runStatus, setRunStatus] = useState("");
   const [providerId, setProviderId] = useState("");
   const [projectId, setProjectId] = useState("");
   const [model, setModel] = useState("");
@@ -53,6 +73,19 @@ export function AIWorkspacePage() {
         if (active.length === 1) setProviderId(active[0].id);
       })
       .catch((cause) => setError(cause instanceof Error ? cause.message : "Не удалось загрузить провайдеры"));
+  }, [token]);
+
+  async function loadRuns() {
+    const params = new URLSearchParams();
+    if (runProjectId.trim()) params.set("project_id", runProjectId.trim());
+    if (runAction) params.set("action", runAction);
+    if (runStatus) params.set("status", runStatus);
+    const query = params.size ? `?${params.toString()}` : "";
+    setRuns(await api<RunSummary[]>(`/api/v1/ai/runs${query}`, {}, token));
+  }
+
+  useEffect(() => {
+    loadRuns().catch((cause) => setError(cause instanceof Error ? cause.message : "Не удалось загрузить AI runs"));
   }, [token]);
 
   async function calculateQuote() {
@@ -120,6 +153,7 @@ export function AIWorkspacePage() {
         token,
       );
       setProposal(result);
+      await loadRuns();
       setMessage("Предложение создано и остановлено на human-approval gate.");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Не удалось создать предложение");
@@ -139,6 +173,7 @@ export function AIWorkspacePage() {
         token,
       );
       setProposal(result);
+      await loadRuns();
       setMessage(
         decision === "approve"
           ? "Предложение одобрено. Следующий шаг отдельно создаст draft PagePlan."
@@ -162,6 +197,7 @@ export function AIWorkspacePage() {
         token,
       );
       setProposal(result);
+      await loadRuns();
       setMessage("Созданы draft PagePlan. Проверка и утверждение выполняются в рабочем процессе проекта.");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Черновики PagePlan не созданы");
@@ -178,6 +214,16 @@ export function AIWorkspacePage() {
       />
       {error && <p className="error" role="alert">{error}</p>}
       {message && <p className="success" role="status">{message}</p>}
+      <Surface title="История AI runs">
+        <div className="row">
+          <label className="field">Project ID<input value={runProjectId} onChange={(event) => setRunProjectId(event.target.value)} placeholder="Все проекты" /></label>
+          <label className="field">Действие<select value={runAction} onChange={(event) => setRunAction(event.target.value)}><option value="">Все</option><option value="architecture.site-map">Архитектура</option><option value="seo.create-brief">SEO brief</option><option value="content.page-draft-copy">PageDraft copy</option></select></label>
+          <label className="field">Статус<select value={runStatus} onChange={(event) => setRunStatus(event.target.value)}><option value="">Все</option><option value="pending_approval">Ожидает решения</option><option value="approved">Одобрен</option><option value="rejected">Отклонён</option><option value="completed">Завершён</option><option value="failed">Ошибка</option></select></label>
+          <button className="btn btn-ghost" type="button" disabled={busy} onClick={() => void loadRuns().catch((cause) => setError(cause instanceof Error ? cause.message : "Не удалось обновить AI runs"))}>Применить фильтры</button>
+        </div>
+        <p className="muted">{runs.length} последних runs; входной контекст и ответы моделей не показываются в списке.</p>
+        {runs.length === 0 ? <p className="muted">AI-запусков пока нет.</p> : <div className="table-wrap"><table className="table"><thead><tr><th>Действие</th><th>Статус</th><th>Провайдер / модель</th><th>Токены</th><th>Стоимость</th><th>Когда</th></tr></thead><tbody>{runs.map((run) => <tr key={run.id}><td>{run.action}</td><td>{run.status}{run.error_code && <p className="error">{run.error_code}</p>}</td><td>{run.provider_id || "—"} / {run.model_id || "—"}</td><td>{run.usage.input_tokens ?? 0} / {run.usage.output_tokens ?? 0}</td><td>{run.cost_usd === null ? "—" : `$${run.cost_usd.toFixed(6)}`}</td><td className="muted">{run.created_at?.slice(0, 19) || "—"}</td></tr>)}</tbody></table></div>}
+      </Surface>
       <Surface title="Предложить структуру сайта">
         <form className="stack" onSubmit={requestProposal}>
           <label className="field">Project ID<input value={projectId} onChange={(event) => { setProjectId(event.target.value); setQuote(null); setConsented(false); }} placeholder="UUID проекта" required /></label>
@@ -189,7 +235,7 @@ export function AIWorkspacePage() {
           </div>
           <label className="field">Ограничения оператора<textarea value={constraints} onChange={(event) => { setConstraints(event.target.value); setQuote(null); setConsented(false); }} rows={4} placeholder="Одно ограничение на строку" /></label>
           <button className="btn btn-ghost" type="button" onClick={() => void calculateQuote()} disabled={busy || !providerId || !projectId || !model}>{busy ? "Расчёт…" : "Рассчитать стоимость до запроса"}</button>
-          {quote && <Surface title="Оценка до генерации"><p><strong>${quote.estimated_cost_usd.toFixed(6)}</strong> (верхняя оценка) · лимит ${quote.max_cost_usd.toFixed(6)}</p><p className="muted">Источник: {quote.pricing_source}; актуально на {quote.pricing_observed_at}. Оценка не гарантирует фактический счёт.</p></Surface>}
+          {quote && <Surface title="Оценка до генерации"><p><strong>${quote.estimated_cost_usd.toFixed(6)}</strong> (верхняя оценка) · лимит ${quote.max_cost_usd.toFixed(6)}</p><p className="muted">Источник: {quote.pricing_source}; актуально на {quote.pricing_observed_at}. Оценка не гарантирует фактический счёт: дневной/30-дневный лимиты являются preflight-проверкой, а не резервированием средств при одновременных запросах. Для жёсткого ограничения настройте spending cap у провайдера.</p></Surface>}
           <label className="field"><span><input type="checkbox" checked={consented} onChange={(event) => setConsented(event.target.checked)} required disabled={!quote} /> Подтверждаю именно показанную оценку, передачу контекста провайдеру и наличие у провайдера соответствующего spending limit. Фактическая цена/retention определяются провайдером.</span></label>
           <button className="btn" type="submit" disabled={busy || !providerId || !consented || !quote}>{busy ? "Генерация…" : "Подтвердить оценку и создать предложение"}</button>
         </form>
