@@ -569,7 +569,7 @@ async def decide_ai_run(
     ).scalar_one_or_none()
     if not run:
         raise HTTPException(status_code=404, detail="AI run not found")
-    if run.action not in {"architecture.site-map", "seo.create-brief"}:
+    if run.action not in {"architecture.site-map", "seo.create-brief", "content.block-slot-copy"}:
         raise HTTPException(
             status_code=409,
             detail="This AI action has no approval decision endpoint",

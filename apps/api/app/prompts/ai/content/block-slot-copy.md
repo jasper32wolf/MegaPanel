@@ -22,7 +22,7 @@ Preserve the approved block ID and every declared slot name. Populate only suppl
 ```json
 {
   "approved_page_plan": {"slug":"/", "kit_key":"", "block_selection":{"blocks":[]}},
-  "block": {"id":"hero", "slot_schema":{"headline":{"type":"string","max_length":120}}},
+  "block": {"id":"hero", "slot_schema":{"unique_core":{"type":"string","max_length":8000}}},
   "confirmed_facts": [{"fact_key":"", "value":""}],
   "selected_keywords": [],
   "validated_geo": []

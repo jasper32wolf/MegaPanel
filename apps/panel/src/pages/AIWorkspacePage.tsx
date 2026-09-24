@@ -217,7 +217,7 @@ export function AIWorkspacePage() {
       <Surface title="История AI runs">
         <div className="row">
           <label className="field">Project ID<input value={runProjectId} onChange={(event) => setRunProjectId(event.target.value)} placeholder="Все проекты" /></label>
-          <label className="field">Действие<select value={runAction} onChange={(event) => setRunAction(event.target.value)}><option value="">Все</option><option value="architecture.site-map">Архитектура</option><option value="seo.create-brief">SEO brief</option><option value="content.page-draft-copy">PageDraft copy</option></select></label>
+          <label className="field">Действие<select value={runAction} onChange={(event) => setRunAction(event.target.value)}><option value="">Все</option><option value="architecture.site-map">Архитектура</option><option value="seo.create-brief">SEO brief</option><option value="content.page-draft-copy">PageDraft copy</option><option value="content.block-slot-copy">Текст curated-блока</option></select></label>
           <label className="field">Статус<select value={runStatus} onChange={(event) => setRunStatus(event.target.value)}><option value="">Все</option><option value="pending_approval">Ожидает решения</option><option value="approved">Одобрен</option><option value="rejected">Отклонён</option><option value="completed">Завершён</option><option value="failed">Ошибка</option></select></label>
           <button className="btn btn-ghost" type="button" disabled={busy} onClick={() => void loadRuns().catch((cause) => setError(cause instanceof Error ? cause.message : "Не удалось обновить AI runs"))}>Применить фильтры</button>
         </div>

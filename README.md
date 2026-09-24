@@ -115,9 +115,9 @@ The legacy standalone `apps/worker` package was removed: the only supported work
 
 Последний локальный прогон в этом working tree:
 
-- `pytest apps/api/tests -q` — **158 passed**;
-- targeted Ruff для новых production scripts/tests — проходит;
-- panel production build ранее проходил, но его нужно повторять при UI-изменениях;
+- `pytest apps/api/tests -q` — **240 passed**;
+- `ruff check packages apps/api` — проходит;
+- panel production build — проходит;
 - release-manager Linux state-transition shell test на Windows штатно пропускается;
 - Docker, browser и реальный VPS staging drill здесь не выполнялись.
 

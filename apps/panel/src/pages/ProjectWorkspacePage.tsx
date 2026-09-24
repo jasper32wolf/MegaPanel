@@ -9,13 +9,15 @@ type Keyword = { id: string; phrase: string; meta: Record<string, string> };
 type ProjectKeyword = { keyword_id: string; phrase: string; cluster: string | null; intent: string | null; priority: number | null };
 type GeoPlace = { id: string; name: string; kind: string; is_validated?: boolean };
 type ProjectGeo = { geo_id: string; name: string; kind: string; validated: boolean; role: "primary" | "service_area" | "reference"; position: number };
-type Plan = { id: string; slug: string; objective: string; intent: string | null; kit_key: string; state: string; version: number; decision_reason: string | null };
+type Plan = { id: string; slug: string; objective: string; intent: string | null; kit_key: string; block_selection: { blocks?: string[] }; state: string; version: number; decision_reason: string | null };
 type Draft = { id: string; page_plan_id: string; revision: number; state: string; content_hash: string | null; last_qa_verdict: string | null; qa_runs: { verdict: string; findings: { verdict: string; rule: string; evidence: string }[] }[]; page_manifest: Record<string, unknown>; failure_message: string | null };
 type Coverage = { selected: number; covered: number; uncovered: { keyword_id: string; phrase: string }[]; plans: number };
 type Build = { id: string; status: string; build_hash: string | null; previous_build_hash: string | null; pages_built: number; created_at: string | null; activated_at: string | null };
 type AIProvider = { id: string; label: string; provider_id: string; enabled: boolean };
 type AIDraftQuote = { provider_id: string; model_id: string; estimated_cost_usd: number; max_cost_usd: number; input_snapshot_hash: string; pricing_source: string; pricing_observed_at: string };
-type AIRunBrief = { id: string; action: string; status: string; output: { brief?: Record<string, unknown>; page_draft_id?: string }; error_code: string | null; prompt_hash: string; cost_usd: number | null };
+type AIRunBrief = { id: string; action: string; status: string; output: { brief?: Record<string, unknown>; page_draft_id?: string; slot_copy?: BlockSlotCopy }; error_code: string | null; prompt_hash: string; cost_usd: number | null };
+type BlockSlotSchema = { block_id: string; slots: Record<string, { type: string; max_length: number }> };
+type BlockSlotCopy = { block_id: string; slots: Record<string, string | null>; fact_keys: string[]; warnings: string[] };
 
 function tone(state: string) {
   if (["approved", "applied", "pass", "confirmed"].includes(state)) return "ok" as const;
@@ -51,6 +53,13 @@ export function ProjectWorkspacePage() {
   const [seoConsent, setSeoConsent] = useState(false);
   const [seoRun, setSeoRun] = useState<AIRunBrief | null>(null);
   const [seoRuns, setSeoRuns] = useState<AIRunBrief[]>([]);
+  const [slotPlanId, setSlotPlanId] = useState("");
+  const [slotBlockId, setSlotBlockId] = useState("");
+  const [slotSchema, setSlotSchema] = useState<BlockSlotSchema | null>(null);
+  const [slotQuote, setSlotQuote] = useState<AIDraftQuote | null>(null);
+  const [slotConsent, setSlotConsent] = useState(false);
+  const [slotRun, setSlotRun] = useState<AIRunBrief | null>(null);
+  const [slotRuns, setSlotRuns] = useState<AIRunBrief[]>([]);
   const [organization, setOrganization] = useState("");
   const [service, setService] = useState("");
   const [phone, setPhone] = useState("");
@@ -72,7 +81,7 @@ export function ProjectWorkspacePage() {
   const selectedGeoSet = useMemo(() => new Set(selectedGeoIds), [selectedGeoIds]);
 
   async function load() {
-    const [nextProject, nextFacts, nextKeywords, nextProjectKeywords, nextPlaces, nextProjectGeo, nextPlans, nextDrafts, nextCoverage, nextBuilds, nextSeoRuns] = await Promise.all([
+    const [nextProject, nextFacts, nextKeywords, nextProjectKeywords, nextPlaces, nextProjectGeo, nextPlans, nextDrafts, nextCoverage, nextBuilds, nextSeoRuns, nextSlotRuns] = await Promise.all([
       api<Project>(`/api/v1/projects/${projectId}`, {}, token),
       api<FactRevision[]>(`/api/v1/projects/${projectId}/facts`, {}, token),
       api<{ items: Keyword[] }>("/api/v1/keywords?limit=100", {}, token),
@@ -84,6 +93,7 @@ export function ProjectWorkspacePage() {
       api<Coverage>(`/api/v1/projects/${projectId}/coverage`, {}, token),
       api<Build[]>(`/api/v1/projects/${projectId}/builds`, {}, token),
       api<AIRunBrief[]>(`/api/v1/projects/${projectId}/seo-briefs`, {}, token),
+      api<AIRunBrief[]>(`/api/v1/projects/${projectId}/block-slot-proposals`, {}, token),
     ]);
     setProject(nextProject);
     setFacts(nextFacts);
@@ -98,6 +108,8 @@ export function ProjectWorkspacePage() {
     setBuilds(nextBuilds);
     setSeoRuns(nextSeoRuns);
     setSeoRun((current) => nextSeoRuns.find((item) => item.id === current?.id) || nextSeoRuns[0] || null);
+    setSlotRuns(nextSlotRuns);
+    setSlotRun((current) => nextSlotRuns.find((item) => item.id === current?.id) || nextSlotRuns[0] || null);
   }
 
   useEffect(() => {
@@ -303,6 +315,81 @@ export function ProjectWorkspacePage() {
     );
   }
 
+  async function loadSlotSchema(planId: string, blockId: string) {
+    if (!planId || !blockId) {
+      setSlotSchema(null);
+      return;
+    }
+    setBusy("slot-schema");
+    setError(null);
+    try {
+      setSlotSchema(await api<BlockSlotSchema>(`/api/v1/projects/${projectId}/page-plans/${planId}/blocks/${blockId}/slot-schema`, {}, token));
+    } catch (cause) {
+      setSlotSchema(null);
+      setError(cause instanceof Error ? cause.message : "Не удалось загрузить контракт слотов блока");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function resetSlotQuote() {
+    setSlotQuote(null);
+    setSlotConsent(false);
+  }
+
+  async function quoteBlockSlotCopy() {
+    if (!slotPlanId || !slotBlockId || !aiProviderId || !aiModel.trim()) return;
+    setBusy("slot-quote");
+    setError(null);
+    setMessage(null);
+    resetSlotQuote();
+    try {
+      const quote = await api<AIDraftQuote>(
+        `/api/v1/projects/${projectId}/page-plans/${slotPlanId}/block-slot-copy/quote`,
+        { method: "POST", body: JSON.stringify({ provider_connection_id: aiProviderId, model: aiModel.trim(), block_id: slotBlockId, max_cost_usd: Number(aiMaxCost), max_output_tokens: Number(aiMaxOutput) }) },
+        token,
+      );
+      setSlotQuote(quote);
+      setMessage("Оценка block-slot proposal рассчитана без внешнего вызова.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Не удалось рассчитать block-slot proposal");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function generateBlockSlotCopy() {
+    if (!slotPlanId || !slotBlockId || !slotQuote || !slotConsent) return;
+    const quote = slotQuote;
+    setBusy(`slot-copy:${slotPlanId}`);
+    setError(null);
+    try {
+      const result = await api<AIRunBrief>(
+        `/api/v1/projects/${projectId}/page-plans/${slotPlanId}/block-slot-copy`,
+        { method: "POST", body: JSON.stringify({ provider_connection_id: aiProviderId, model: aiModel.trim(), block_id: slotBlockId, max_cost_usd: Number(aiMaxCost), max_output_tokens: Number(aiMaxOutput), operator_confirmed_external_processing: true, operator_confirmed_provider_budget: true, confirmed_estimated_cost_usd: quote.estimated_cost_usd, quote_snapshot_hash: quote.input_snapshot_hash }) },
+        token,
+      );
+      setSlotRun(result);
+      resetSlotQuote();
+      setMessage("Текст блока создан как отдельное proposal; PageDraft и сайт не изменены.");
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Не удалось создать proposal текста блока");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function decideSlotRun(decision: "approve" | "reject") {
+    if (!slotRun) return;
+    await run(`slot-decision:${slotRun.id}`, () => api(`/api/v1/ai/runs/${slotRun.id}/decision`, { method: "POST", body: JSON.stringify({ decision }) }, token).then((result) => { setSlotRun(result as AIRunBrief); }), decision === "approve" ? "Текст блока одобрен; создание PageDraft остаётся отдельным этапом." : "Предложение текста блока отклонено.");
+  }
+
+  async function importApprovedSlotRun() {
+    if (!slotRun || slotRun.status !== "approved" || slotRun.output.page_draft_id) return;
+    await run(`slot-import:${slotRun.id}`, () => api<Draft>(`/api/v1/projects/${projectId}/block-slot-proposals/${slotRun.id}/drafts`, { method: "POST" }, token), "Из одобренного текста блока создан noindex PageDraft. Запустите QA и ручную проверку.");
+  }
+
   async function qa(draft: Draft) {
     await run(`qa:${draft.id}`, () => api(`/api/v1/projects/${projectId}/page-drafts/${draft.id}/qa`, { method: "POST" }, token), "Проверка качества завершена.");
   }
@@ -412,6 +499,20 @@ export function ProjectWorkspacePage() {
           {seoRun?.status === "approved" && !seoRun.output?.page_draft_id && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={importApprovedSEOBrief}>Создать PageDraft из одобренного brief</button>}
           {seoRun?.output?.page_draft_id && <p className="muted">PageDraft: {seoRun.output.page_draft_id}. Далее выполните QA и ручную проверку.</p>}
           {seoRun && <div className="surface"><p>Статус: {seoRun.status}</p>{seoRun.output?.brief && <pre className="code-block">{JSON.stringify(seoRun.output.brief, null, 2)}</pre>}{seoRun.status === "pending_approval" && <div className="row"><button className="btn" type="button" disabled={busy !== null} onClick={() => void decideSEORun("approve")}>Одобрить</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void decideSEORun("reject")}>Отклонить</button></div>}</div>}
+        </div>
+      </Surface>
+      <Surface title="4.3. Proposal текста curated-блока">
+        <p className="muted">Доступны только серверные plain-text слоты утверждённых curated-блоков. Предложение требует отдельного одобрения и создаёт новый noindex PageDraft только после явного импорта.</p>
+        <div className="stack">
+          <label className="field">Утверждённый план<select value={slotPlanId} onChange={(event) => { setSlotPlanId(event.target.value); setSlotBlockId(""); setSlotSchema(null); resetSlotQuote(); }}><option value="">Выберите PagePlan</option>{plans.filter((plan) => plan.state === "approved").map((plan) => <option key={plan.id} value={plan.id}>{plan.slug} — {plan.objective}</option>)}</select></label>
+          <label className="field">Curated-блок<select value={slotBlockId} disabled={!slotPlanId} onChange={(event) => { const nextBlockId = event.target.value; setSlotBlockId(nextBlockId); resetSlotQuote(); void loadSlotSchema(slotPlanId, nextBlockId); }}><option value="">Выберите блок</option>{(plans.find((plan) => plan.id === slotPlanId)?.block_selection?.blocks || []).map((blockId: string) => <option key={blockId} value={blockId}>{blockId}</option>)}</select></label>
+          {slotSchema && <div className="surface"><strong>Серверный контракт слотов</strong><ul>{Object.entries(slotSchema.slots).map(([name, schema]) => <li key={name}><code>{name}</code> · текст до {schema.max_length} символов</li>)}</ul></div>}
+          <button className="btn btn-ghost" type="button" disabled={busy !== null || !slotSchema || !aiProviderId || !aiModel.trim()} onClick={quoteBlockSlotCopy}>{busy === "slot-quote" ? "Расчёт…" : "Рассчитать текст блока"}</button>
+          {slotQuote && <p className="muted">Оценка ${slotQuote.estimated_cost_usd.toFixed(6)} · лимит ${slotQuote.max_cost_usd.toFixed(6)} · {slotQuote.pricing_source} на {slotQuote.pricing_observed_at}</p>}
+          <label className="field"><span><input type="checkbox" disabled={!slotQuote} checked={slotConsent} onChange={(event) => setSlotConsent(event.target.checked)} /> Подтверждаю оценку, внешнюю обработку контекста и настроенный spending limit у провайдера.</span></label>
+          <button className="btn" type="button" disabled={busy !== null || !slotQuote || !slotConsent} onClick={generateBlockSlotCopy}>Создать proposal текста блока</button>
+          {slotRuns.length > 0 && <label className="field">История proposal<select value={slotRun?.id || ""} onChange={(event) => setSlotRun(slotRuns.find((item) => item.id === event.target.value) || null)}>{slotRuns.map((item) => <option key={item.id} value={item.id}>{item.id.slice(0, 8)} · {item.status}</option>)}</select></label>}
+          {slotRun && <div className="surface"><p>Статус: {slotRun.status}</p>{slotRun.output.slot_copy && <pre className="code-block">{JSON.stringify(slotRun.output.slot_copy, null, 2)}</pre>}{slotRun.status === "pending_approval" && <div className="row"><button className="btn" type="button" disabled={busy !== null} onClick={() => void decideSlotRun("approve")}>Одобрить</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void decideSlotRun("reject")}>Отклонить</button></div>}{slotRun.status === "approved" && !slotRun.output.page_draft_id && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={importApprovedSlotRun}>Создать PageDraft из одобренного текста</button>}{slotRun.output.page_draft_id && <p className="muted">PageDraft: {slotRun.output.page_draft_id}. Далее запустите QA.</p>}</div>}
         </div>
       </Surface>
       <Surface title="5. Черновики и проверка качества">

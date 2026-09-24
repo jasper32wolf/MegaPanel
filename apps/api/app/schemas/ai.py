@@ -124,6 +124,19 @@ class AIDraftTextOut(BaseModel):
     fact_keys: list[str] = Field(default_factory=list, max_length=100)
 
 
+class AIBlockSlotCopyRequest(AIDraftGenerationRequest):
+    block_id: str = Field(min_length=1, max_length=128)
+
+
+class AIBlockSlotCopyOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    block_id: str = Field(min_length=1, max_length=128)
+    slots: dict[str, str | None] = Field(default_factory=dict, max_length=20)
+    fact_keys: list[str] = Field(default_factory=list, max_length=100)
+    warnings: list[str] = Field(default_factory=list, max_length=20)
+
+
 class AIRunOut(BaseModel):
     id: UUID
     action: str

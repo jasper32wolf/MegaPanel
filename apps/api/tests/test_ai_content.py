@@ -9,6 +9,7 @@ import pytest
 from app.api.v1 import ai_content
 from app.api.v1.ai_content import (
     _apply_approved_seo_brief,
+    _validate_block_slot_copy,
     _validate_page_copy,
     _validate_seo_brief,
 )
@@ -28,6 +29,46 @@ def page_copy() -> dict:
 def test_ai_page_copy_validates_plain_text_and_fact_provenance() -> None:
     result = _validate_page_copy(page_copy(), {"service"})
     assert result["fact_keys"] == ["service"]
+
+
+def block_slot_copy() -> dict:
+    return {
+        "block_id": "hero",
+        "slots": {"unique_core": "Подтверждённая услуга ремонта техники."},
+        "fact_keys": ["service"],
+        "warnings": [],
+    }
+
+
+def test_block_slot_copy_requires_exact_server_slot_contract_and_provenance() -> None:
+    result = _validate_block_slot_copy(
+        block_slot_copy(),
+        block_id="hero",
+        slot_schema={"unique_core": {"type": "string", "max_length": 8000}},
+        fact_keys={"service"},
+    )
+    assert result["slots"]["unique_core"].startswith("Подтверждённая")
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        {**block_slot_copy(), "block_id": "footer"},
+        {**block_slot_copy(), "slots": {"unknown": "Текст"}},
+        {**block_slot_copy(), "slots": {"unique_core": "<b>Текст</b>"}},
+        {**block_slot_copy(), "slots": {"unique_core": "Текст {city}"}},
+        {**block_slot_copy(), "fact_keys": ["unknown"]},
+        {**block_slot_copy(), "fact_keys": []},
+    ],
+)
+def test_block_slot_copy_rejects_untrusted_or_unproven_output(candidate: dict) -> None:
+    with pytest.raises(ValueError):
+        _validate_block_slot_copy(
+            candidate,
+            block_id="hero",
+            slot_schema={"unique_core": {"type": "string", "max_length": 8000}},
+            fact_keys={"service"},
+        )
 
 
 @pytest.mark.parametrize(
@@ -281,3 +322,96 @@ def test_seo_brief_rejects_stale_plan_before_creating_draft(monkeypatch) -> None
                 Session(),
             )
         )
+
+
+def test_approved_block_slot_copy_creates_noindex_draft_once(monkeypatch) -> None:
+    project_id, run_id, tenant_id, plan_id, fact_id = (uuid4() for _ in range(5))
+    project = SimpleNamespace(
+        id=project_id, tenant_id=tenant_id, domain="example.test", locale="ru", name="Ремонт"
+    )
+    plan = SimpleNamespace(
+        id=plan_id,
+        project_id=project_id,
+        fact_revision_id=fact_id,
+        state="approved",
+        slug="/repair",
+        kit_key="service-local-v1",
+        block_selection={"blocks": ["hero"]},
+        version=3,
+        keyword_snapshot={"items": []},
+        geo_snapshot={"items": [{"geo_id": str(uuid4()), "name": "Казань", "role": "primary"}]},
+    )
+    facts = SimpleNamespace(
+        id=fact_id,
+        facts_hash="a" * 64,
+        facts={"service": "Ремонт техники", "contacts": {"phone": "+79990000000"}},
+    )
+    run = SimpleNamespace(
+        id=run_id,
+        project_id=project_id,
+        tenant_id=tenant_id,
+        action="content.block-slot-copy",
+        status="approved",
+        operator_decision="approve",
+        input_snapshot={
+            "source_binding": {
+                "page_plan_id": str(plan_id),
+                "plan_version": 3,
+                "fact_revision_id": str(fact_id),
+                "facts_hash": "a" * 64,
+            }
+        },
+        output={"slot_copy": block_slot_copy()},
+        prompt_id="content.block-slot-copy",
+        prompt_version="1.0.0",
+        prompt_hash="b" * 64,
+        provider_id="gateway",
+        model_id="model",
+        cost_usd=0.001,
+    )
+    auth = SimpleNamespace(tenant_id=tenant_id, user=SimpleNamespace(id=uuid4()))
+
+    async def project_lookup(*_args):
+        return project
+
+    async def plan_lookup(*_args):
+        return plan
+
+    class Session:
+        def __init__(self):
+            self.objects = []
+            self.calls = 0
+
+        async def execute(self, _statement):
+            self.calls += 1
+            value = (run, facts, None)[self.calls - 1]
+            return SimpleNamespace(scalar_one_or_none=lambda: value)
+
+        def add(self, obj):
+            self.objects.append(obj)
+
+        async def flush(self):
+            for obj in self.objects:
+                if obj.id is None:
+                    obj.id = uuid4()
+
+        async def commit(self):
+            pass
+
+    db = Session()
+    monkeypatch.setattr(ai_content, "_project_or_404", project_lookup)
+    monkeypatch.setattr(ai_content, "_plan_or_404", plan_lookup)
+    monkeypatch.setattr(ai_content, "append_audit", AsyncMock())
+    draft = asyncio.run(
+        ai_content.create_draft_from_block_slot_proposal(project_id, run_id, auth, db)
+    )
+
+    assert draft["state"] == "draft"
+    assert draft["page_manifest"]["index_state"] == "noindex"
+    assert draft["page_manifest"]["unique_core"] == block_slot_copy()["slots"]["unique_core"]
+    assert draft["generator_meta"]["block_slot_copy_run_id"] == str(run_id)
+    assert db.objects[0].input_snapshot["ai_provenance"]["fact_keys"] == ["service"]
+
+    db.calls = 0
+    with pytest.raises(HTTPException, match="already created"):
+        asyncio.run(ai_content.create_draft_from_block_slot_proposal(project_id, run_id, auth, db))

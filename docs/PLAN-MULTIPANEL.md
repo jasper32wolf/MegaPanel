@@ -4,9 +4,9 @@
 
 ## Текущий статус
 
-Site Panel — кандидат self-hosted VPS-релиза для одного оператора. AI-срез уже включает VPS-wide encrypted provider connections, versioned Markdown prompts/evals, architecture proposal→approved draft PagePlan, quote-gated PageDraft copy и SEO brief→noindex PageDraft, curated block selection и tenant-scoped AI run history. Добавлены AI kill switch и дневная/скользящая 30-дневная preflight-проверка бюджета; это не атомарная гарантия расходов при одновременных вызовах — жёсткий spending cap должен быть у провайдера. Model/pricing discovery, full slot generation и DB/provider/browser runtime proof не завершены.
+Site Panel — кандидат self-hosted VPS-релиза для одного оператора. AI-срез уже включает VPS-wide encrypted provider connections, versioned Markdown prompts/evals, architecture proposal→approved draft PagePlan, quote-gated PageDraft copy и SEO brief→noindex PageDraft, curated block selection, server-owned block-slot contracts и approval-gated `unique_core` block-slot proposal→noindex PageDraft import. Добавлены AI kill switch и дневная/скользящая 30-дневная preflight-проверка бюджета; это не атомарная гарантия расходов при одновременных вызовах — жёсткий spending cap должен быть у провайдера. Model/pricing discovery, arbitrary/full slot generation и DB/provider/browser runtime proof не завершены.
 
-Полный API suite: **232 passed**; panel build проходит. Docker/VPS, PostgreSQL/RLS, Caddy/TLS, worker runtime, authenticated browser flow и restore drill ещё не доказаны end-to-end. До их выполнения продукт нельзя объявлять production-ready.
+Полный API suite: **240 passed**; panel build проходит. Docker/VPS, PostgreSQL/RLS, Caddy/TLS, worker runtime, authenticated browser flow и restore drill ещё не доказаны end-to-end. До их выполнения продукт нельзя объявлять production-ready.
 
 ## Какой документ использовать
 
