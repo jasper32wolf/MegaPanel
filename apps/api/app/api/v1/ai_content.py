@@ -7,13 +7,19 @@ from uuid import UUID
 
 from app.api.deps import AuthContext, require_roles
 from app.api.v1.ai_providers import _adapter
-from app.api.v1.ai_workspace import _record_failed_run
+from app.api.v1.ai_workspace import _record_failed_run, _run_out
 from app.api.v1.projects import _plan_or_404, _project_or_404, _serialize_draft
 from app.core.security import sha256_hex
 from app.db.session import get_db
 from app.models import AIProviderConnection, AIRun, PageDraft, ProjectFactRevision
 from app.providers import ProviderError, StructuredRequest
-from app.schemas.ai import AIDraftGenerationRequest, AIDraftTextOut, ArchitectureQuoteOut
+from app.schemas.ai import (
+    AIDraftGenerationRequest,
+    AIDraftTextOut,
+    AIRunOut,
+    ArchitectureQuoteOut,
+    SEOBriefOut,
+)
 from app.services.ai_data_policy import public_fact_rows, safe_provider_context
 from app.services.ai_secrets import decrypt_provider_key
 from app.services.audit import append_audit
@@ -40,6 +46,28 @@ def _validate_page_copy(value: dict[str, Any], fact_keys: set[str]) -> dict[str,
     if any(key not in fact_keys for key in copy.fact_keys):
         raise ValueError("AI copy references an unknown business fact")
     return copy.model_dump()
+
+
+def _validate_seo_brief(
+    value: dict[str, Any], *, plan_slug: str, keyword_ids: set[str], fact_keys: set[str]
+) -> dict[str, Any]:
+    brief = SEOBriefOut.model_validate(value)
+    if brief.canonical_path != plan_slug:
+        raise ValueError("SEO canonical path differs from the approved PagePlan")
+    if any(str(item) not in keyword_ids for item in brief.keyword_ids):
+        raise ValueError("SEO brief references an unselected keyword")
+    if any(item not in fact_keys for item in brief.fact_keys):
+        raise ValueError("SEO brief references an unconfirmed fact")
+    if brief.structured_data_types:
+        raise ValueError("Structured data needs a separately approved evidence policy")
+    if brief.robots == "index,follow" and not brief.fact_keys:
+        raise ValueError("Indexable SEO brief must cite confirmed facts")
+    text_fields = (brief.title, brief.description, brief.h1, *brief.uncertainty_notes)
+    if any(any(char in text for char in "<>{}") for text in text_fields):
+        raise ValueError("SEO brief must use plain text without markup or placeholders")
+    if any(any(ord(char) < 32 for char in text) for text in text_fields):
+        raise ValueError("SEO brief contains control characters")
+    return brief.model_dump(mode="json")
 
 
 async def _prepare_draft_context(
@@ -151,6 +179,238 @@ async def _prepare_draft_context(
         "estimated_cost": estimated_cost,
         "quote_hash": quote_hash,
     }
+
+
+async def _prepare_seo_brief_context(
+    project_id: UUID,
+    plan_id: UUID,
+    body: AIDraftGenerationRequest,
+    auth: AuthContext,
+    db: AsyncSession,
+) -> dict[str, Any]:
+    context = await _prepare_draft_context(project_id, plan_id, body, auth, db)
+    snapshot = {
+        "approved_page_plan": context["snapshot"]["approved_page_plan"],
+        "approved_blocks": context["snapshot"]["allowed_blocks"],
+        "confirmed_facts": context["snapshot"]["confirmed_facts"],
+        "selected_keywords": context["snapshot"]["selected_keywords"],
+        "validated_geo": context["snapshot"]["validated_geo"],
+        "site_policy": {"canonical_path": context["plan"].slug},
+    }
+    prompt = load_prompt("seo/create-seo-brief.md")
+    user_prompt = json.dumps(snapshot, sort_keys=True, ensure_ascii=False)
+    pricing = context["pricing"]
+    estimated_cost = (
+        (len(user_prompt.encode("utf-8")) + len(prompt.content.encode("utf-8")))
+        * float(pricing["input_price_usd_per_million"])
+        + body.max_output_tokens * float(pricing["output_price_usd_per_million"])
+    ) / 1_000_000
+    if estimated_cost > body.max_cost_usd:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "estimated_cost_exceeds_limit",
+                "estimated_cost_usd": round(estimated_cost, 8),
+            },
+        )
+    context.update(
+        snapshot=snapshot,
+        prompt=prompt,
+        user_prompt=user_prompt,
+        estimated_cost=estimated_cost,
+        quote_hash=_hash_json(
+            {
+                **snapshot,
+                "provider_connection_id": str(context["connection"].id),
+                "model": body.model,
+                "max_cost_usd": body.max_cost_usd,
+                "max_output_tokens": body.max_output_tokens,
+                "pricing": pricing,
+                "prompt_id": prompt.prompt_id,
+                "prompt_version": prompt.version,
+                "prompt_hash": prompt.content_hash,
+                "fact_revision_id": str(context["facts"].id),
+                "facts_hash": context["facts"].facts_hash,
+                "plan_version": context["plan"].version,
+            }
+        ),
+    )
+    return context
+
+
+@router.post(
+    "/{project_id}/page-plans/{plan_id}/seo-brief/quote",
+    response_model=ArchitectureQuoteOut,
+)
+async def quote_seo_brief(
+    project_id: UUID,
+    plan_id: UUID,
+    body: AIDraftGenerationRequest,
+    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor")),
+    db: AsyncSession = Depends(get_db),
+) -> ArchitectureQuoteOut:
+    context = await _prepare_seo_brief_context(project_id, plan_id, body, auth, db)
+    return ArchitectureQuoteOut(
+        provider_id=context["connection"].provider_id,
+        model_id=body.model,
+        estimated_cost_usd=round(context["estimated_cost"], 8),
+        max_cost_usd=body.max_cost_usd,
+        input_snapshot_hash=context["quote_hash"],
+        pricing_source=context["pricing"]["source"],
+        pricing_observed_at=context["pricing"]["observed_at"],
+    )
+
+
+@router.post(
+    "/{project_id}/page-plans/{plan_id}/seo-brief",
+    response_model=AIRunOut,
+    status_code=201,
+)
+async def generate_seo_brief(
+    project_id: UUID,
+    plan_id: UUID,
+    body: AIDraftGenerationRequest,
+    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor")),
+    db: AsyncSession = Depends(get_db),
+) -> AIRunOut:
+    context = await _prepare_seo_brief_context(project_id, plan_id, body, auth, db)
+    if (
+        not body.operator_confirmed_external_processing
+        or not body.operator_confirmed_provider_budget
+    ):
+        raise HTTPException(status_code=409, detail={"code": "operator_confirmation_required"})
+    if body.confirmed_estimated_cost_usd is None or body.quote_snapshot_hash is None:
+        raise HTTPException(status_code=409, detail={"code": "cost_quote_confirmation_required"})
+    if (
+        abs(body.confirmed_estimated_cost_usd - context["estimated_cost"]) > 1e-8
+        or body.quote_snapshot_hash != context["quote_hash"]
+    ):
+        raise HTTPException(status_code=409, detail={"code": "cost_quote_changed"})
+
+    connection = context["connection"]
+    pricing = context["pricing"]
+    prompt = context["prompt"]
+    snapshot = {
+        **context["snapshot"],
+        "spend_policy": {
+            "estimated_cost_usd": round(context["estimated_cost"], 8),
+            "max_cost_usd": body.max_cost_usd,
+            "pricing_source": pricing["source"],
+            "pricing_observed_at": pricing["observed_at"],
+            "provider_budget_confirmed": True,
+        },
+    }
+    response = None
+    try:
+        response = await _adapter(
+            connection, decrypt_provider_key(connection.encrypted_api_key)
+        ).generate_structured(
+            StructuredRequest(
+                model=body.model,
+                system_prompt=prompt.content,
+                user_prompt=context["user_prompt"],
+                output_schema={
+                    "type": "object",
+                    "required": ["title", "description", "h1", "canonical_path", "robots"],
+                },
+                temperature=0.2,
+                max_tokens=body.max_output_tokens,
+            )
+        )
+        output = _validate_seo_brief(
+            response.data,
+            plan_slug=context["plan"].slug,
+            keyword_ids={item["keyword_id"] for item in snapshot["selected_keywords"]},
+            fact_keys={item["fact_key"] for item in snapshot["confirmed_facts"]},
+        )
+    except ProviderError as exc:
+        await _record_failed_run(
+            db=db,
+            auth=auth,
+            project_id=project_id,
+            provider_id=connection.provider_id,
+            model_id=body.model,
+            prompt=prompt,
+            snapshot=snapshot,
+            error_code=exc.code,
+            action="seo.create-brief",
+        )
+        raise HTTPException(status_code=502, detail={"code": exc.code}) from exc
+    except (ValueError, TypeError) as exc:
+        usage = None
+        actual_cost = None
+        request_id = None
+        if response is not None:
+            usage = {
+                "input_tokens": response.usage.input_tokens,
+                "output_tokens": response.usage.output_tokens,
+            }
+            actual_cost = (
+                response.usage.input_tokens * float(pricing["input_price_usd_per_million"])
+                + response.usage.output_tokens * float(pricing["output_price_usd_per_million"])
+            ) / 1_000_000
+            request_id = response.request_id
+        await _record_failed_run(
+            db=db,
+            auth=auth,
+            project_id=project_id,
+            provider_id=connection.provider_id,
+            model_id=body.model,
+            prompt=prompt,
+            snapshot=snapshot,
+            error_code="invalid_ai_output",
+            action="seo.create-brief",
+            usage=usage,
+            cost_usd=actual_cost,
+            request_id=request_id,
+        )
+        raise HTTPException(status_code=502, detail={"code": "invalid_ai_output"}) from exc
+
+    actual_cost = (
+        response.usage.input_tokens * float(pricing["input_price_usd_per_million"])
+        + response.usage.output_tokens * float(pricing["output_price_usd_per_million"])
+    ) / 1_000_000
+    cost_exceeded = actual_cost > body.max_cost_usd
+    run = AIRun(
+        tenant_id=context["project"].tenant_id,
+        project_id=project_id,
+        action="seo.create-brief",
+        status="failed" if cost_exceeded else "pending_approval",
+        provider_id=response.provider_id,
+        model_id=response.model,
+        prompt_id=prompt.prompt_id,
+        prompt_version=prompt.version,
+        prompt_hash=prompt.content_hash,
+        input_snapshot_hash=_hash_json(snapshot),
+        request_id=response.request_id,
+        input_snapshot=snapshot,
+        output={"brief": output},
+        usage={
+            "input_tokens": response.usage.input_tokens,
+            "output_tokens": response.usage.output_tokens,
+        },
+        cost_usd=actual_cost,
+        error_code="actual_cost_exceeded_limit" if cost_exceeded else None,
+    )
+    db.add(run)
+    await db.flush()
+    await append_audit(
+        db,
+        action="ai.seo.brief.created" if not cost_exceeded else "ai.seo.brief.cost_limit_exceeded",
+        payload={
+            "run_id": str(run.id),
+            "project_id": str(project_id),
+            "page_plan_id": str(plan_id),
+            "prompt_hash": prompt.content_hash,
+            "actual_cost_usd": round(actual_cost, 8),
+            "requires_operator_approval": True,
+        },
+        tenant_id=auth.tenant_id,
+        actor_id=auth.user.id,
+    )
+    await db.commit()
+    await db.refresh(run)
+    return _run_out(run)
 
 
 @router.post(

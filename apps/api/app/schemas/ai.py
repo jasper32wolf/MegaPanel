@@ -143,6 +143,20 @@ class AIRunOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class SEOBriefOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=60)
+    description: str = Field(min_length=1, max_length=160)
+    h1: str = Field(min_length=1, max_length=255)
+    canonical_path: str = Field(min_length=1, max_length=512)
+    robots: Literal["index,follow", "noindex,follow"]
+    keyword_ids: list[UUID] = Field(default_factory=list, max_length=100)
+    fact_keys: list[str] = Field(default_factory=list, max_length=100)
+    structured_data_types: list[str] = Field(default_factory=list, max_length=20)
+    uncertainty_notes: list[str] = Field(default_factory=list, max_length=20)
+
+
 class PageProposal(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

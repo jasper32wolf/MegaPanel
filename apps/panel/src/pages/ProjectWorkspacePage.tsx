@@ -15,6 +15,7 @@ type Coverage = { selected: number; covered: number; uncovered: { keyword_id: st
 type Build = { id: string; status: string; build_hash: string | null; previous_build_hash: string | null; pages_built: number; created_at: string | null; activated_at: string | null };
 type AIProvider = { id: string; label: string; provider_id: string; enabled: boolean };
 type AIDraftQuote = { provider_id: string; model_id: string; estimated_cost_usd: number; max_cost_usd: number; input_snapshot_hash: string; pricing_source: string; pricing_observed_at: string };
+type AIRunBrief = { id: string; action: string; status: string; output: { brief?: Record<string, unknown> }; error_code: string | null; prompt_hash: string; cost_usd: number | null };
 
 function tone(state: string) {
   if (["approved", "applied", "pass", "confirmed"].includes(state)) return "ok" as const;
@@ -43,6 +44,12 @@ export function ProjectWorkspacePage() {
   const [aiQuote, setAiQuote] = useState<AIDraftQuote | null>(null);
   const [aiConsent, setAiConsent] = useState(false);
   const [aiProviderError, setAiProviderError] = useState<string | null>(null);
+  const [seoPlanId, setSeoPlanId] = useState("");
+  const [seoMaxCost, setSeoMaxCost] = useState("0.02");
+  const [seoMaxOutput, setSeoMaxOutput] = useState("1024");
+  const [seoQuote, setSeoQuote] = useState<AIDraftQuote | null>(null);
+  const [seoConsent, setSeoConsent] = useState(false);
+  const [seoRun, setSeoRun] = useState<AIRunBrief | null>(null);
   const [organization, setOrganization] = useState("");
   const [service, setService] = useState("");
   const [phone, setPhone] = useState("");
@@ -231,6 +238,58 @@ export function ProjectWorkspacePage() {
     setAiConsent(false);
   }
 
+  async function quoteSEOBrief() {
+    if (!seoPlanId || !aiProviderId || !aiModel.trim()) {
+      setError("Выберите утверждённый план, провайдера и модель для SEO brief.");
+      return;
+    }
+    setBusy("seo-quote");
+    setError(null);
+    setMessage(null);
+    setSeoQuote(null);
+    setSeoConsent(false);
+    try {
+      const quote = await api<AIDraftQuote>(
+        `/api/v1/projects/${projectId}/page-plans/${seoPlanId}/seo-brief/quote`,
+        { method: "POST", body: JSON.stringify({ provider_connection_id: aiProviderId, model: aiModel.trim(), max_cost_usd: Number(seoMaxCost), max_output_tokens: Number(seoMaxOutput) }) },
+        token,
+      );
+      setSeoQuote(quote);
+      setMessage("SEO brief quote рассчитан без вызова внешнего провайдера.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Не удалось рассчитать SEO brief quote");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function generateSEOBrief() {
+    if (!seoPlanId || !seoQuote || !seoConsent) return;
+    const quote = seoQuote;
+    setBusy(`seo:${seoPlanId}`);
+    setError(null);
+    try {
+      const result = await api<AIRunBrief>(
+        `/api/v1/projects/${projectId}/page-plans/${seoPlanId}/seo-brief`,
+        { method: "POST", body: JSON.stringify({ provider_connection_id: aiProviderId, model: aiModel.trim(), max_cost_usd: Number(seoMaxCost), max_output_tokens: Number(seoMaxOutput), operator_confirmed_external_processing: true, operator_confirmed_provider_budget: true, confirmed_estimated_cost_usd: quote.estimated_cost_usd, quote_snapshot_hash: quote.input_snapshot_hash }) },
+        token,
+      );
+      setSeoRun(result);
+      setSeoQuote(null);
+      setSeoConsent(false);
+      setMessage("SEO brief создан как отдельный proposal; PageDraft и публикация не изменены.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Не удалось создать SEO brief");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function decideSEORun(decision: "approve" | "reject") {
+    if (!seoRun) return;
+    await run(`seo-decision:${seoRun.id}`, () => api(`/api/v1/ai/runs/${seoRun.id}/decision`, { method: "POST", body: JSON.stringify({ decision }) }, token).then((result) => { setSeoRun(result as AIRunBrief); }), decision === "approve" ? "SEO brief одобрен; применение к PageDraft остаётся отдельным этапом." : "SEO brief отклонён.");
+  }
+
   async function qa(draft: Draft) {
     await run(`qa:${draft.id}`, () => api(`/api/v1/projects/${projectId}/page-drafts/${draft.id}/qa`, { method: "POST" }, token), "Проверка качества завершена.");
   }
@@ -325,6 +384,18 @@ export function ProjectWorkspacePage() {
           {aiQuote && <div className="surface"><strong>Предварительная оценка: ${aiQuote.estimated_cost_usd.toFixed(6)}</strong><p className="muted">Лимит ${aiQuote.max_cost_usd.toFixed(6)} · источник {aiQuote.pricing_source} · тариф на {aiQuote.pricing_observed_at}. Это оценка, не гарантия фактического счёта.</p></div>}
           <label className="field"><span><input type="checkbox" checked={aiConsent} disabled={!aiQuote} onChange={(event) => setAiConsent(event.target.checked)} /> Подтверждаю показанную оценку, отправку контекста этому провайдеру и настроенный у него spending limit.</span></label>
           <button className="btn" type="button" disabled={busy !== null || !aiQuote || !aiConsent} onClick={generateAIDraft}>{busy?.startsWith("ai-draft:") ? "Генерация…" : "Подтвердить оценку и создать AI PageDraft"}</button>
+        </div>
+      </Surface>
+      <Surface title="4.2. SEO brief proposal">
+        <p className="muted">SEO brief остаётся отдельным proposal и не меняет PageDraft без ручного решения.</p>
+        <div className="stack">
+          <label className="field">Утверждённый план<select value={seoPlanId} onChange={(event) => { setSeoPlanId(event.target.value); setSeoQuote(null); setSeoConsent(false); }}><option value="">Выберите PagePlan</option>{plans.filter((plan) => plan.state === "approved").map((plan) => <option key={plan.id} value={plan.id}>{plan.slug} — {plan.objective}</option>)}</select></label>
+          <div className="detail-grid"><label className="field">Лимит USD<input type="number" min="0.000001" max="100" step="0.000001" value={seoMaxCost} onChange={(event) => { setSeoMaxCost(event.target.value); setSeoQuote(null); }} /></label><label className="field">Выходные токены<input type="number" min="128" max="4096" value={seoMaxOutput} onChange={(event) => { setSeoMaxOutput(event.target.value); setSeoQuote(null); }} /></label></div>
+          <button className="btn btn-ghost" type="button" disabled={busy !== null || !seoPlanId || !aiProviderId || !aiModel} onClick={quoteSEOBrief}>Рассчитать SEO brief</button>
+          {seoQuote && <p className="muted">Оценка ${seoQuote.estimated_cost_usd.toFixed(6)} · {seoQuote.pricing_source}</p>}
+          <label className="field"><span><input type="checkbox" disabled={!seoQuote} checked={seoConsent} onChange={(event) => setSeoConsent(event.target.checked)} /> Подтверждаю оценку и внешнюю обработку.</span></label>
+          <button className="btn" type="button" disabled={busy !== null || !seoQuote || !seoConsent} onClick={generateSEOBrief}>Создать SEO brief</button>
+          {seoRun && <div className="surface"><p>Статус: {seoRun.status}</p>{seoRun.output?.brief && <pre className="code-block">{JSON.stringify(seoRun.output.brief, null, 2)}</pre>}{seoRun.status === "pending_approval" && <div className="row"><button className="btn" type="button" onClick={() => void decideSEORun("approve")}>Одобрить</button><button className="btn btn-ghost" type="button" onClick={() => void decideSEORun("reject")}>Отклонить</button></div>}</div>}
         </div>
       </Surface>
       <Surface title="5. Черновики и проверка качества">
