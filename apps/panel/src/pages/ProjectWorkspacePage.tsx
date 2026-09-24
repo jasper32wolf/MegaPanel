@@ -15,7 +15,7 @@ type Coverage = { selected: number; covered: number; uncovered: { keyword_id: st
 type Build = { id: string; status: string; build_hash: string | null; previous_build_hash: string | null; pages_built: number; created_at: string | null; activated_at: string | null };
 type AIProvider = { id: string; label: string; provider_id: string; enabled: boolean };
 type AIDraftQuote = { provider_id: string; model_id: string; estimated_cost_usd: number; max_cost_usd: number; input_snapshot_hash: string; pricing_source: string; pricing_observed_at: string };
-type AIRunBrief = { id: string; action: string; status: string; output: { brief?: Record<string, unknown> }; error_code: string | null; prompt_hash: string; cost_usd: number | null };
+type AIRunBrief = { id: string; action: string; status: string; output: { brief?: Record<string, unknown>; page_draft_id?: string }; error_code: string | null; prompt_hash: string; cost_usd: number | null };
 
 function tone(state: string) {
   if (["approved", "applied", "pass", "confirmed"].includes(state)) return "ok" as const;
@@ -50,6 +50,7 @@ export function ProjectWorkspacePage() {
   const [seoQuote, setSeoQuote] = useState<AIDraftQuote | null>(null);
   const [seoConsent, setSeoConsent] = useState(false);
   const [seoRun, setSeoRun] = useState<AIRunBrief | null>(null);
+  const [seoRuns, setSeoRuns] = useState<AIRunBrief[]>([]);
   const [organization, setOrganization] = useState("");
   const [service, setService] = useState("");
   const [phone, setPhone] = useState("");
@@ -71,7 +72,7 @@ export function ProjectWorkspacePage() {
   const selectedGeoSet = useMemo(() => new Set(selectedGeoIds), [selectedGeoIds]);
 
   async function load() {
-    const [nextProject, nextFacts, nextKeywords, nextProjectKeywords, nextPlaces, nextProjectGeo, nextPlans, nextDrafts, nextCoverage, nextBuilds] = await Promise.all([
+    const [nextProject, nextFacts, nextKeywords, nextProjectKeywords, nextPlaces, nextProjectGeo, nextPlans, nextDrafts, nextCoverage, nextBuilds, nextSeoRuns] = await Promise.all([
       api<Project>(`/api/v1/projects/${projectId}`, {}, token),
       api<FactRevision[]>(`/api/v1/projects/${projectId}/facts`, {}, token),
       api<{ items: Keyword[] }>("/api/v1/keywords?limit=100", {}, token),
@@ -82,6 +83,7 @@ export function ProjectWorkspacePage() {
       api<Draft[]>(`/api/v1/projects/${projectId}/page-drafts`, {}, token),
       api<Coverage>(`/api/v1/projects/${projectId}/coverage`, {}, token),
       api<Build[]>(`/api/v1/projects/${projectId}/builds`, {}, token),
+      api<AIRunBrief[]>(`/api/v1/projects/${projectId}/seo-briefs`, {}, token),
     ]);
     setProject(nextProject);
     setFacts(nextFacts);
@@ -94,6 +96,8 @@ export function ProjectWorkspacePage() {
     setDrafts(nextDrafts);
     setCoverage(nextCoverage);
     setBuilds(nextBuilds);
+    setSeoRuns(nextSeoRuns);
+    setSeoRun((current) => nextSeoRuns.find((item) => item.id === current?.id) || nextSeoRuns[0] || null);
   }
 
   useEffect(() => {
@@ -290,6 +294,15 @@ export function ProjectWorkspacePage() {
     await run(`seo-decision:${seoRun.id}`, () => api(`/api/v1/ai/runs/${seoRun.id}/decision`, { method: "POST", body: JSON.stringify({ decision }) }, token).then((result) => { setSeoRun(result as AIRunBrief); }), decision === "approve" ? "SEO brief одобрен; применение к PageDraft остаётся отдельным этапом." : "SEO brief отклонён.");
   }
 
+  async function importApprovedSEOBrief() {
+    if (!seoRun || seoRun.status !== "approved" || seoRun.output.page_draft_id) return;
+    await run(
+      `seo-import:${seoRun.id}`,
+      () => api<Draft>(`/api/v1/projects/${projectId}/seo-briefs/${seoRun.id}/drafts`, { method: "POST" }, token),
+      "Из одобренного SEO brief создан PageDraft без публикации. Проверьте QA и отправьте черновик на ручную проверку.",
+    );
+  }
+
   async function qa(draft: Draft) {
     await run(`qa:${draft.id}`, () => api(`/api/v1/projects/${projectId}/page-drafts/${draft.id}/qa`, { method: "POST" }, token), "Проверка качества завершена.");
   }
@@ -395,7 +408,10 @@ export function ProjectWorkspacePage() {
           {seoQuote && <p className="muted">Оценка ${seoQuote.estimated_cost_usd.toFixed(6)} · {seoQuote.pricing_source}</p>}
           <label className="field"><span><input type="checkbox" disabled={!seoQuote} checked={seoConsent} onChange={(event) => setSeoConsent(event.target.checked)} /> Подтверждаю оценку и внешнюю обработку.</span></label>
           <button className="btn" type="button" disabled={busy !== null || !seoQuote || !seoConsent} onClick={generateSEOBrief}>Создать SEO brief</button>
-          {seoRun && <div className="surface"><p>Статус: {seoRun.status}</p>{seoRun.output?.brief && <pre className="code-block">{JSON.stringify(seoRun.output.brief, null, 2)}</pre>}{seoRun.status === "pending_approval" && <div className="row"><button className="btn" type="button" onClick={() => void decideSEORun("approve")}>Одобрить</button><button className="btn btn-ghost" type="button" onClick={() => void decideSEORun("reject")}>Отклонить</button></div>}</div>}
+          {seoRuns.length > 0 && <label className="field">История SEO briefs<select value={seoRun?.id || ""} onChange={(event) => setSeoRun(seoRuns.find((item) => item.id === event.target.value) || null)}>{seoRuns.map((item) => <option key={item.id} value={item.id}>{item.id.slice(0, 8)} · {item.status}</option>)}</select></label>}
+          {seoRun?.status === "approved" && !seoRun.output?.page_draft_id && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={importApprovedSEOBrief}>Создать PageDraft из одобренного brief</button>}
+          {seoRun?.output?.page_draft_id && <p className="muted">PageDraft: {seoRun.output.page_draft_id}. Далее выполните QA и ручную проверку.</p>}
+          {seoRun && <div className="surface"><p>Статус: {seoRun.status}</p>{seoRun.output?.brief && <pre className="code-block">{JSON.stringify(seoRun.output.brief, null, 2)}</pre>}{seoRun.status === "pending_approval" && <div className="row"><button className="btn" type="button" disabled={busy !== null} onClick={() => void decideSEORun("approve")}>Одобрить</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void decideSEORun("reject")}>Отклонить</button></div>}</div>}
         </div>
       </Surface>
       <Surface title="5. Черновики и проверка качества">

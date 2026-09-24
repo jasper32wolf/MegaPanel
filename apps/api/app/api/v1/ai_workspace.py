@@ -500,7 +500,7 @@ async def get_ai_run(
     return _run_out(run)
 
 
-@router.post("/runs/{run_id}/decision", response_model=ArchitectureProposalOut)
+@router.post("/runs/{run_id}/decision", response_model=ArchitectureProposalOut | AIRunOut)
 async def decide_ai_run(
     run_id: UUID,
     decision: dict[str, str],
@@ -536,7 +536,7 @@ async def decide_ai_run(
     )
     await db.commit()
     await db.refresh(run)
-    return _proposal_out(run)
+    return _run_out(run) if run.action == "seo.create-brief" else _proposal_out(run)
 
 
 @router.post("/runs/{run_id}/page-plans", response_model=ArchitectureProposalOut)

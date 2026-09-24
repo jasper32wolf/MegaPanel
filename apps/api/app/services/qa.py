@@ -44,6 +44,40 @@ def run_page_qa(*, page_manifest: dict, input_snapshot: dict, existing_texts: li
         findings.append(
             {"verdict": "block", "rule": "safe_slug", "evidence": "Use a normalized unique slug"}
         )
+    ai_provenance = input_snapshot.get("ai_provenance") or {}
+    if ai_provenance:
+        required = ("provider_id", "model_id", "prompt_id", "prompt_version", "prompt_hash")
+        missing = [field for field in required if not ai_provenance.get(field)]
+        if missing:
+            findings.append(
+                {
+                    "verdict": "block",
+                    "rule": "ai_provenance",
+                    "evidence": f"AI provenance is missing: {', '.join(missing)}",
+                }
+            )
+        fact_keys = set(ai_provenance.get("fact_keys") or [])
+        known_fact_keys = set(facts) if isinstance(facts, dict) else set()
+        unknown_fact_keys = sorted(fact_keys - known_fact_keys)
+        if unknown_fact_keys:
+            findings.append(
+                {
+                    "verdict": "block",
+                    "rule": "ai_fact_provenance",
+                    "evidence": f"AI copy cites unknown facts: {', '.join(unknown_fact_keys)}",
+                }
+            )
+        if page.index_state != "noindex":
+            findings.append(
+                {
+                    "verdict": "block",
+                    "rule": "ai_index_policy",
+                    "evidence": (
+                        "AI-generated content remains noindex until an approved "
+                        "indexing policy applies"
+                    ),
+                }
+            )
     rendered_text = " ".join(
         [
             page.title_template,
@@ -102,3 +136,6 @@ def run_page_qa(*, page_manifest: dict, input_snapshot: dict, existing_texts: li
         else "pass"
     )
     return {"verdict": verdict, "findings": findings}
+
+
+__all__ = ["run_page_qa"]

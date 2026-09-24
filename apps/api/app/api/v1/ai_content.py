@@ -70,6 +70,16 @@ def _validate_seo_brief(
     return brief.model_dump(mode="json")
 
 
+def _apply_approved_seo_brief(manifest: dict[str, Any], brief: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **manifest,
+        "title_template": brief["title"],
+        "h1_template": brief["h1"],
+        "meta_description_template": brief["description"],
+        "index_state": "noindex",
+    }
+
+
 async def _prepare_draft_context(
     project_id: UUID,
     plan_id: UUID,
@@ -238,6 +248,32 @@ async def _prepare_seo_brief_context(
     return context
 
 
+@router.get("/{project_id}/seo-briefs", response_model=list[AIRunOut])
+async def list_seo_briefs(
+    project_id: UUID,
+    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor")),
+    db: AsyncSession = Depends(get_db),
+) -> list[AIRunOut]:
+    project = await _project_or_404(db, project_id, auth)
+    runs = (
+        (
+            await db.execute(
+                select(AIRun)
+                .where(
+                    AIRun.project_id == project.id,
+                    AIRun.tenant_id == project.tenant_id,
+                    AIRun.action == "seo.create-brief",
+                )
+                .order_by(AIRun.created_at.desc())
+                .limit(50)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [_run_out(run) for run in runs]
+
+
 @router.post(
     "/{project_id}/page-plans/{plan_id}/seo-brief/quote",
     response_model=ArchitectureQuoteOut,
@@ -292,6 +328,12 @@ async def generate_seo_brief(
     prompt = context["prompt"]
     snapshot = {
         **context["snapshot"],
+        "source_binding": {
+            "page_plan_id": str(context["plan"].id),
+            "plan_version": context["plan"].version,
+            "fact_revision_id": str(context["facts"].id),
+            "facts_hash": context["facts"].facts_hash,
+        },
         "spend_policy": {
             "estimated_cost_usd": round(context["estimated_cost"], 8),
             "max_cost_usd": body.max_cost_usd,
@@ -411,6 +453,143 @@ async def generate_seo_brief(
     await db.commit()
     await db.refresh(run)
     return _run_out(run)
+
+
+@router.post("/{project_id}/seo-briefs/{run_id}/drafts", status_code=201)
+async def create_draft_from_seo_brief(
+    project_id: UUID,
+    run_id: UUID,
+    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager")),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    project = await _project_or_404(db, project_id, auth)
+    run = (
+        await db.execute(
+            select(AIRun)
+            .where(
+                AIRun.id == run_id,
+                AIRun.project_id == project.id,
+                AIRun.tenant_id == project.tenant_id,
+                AIRun.action == "seo.create-brief",
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if not run:
+        raise HTTPException(status_code=404, detail="SEO brief not found")
+    if run.status != "approved" or run.operator_decision != "approve":
+        raise HTTPException(status_code=409, detail="Approve the SEO brief first")
+    if run.output.get("page_draft_id"):
+        raise HTTPException(status_code=409, detail="SEO brief already created a PageDraft")
+    binding = (run.input_snapshot or {}).get("source_binding") or {}
+    try:
+        plan_id = UUID(binding["page_plan_id"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=409, detail="SEO brief source snapshot is unavailable"
+        ) from exc
+    plan = await _plan_or_404(db, project, plan_id)
+    if plan.state != "approved" or plan.version != binding.get("plan_version"):
+        raise HTTPException(status_code=409, detail="PagePlan changed; regenerate the SEO brief")
+    facts = (
+        await db.execute(
+            select(ProjectFactRevision).where(
+                ProjectFactRevision.id == plan.fact_revision_id,
+                ProjectFactRevision.project_id == project.id,
+                ProjectFactRevision.state == "confirmed",
+            )
+        )
+    ).scalar_one_or_none()
+    if (
+        not facts
+        or str(facts.id) != binding.get("fact_revision_id")
+        or facts.facts_hash != binding.get("facts_hash")
+    ):
+        raise HTTPException(
+            status_code=409, detail="Confirmed facts changed; regenerate the SEO brief"
+        )
+    if not project.domain:
+        raise HTTPException(status_code=409, detail="Set a project domain before creating a draft")
+    brief = _validate_seo_brief(
+        run.output.get("brief") or {},
+        plan_slug=plan.slug,
+        keyword_ids={item["keyword_id"] for item in (plan.keyword_snapshot or {}).get("items", [])},
+        fact_keys={row["fact_key"] for row in public_fact_rows(facts.facts or {})},
+    )
+    manifest, input_snapshot, _ = create_page_draft(project=project, plan=plan, facts=facts)
+    manifest = _apply_approved_seo_brief(manifest, brief)
+    latest = (
+        await db.execute(
+            select(PageDraft)
+            .where(PageDraft.page_plan_id == plan.id)
+            .order_by(PageDraft.revision.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    generator_meta = {
+        **input_snapshot["generator_meta"],
+        "seo_brief_run_id": str(run.id),
+        "seo_brief_prompt_id": run.prompt_id,
+        "seo_brief_prompt_version": run.prompt_version,
+        "seo_brief_prompt_hash": run.prompt_hash,
+        "seo_brief_provider_id": run.provider_id,
+        "seo_brief_model_id": run.model_id,
+        "seo_brief_cost_usd": run.cost_usd,
+        "robots_recommendation": brief["robots"],
+    }
+    input_snapshot = {
+        **input_snapshot,
+        "generator_meta": generator_meta,
+        "seo_brief": brief,
+        "ai_provenance": {
+            "provider_id": run.provider_id,
+            "model_id": run.model_id,
+            "prompt_id": run.prompt_id,
+            "prompt_version": run.prompt_version,
+            "prompt_hash": run.prompt_hash,
+            "fact_keys": brief["fact_keys"],
+        },
+    }
+    content_hash = sha256_hex(
+        "\n".join(
+            [
+                manifest["title_template"],
+                manifest["h1_template"],
+                manifest["meta_description_template"],
+                manifest.get("unique_core") or "",
+            ]
+        )
+    )
+    draft = PageDraft(
+        page_plan_id=plan.id,
+        project_id=project.id,
+        tenant_id=project.tenant_id,
+        revision=(latest.revision if latest else 0) + 1,
+        state="draft",
+        input_snapshot=input_snapshot,
+        page_manifest=manifest,
+        generator_meta=generator_meta,
+        content_hash=content_hash,
+        requested_by=auth.user.id,
+    )
+    db.add(draft)
+    await db.flush()
+    run.output = {**run.output, "page_draft_id": str(draft.id)}
+    await append_audit(
+        db,
+        action="ai.seo.brief.page_draft.create",
+        payload={
+            "run_id": str(run.id),
+            "page_draft_id": str(draft.id),
+            "page_plan_id": str(plan.id),
+            "project_id": str(project.id),
+            "index_state": "noindex",
+        },
+        tenant_id=project.tenant_id,
+        actor_id=auth.user.id,
+    )
+    await db.commit()
+    return _serialize_draft(draft)
 
 
 @router.post(
