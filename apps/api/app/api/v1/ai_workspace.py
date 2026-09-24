@@ -20,6 +20,7 @@ from app.schemas.ai import (
     ArchitectureQuoteOut,
     PageProposal,
 )
+from app.services.ai_data_policy import public_fact_rows, safe_provider_context
 from app.services.ai_secrets import decrypt_provider_key
 from app.services.audit import append_audit
 from app.services.prompt_catalog import list_prompts, load_prompt
@@ -225,14 +226,9 @@ async def _prepare_architecture_context(
     kits = list_kits()
     catalogs = {item["key"]: set(item["blocks"]) for item in kits}
     facts = facts_revision.facts or {}
-    fact_rows = (
-        [{"fact_key": str(key), "value": value} for key, value in facts.items()]
-        if isinstance(facts, dict)
-        else []
-    )
     snapshot = {
         "project": {"name": project.name, "locale": project.locale, "niche": project.niche},
-        "confirmed_facts": fact_rows,
+        "confirmed_facts": public_fact_rows(facts),
         "selected_keywords": keyword_snapshot["items"],
         "validated_geo": geo_snapshot["items"],
         "existing_page_plans": [
@@ -249,6 +245,10 @@ async def _prepare_architecture_context(
         "operator_constraints": body.operator_constraints,
         "regenerate_page_ids": [str(item) for item in body.regenerate_page_ids],
     }
+    try:
+        snapshot = safe_provider_context(snapshot)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"code": "unsafe_ai_context"}) from exc
     if len(json.dumps(snapshot, ensure_ascii=False)) > 64_000:
         raise HTTPException(status_code=413, detail="Project context exceeds the AI request limit")
     prompt = load_prompt("architecture/propose-site-map.md")
@@ -355,7 +355,6 @@ async def propose_architecture(
     connection = context["connection"]
     pricing = context["pricing"]
     prompt = context["prompt"]
-    facts = context["facts"]
     keyword_snapshot = context["keyword_snapshot"]
     geo_snapshot = context["geo_snapshot"]
     catalogs = context["catalogs"]
@@ -387,7 +386,7 @@ async def propose_architecture(
             response.data,
             keyword_ids={item["keyword_id"] for item in keyword_snapshot["items"]},
             geo_ids={item["geo_id"] for item in geo_snapshot["items"]},
-            fact_keys={str(key) for key in facts} if isinstance(facts, dict) else set(),
+            fact_keys={row["fact_key"] for row in snapshot["confirmed_facts"]},
             catalogs=catalogs,
         )
     except ProviderError as exc:

@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import re
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 from site_panel_blocks.schema import LIBRARY_VERSION, BlockSpec, KitSpec, ThemeProfile
 
 KITS_DIR = Path(__file__).resolve().parent / "kits"
+_SLOT = re.compile(r"\{([a-z][a-z0-9_]*)\}", re.IGNORECASE)
+_AI_TEXT_SLOTS = {"unique_core"}
 
 
 def library_version() -> str:
@@ -53,6 +57,18 @@ def load_kit(key: str) -> KitSpec:
     )
 
 
+def block_slot_schema(key: str, block_type: str) -> dict[str, dict[str, Any]]:
+    """Return the server-owned plain-text slot contract for one curated block."""
+    block = next((item for item in load_kit(key).blocks if item.type == block_type), None)
+    if block is None:
+        raise FileNotFoundError(f"Unknown block {block_type!r} in kit {key!r}")
+    return {
+        name: {"type": "string", "max_length": 8000}
+        for name in _SLOT.findall(block.html)
+        if name in _AI_TEXT_SLOTS
+    }
+
+
 def list_kits() -> list[dict]:
     out = []
     if not KITS_DIR.exists():
@@ -72,3 +88,6 @@ def list_kits() -> list[dict]:
             }
         )
     return out
+
+
+__all__ = ["block_slot_schema", "library_version", "list_kits", "load_kit"]

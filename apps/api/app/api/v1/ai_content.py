@@ -14,6 +14,7 @@ from app.db.session import get_db
 from app.models import AIProviderConnection, AIRun, PageDraft, ProjectFactRevision
 from app.providers import ProviderError, StructuredRequest
 from app.schemas.ai import AIDraftGenerationRequest, AIDraftTextOut, ArchitectureQuoteOut
+from app.services.ai_data_policy import public_fact_rows, safe_provider_context
 from app.services.ai_secrets import decrypt_provider_key
 from app.services.audit import append_audit
 from app.services.generation import create_page_draft
@@ -84,12 +85,6 @@ async def _prepare_draft_context(
         raise HTTPException(status_code=409, detail={"code": "model_pricing_stale"})
 
     manifest, deterministic_snapshot, _ = create_page_draft(project=project, plan=plan, facts=facts)
-    fact_values = facts.facts or {}
-    fact_rows = (
-        [{"fact_key": str(key), "value": value} for key, value in fact_values.items()]
-        if isinstance(fact_values, dict)
-        else []
-    )
     snapshot = {
         "project": {"name": project.name, "locale": project.locale, "niche": project.niche},
         "approved_page_plan": {
@@ -98,16 +93,17 @@ async def _prepare_draft_context(
             "objective": plan.objective,
             "intent": plan.intent,
             "kit_key": plan.kit_key,
-            "block_selection": plan.block_selection or {},
+            "block_selection": {"blocks": [block["type"] for block in manifest["blocks"]]},
         },
-        "confirmed_facts": fact_rows,
+        "confirmed_facts": public_fact_rows(facts.facts or {}),
         "selected_keywords": (plan.keyword_snapshot or {}).get("items", []),
         "validated_geo": (plan.geo_snapshot or {}).get("items", []),
-        "allowed_blocks": list((plan.block_selection or {}).get("blocks", [])),
-        "fact_revision_id": str(facts.id),
-        "facts_hash": facts.facts_hash,
-        "deterministic_input": deterministic_snapshot,
+        "allowed_blocks": [block["type"] for block in manifest["blocks"]],
     }
+    try:
+        snapshot = safe_provider_context(snapshot)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"code": "unsafe_ai_context"}) from exc
     if len(json.dumps(snapshot, ensure_ascii=False)) > 64_000:
         raise HTTPException(status_code=413, detail="Project context exceeds the AI request limit")
     prompt = load_prompt("content/page-draft-copy.md")
@@ -136,6 +132,9 @@ async def _prepare_draft_context(
             "prompt_id": prompt.prompt_id,
             "prompt_version": prompt.version,
             "prompt_hash": prompt.content_hash,
+            "fact_revision_id": str(facts.id),
+            "facts_hash": facts.facts_hash,
+            "plan_version": plan.version,
         }
     )
     return {

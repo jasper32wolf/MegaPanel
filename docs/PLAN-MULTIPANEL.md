@@ -6,7 +6,7 @@
 
 Site Panel — кандидат self-hosted VPS-релиза для одного оператора. В дополнение к базовому проектному workflow есть AI-срез: encrypted VPS-wide provider connections (GLM/Zhipu + OpenAI-compatible gateways), pricing quote до запроса, versioned Markdown prompts/evals, architecture proposal с approval→draft PagePlan и quote-gated PageDraft copy/SEO metadata. Curated block selection materializes deterministically in drafts; полные SEO briefs, slot/block generation, pricing discovery, daily quota enforcement и DB/provider/browser runtime proof остаются незавершёнными.
 
-Полный API suite: **198 passed**; panel build проходит. Docker/VPS, PostgreSQL/RLS, Caddy/TLS, worker runtime, authenticated browser flow и restore drill ещё не доказаны end-to-end. До их выполнения продукт нельзя объявлять production-ready.
+Полный API suite: **207 passed**; panel build проходит. Docker/VPS, PostgreSQL/RLS, Caddy/TLS, worker runtime, authenticated browser flow и restore drill ещё не доказаны end-to-end. До их выполнения продукт нельзя объявлять production-ready.
 
 ## Какой документ использовать
 
