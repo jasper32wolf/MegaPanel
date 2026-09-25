@@ -11,6 +11,16 @@ FactState = Literal["draft", "confirmed"]
 PagePlanState = Literal["draft", "review", "approved", "rejected"]
 PageDraftState = Literal["queued", "generating", "draft", "review", "applied", "rejected", "failed"]
 QaVerdict = Literal["pass", "warn", "block"]
+_PAGE_PATH = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*")
+
+
+def normalize_page_plan_slug(value: str) -> str:
+    path = value.strip().strip("/").lower()
+    if not path:
+        return "/"
+    if not _PAGE_PATH.fullmatch(path):
+        raise ValueError("Page path must use lowercase Latin letters, digits, hyphens and slashes")
+    return f"/{path}"
 
 
 class ProjectCreate(BaseModel):
@@ -92,14 +102,7 @@ class PagePlanCreate(BaseModel):
     @field_validator("slug")
     @classmethod
     def normalize_slug(cls, value: str) -> str:
-        path = value.strip().strip("/").lower()
-        if not path:
-            return "/"
-        if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*", path):
-            raise ValueError(
-                "Page path must use lowercase Latin letters, digits, hyphens and slashes"
-            )
-        return f"/{path}"
+        return normalize_page_plan_slug(value)
 
 
 class PagePlanUpdate(BaseModel):

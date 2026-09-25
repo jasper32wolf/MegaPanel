@@ -12,7 +12,7 @@
 - append-only LeadOutcome, lead analysis summary и отдельный outcome history в inbox;
 - project-first panel workspace `/projects` и `/projects/:projectId` с loading/error/status пояснениями.
 
-Оставшиеся части этого roadmap — backfill существующих сайтов, полноценный PostgreSQL/RLS migration proof, worker orchestration, Playwright/axe E2E, CI release job и production runtime proof.
+Оставшиеся части этого roadmap — выполнить safe CLI backfill существующих сайтов на backed-up PostgreSQL, полноценный PostgreSQL/RLS migration proof, worker orchestration, Playwright/axe E2E, CI release job и production runtime proof.
 
 ## Как читать статусы
 
@@ -54,7 +54,7 @@
 
 ### 1. Карточка проекта и факты бизнеса
 
-**Базовый контур реализован.** Есть Project, immutable fact revisions, подтверждение оператором и связь с PagePlan. Дальше требуется backfill legacy sites и PostgreSQL/RLS runtime proof.
+**Базовый контур реализован.** Есть Project, immutable fact revisions, подтверждение оператором и связь с PagePlan. Для legacy sites добавлен idempotent dry-run-first CLI backfill; до фактического запуска на backed-up PostgreSQL остаётся PostgreSQL/RLS runtime proof.
 
 - **Вход:** данные, внесённые оператором.
 - **Решение:** оператор подтверждает, какие факты допустимо использовать.
@@ -72,7 +72,7 @@
 
 ### 3. Согласованный план страниц
 
-**Базовый контур реализован.** PagePlan state machine, frozen inputs и manual approve/reject существуют. Нужны legacy backfill, worker orchestration и runtime/browser proof.
+**Базовый контур реализован.** PagePlan state machine, frozen inputs и manual approve/reject существуют. Нужны фактический запуск legacy backfill, worker orchestration и runtime/browser proof.
 
 Каждая страница должна хранить цель, slug, связанные keyword clusters, географию, выбранный kit/blocks, источники фактов, риски и решение оператора (`черновик → на проверке → одобрено → отклонено`). Только одобренная страница может переходить к генерации или сборке.
 

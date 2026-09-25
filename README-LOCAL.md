@@ -260,6 +260,24 @@ Set-Location -LiteralPath "e:\РАБОТА\ПАНЕЛЬ ДЛЯ ГЕНЕРАЦИ�
 ./scripts/stop.sh --deps
 ```
 
+### Backfill legacy-сайтов в Projects
+
+Если сайты были созданы до появления Project workflow, сначала выполните только просмотр:
+
+```powershell
+python scripts\backfill_site_projects.py
+# или ограничить просмотр конкретным tenant
+python scripts\backfill_site_projects.py --tenant-id <tenant-uuid>
+```
+
+После проверки строк `WOULD CREATE` и `SKIP` повторите тот же scope только с явным `--apply`:
+
+```powershell
+python scripts\backfill_site_projects.py --apply
+```
+
+Скрипт создаёт только draft Project с именем из домена и техническим slug `site-<site UUID hex>`, затем устанавливает взаимные `Site`/`Project` ссылки. Он не переписывает manifest, не создаёт facts/pages/drafts, не выполняет build/publish, не вызывает Caddy или внешние сервисы и не меняет release state legacy-сайта. Частичные links, конфликты и slug collisions не исправляются автоматически: они выводятся как `SKIP` для ручной проверки. Повторный запуск после успешного применения безопасен и показывает `already_linked` вместо нового создания.
+
 ### Где лежат логи
 
 | Файл | Что это |

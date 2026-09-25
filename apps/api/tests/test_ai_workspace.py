@@ -48,6 +48,9 @@ def test_architecture_output_validates_catalog_ids() -> None:
         ("kit_key", "missing", "unknown kit"),
         ("block_ids", ["missing"], "unknown block"),
         ("slug", "/../admin", "invalid slug"),
+        ("slug", "/Repair", "invalid slug"),
+        ("slug", "/ремонт", "invalid slug"),
+        ("slug", "/repair//urgent", "invalid slug"),
     ],
 )
 def test_architecture_output_rejects_untrusted_references(field, value, expected) -> None:

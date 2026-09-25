@@ -21,6 +21,7 @@ from app.schemas.ai import (
     ArchitectureQuoteOut,
     PageProposal,
 )
+from app.schemas.workflow import normalize_page_plan_slug
 from app.services.ai_data_policy import public_fact_rows, safe_provider_context
 from app.services.ai_secrets import decrypt_provider_key
 from app.services.audit import append_audit
@@ -179,15 +180,11 @@ def _validate_proposal(
             raise ValueError("Architecture output referenced an unknown kit")
         if any(block_id not in catalogs[page.kit_key] for block_id in page.block_ids):
             raise ValueError("Architecture output referenced an unknown block")
-        if (
-            not page.slug.startswith("/")
-            or ".." in page.slug.split("/")
-            or "\\" in page.slug
-            or "?" in page.slug
-            or "#" in page.slug
-            or "//" in page.slug
-            or any(ord(char) < 32 for char in page.slug)
-        ):
+        try:
+            normalized_slug = normalize_page_plan_slug(page.slug)
+        except ValueError as exc:
+            raise ValueError("Architecture output contains an invalid slug") from exc
+        if normalized_slug != page.slug:
             raise ValueError("Architecture output contains an invalid slug")
         result.append(page.model_dump(mode="json"))
     return result

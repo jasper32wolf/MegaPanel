@@ -115,7 +115,7 @@ The legacy standalone `apps/worker` package was removed: the only supported work
 
 Последний локальный прогон в этом working tree:
 
-- `pytest apps/api/tests -q` — **245 passed**;
+- `pytest apps/api/tests -q` — **258 passed**;
 - `ruff check packages apps/api` — проходит;
 - panel production build — проходит;
 - release-manager Linux state-transition shell test на Windows штатно пропускается;
