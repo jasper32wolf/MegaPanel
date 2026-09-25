@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, useAuth } from "../lib/auth";
-import { DataTable, EmptyState, PageHeader, StatusPill, Surface } from "../components/ui";
+import { ConfirmDialog, DataTable, EmptyState, PageHeader, StatusPill, Surface } from "../components/ui";
 
 type Domain = {
   id: string;
@@ -38,6 +38,7 @@ export function DomainsPage() {
   const [health, setHealth] = useState<Health | null>(null);
   const [removingDomain, setRemovingDomain] = useState<Domain | null>(null);
   const [domainConfirmation, setDomainConfirmation] = useState("");
+  const [redirectToRemove, setRedirectToRemove] = useState<Redirect | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -127,7 +128,6 @@ export function DomainsPage() {
   }
 
   async function removeRedirect(redirect: Redirect) {
-    if (!window.confirm(`Удалить редирект ${redirect.from_path} для ${redirect.site_domain}?`)) return;
     setBusy(`redirect-delete:${redirect.id}`);
     setError(null);
     try {
@@ -174,10 +174,23 @@ export function DomainsPage() {
       <Surface title="Redirect rules">
         {sites.length === 0 ? <EmptyState title="Нет сайта для редиректа" /> : <form onSubmit={createRedirect} className="stack"><label className="field">Сайт<select value={redirectSiteId} onChange={(event) => setRedirectSiteId(event.target.value)}>{sites.map((site) => <option key={site.id} value={site.id}>{site.domain}</option>)}</select></label><label className="field">Исходный путь<input value={redirectPath} onChange={(event) => setRedirectPath(event.target.value)} placeholder="/old-page" required /></label><label className="field">Целевой HTTPS URL<input value={redirectTarget} onChange={(event) => setRedirectTarget(event.target.value)} placeholder={`https://${sites.find((site) => site.id === redirectSiteId)?.domain || "example.ru"}/new-page`} type="url" required /></label><label className="field">Код<select value={redirectCode} onChange={(event) => setRedirectCode(event.target.value)}><option value="301">301 — постоянно</option><option value="302">302 — временно</option><option value="303">303 — see other</option><option value="307">307 — временно, метод сохранён</option><option value="308">308 — постоянно, метод сохранён</option></select></label><p className="muted" style={{ margin: 0 }}>Целевой URL должен использовать HTTPS и домен выбранного сайта.</p><button className="btn" type="submit" disabled={busy !== null || !redirectSiteId}>{busy === "redirect-create" ? "Создание…" : "Создать редирект"}</button></form>}
         <DataTable headers={["Сайт", "Откуда", "Куда", "Код", ""]}>
-          {redirects.map((redirect) => <tr key={redirect.id}><td className="muted">{redirect.site_domain}</td><td><strong>{redirect.from_path}</strong></td><td className="muted">{redirect.to_url}</td><td><StatusPill tone="accent">{redirect.code}</StatusPill></td><td><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => removeRedirect(redirect)}>{busy === `redirect-delete:${redirect.id}` ? "Удаление…" : "Удалить"}</button></td></tr>)}
+          {redirects.map((redirect) => <tr key={redirect.id}><td className="muted">{redirect.site_domain}</td><td><strong>{redirect.from_path}</strong></td><td className="muted">{redirect.to_url}</td><td><StatusPill tone="accent">{redirect.code}</StatusPill></td><td><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => setRedirectToRemove(redirect)}>{busy === `redirect-delete:${redirect.id}` ? "Удаление…" : "Удалить"}</button></td></tr>)}
           {redirects.length === 0 && <tr><td colSpan={5}><EmptyState title="Правил пока нет" hint="Используйте 301 для постоянного переноса страниц." /></td></tr>}
         </DataTable>
       </Surface>
+      <ConfirmDialog
+        open={redirectToRemove !== null}
+        title="Удалить redirect rule?"
+        description={`Будет удален редирект ${redirectToRemove?.from_path || ""} для ${redirectToRemove?.site_domain || ""}.`}
+        confirmLabel="Удалить"
+        dangerous
+        onCancel={() => setRedirectToRemove(null)}
+        onConfirm={() => {
+          const redirect = redirectToRemove;
+          setRedirectToRemove(null);
+          if (redirect) void removeRedirect(redirect);
+        }}
+      />
     </div>
   );
 }

@@ -107,7 +107,7 @@
 
 ### 7. Ежедневный опыт оператора
 
-**Частично реализован.** Project workspace и базовые loading/error/status states есть; подтверждения критичных переходов в Project workspace используют accessible native dialog. Остаются полный keyboard/browser E2E, axe checks и перевод остальных legacy confirm-диалогов.
+**Частично реализован.** Project workspace и остальные operator actions используют accessible native dialogs вместо browser `confirm`/`prompt`; typed confirmation для удаления домена сохранено. Остаются полный keyboard/browser E2E и axe checks.
 
 Приоритеты: очереди задач, статусы и причины блокировки, loading/empty/error/retry состояния, безопасные подтверждения, controlled reveal PII, keyboard navigation и browser-проверки основных действий. Раздел AI включает provider setup, архитектурный proposal→approval→draft PagePlan, отдельные PageDraft/SEO brief предложения и ограниченный server-owned `unique_core` block-slot proposal; произвольная генерация блоков, контента или публикация до отдельной реализации недоступны.
 

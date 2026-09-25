@@ -6,7 +6,7 @@
 
 Site Panel — кандидат self-hosted VPS-релиза для одного оператора. AI-срез уже включает VPS-wide encrypted provider connections, versioned Markdown prompts/evals, architecture proposal→approved draft PagePlan, quote-gated PageDraft copy и SEO brief→noindex PageDraft, curated block selection, server-owned block-slot contracts и approval-gated `unique_core` block-slot proposal→noindex PageDraft import. Добавлены AI kill switch и дневная/скользящая 30-дневная preflight-проверка бюджета; это не атомарная гарантия расходов при одновременных вызовах — жёсткий spending cap должен быть у провайдера. Model/pricing discovery, arbitrary/full slot generation и DB/provider/browser runtime proof не завершены.
 
-Полный API suite: **240 passed**; panel build проходит. Docker/VPS, PostgreSQL/RLS, Caddy/TLS, worker runtime, authenticated browser flow и restore drill ещё не доказаны end-to-end. До их выполнения продукт нельзя объявлять production-ready.
+Полный API suite: **245 passed**; panel build проходит. Docker/VPS, PostgreSQL/RLS, Caddy/TLS, worker runtime, authenticated browser flow и restore drill ещё не доказаны end-to-end. До их выполнения продукт нельзя объявлять production-ready.
 
 ## Какой документ использовать
 
@@ -21,7 +21,7 @@ Site Panel — кандидат self-hosted VPS-релиза для одного
 ## Предлагаемая последовательность развития
 
 1. Доказать текущий release-контур на staging VPS: миграции, single operator, Caddy/TLS, browser, форма лида, webhook retries/DLQ и restore.
-2. Завершить незакрытые части уже реализованного operator workflow: idempotent backfill legacy sites, production worker orchestration, Russian slug UX и остальные legacy confirm-диалоги. Критичные переходы Project workspace уже используют accessible dialog, а legacy direct build/publish/rollback routes исключены из release API.
+2. Завершить незакрытые части уже реализованного operator workflow: idempotent backfill legacy sites, production worker orchestration и Russian slug UX. Все подтверждения UI используют accessible dialog или typed confirmation, а legacy direct build/publish/rollback routes исключены из release API.
 3. Довести AI vertical slice: provider/model catalog and pricing freshness, authenticated browser + PostgreSQL proof, extend PageDraft copy/metadata slice to separate SEO briefs, block selection/slots and deterministic QA.
 4. Выполнить добавленный CI service smoke на hosted runner и затем автоматизировать доказанные Docker/browser проверки, наблюдаемость и восстановление.
 5. Только затем рассматривать внешние источники, аналитику и масштабирование.

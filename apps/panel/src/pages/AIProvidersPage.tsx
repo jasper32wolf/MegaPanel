@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, useAuth } from "../lib/auth";
-import { PageHeader, StatusPill, Surface } from "../components/ui";
+import { ConfirmDialog, PageHeader, StatusPill, Surface } from "../components/ui";
 
 type Provider = {
   id: string;
@@ -29,6 +29,7 @@ export function AIProvidersPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [confirmation, setConfirmation] = useState<{ provider: Provider; action: "activate" | "delete" } | null>(null);
 
   async function load() {
     setProviders(await api<Provider[]>("/api/v1/ai/providers", {}, token));
@@ -68,8 +69,6 @@ export function AIProvidersPage() {
   }
 
   async function changeProvider(provider: Provider, action: "activate" | "disable" | "test" | "delete") {
-    if (action === "delete" && !window.confirm(`Удалить подключение ${provider.label}?`)) return;
-    if (action === "activate" && !window.confirm("Подключение станет доступно для выбранных оператором запросов. Продолжить?")) return;
     setBusy(`${action}:${provider.id}`);
     setError(null);
     setMessage(null);
@@ -136,8 +135,21 @@ export function AIProvidersPage() {
         </form>
       </Surface>
       <Surface title="Подключения">
-        {providers.length === 0 ? <p className="muted">Подключений пока нет.</p> : <div className="table-wrap"><table className="table"><thead><tr><th>Провайдер</th><th>Endpoint</th><th>Ключ</th><th>Состояние</th><th>Действия</th></tr></thead><tbody>{providers.map((provider) => <tr key={provider.id}><td><strong>{provider.label}</strong><p className="muted">{provider.provider_id} · {provider.kind}</p></td><td className="muted">{provider.base_url || "native"}</td><td><code>••••{provider.credential_last4 || "—"}</code></td><td><StatusPill tone={provider.enabled ? "ok" : "warn"}>{provider.enabled ? "активен" : "выключен"}</StatusPill></td><td><div className="row"><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => changeProvider(provider, "test")}>Проверить конфигурацию</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => changeProvider(provider, provider.enabled ? "disable" : "activate")}>{provider.enabled ? "Отключить" : "Активировать"}</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => setRotationId(rotationId === provider.id ? null : provider.id)}>Заменить ключ</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => changeProvider(provider, "delete")}>Удалить</button></div>{rotationId === provider.id && <form className="stack" onSubmit={(event) => { event.preventDefault(); void replaceKey(provider); }}><label className="field">Новый API key<input type="password" value={replacementKey} onChange={(event) => setReplacementKey(event.target.value)} autoComplete="new-password" required /></label><div className="row"><button className="btn" type="submit" disabled={busy !== null || !replacementKey}>{busy === `rotate:${provider.id}` ? "Замена…" : "Сохранить новый ключ"}</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => { setRotationId(null); setReplacementKey(""); }}>Отмена</button></div></form>}</td></tr>)}</tbody></table></div>}
+        {providers.length === 0 ? <p className="muted">Подключений пока нет.</p> : <div className="table-wrap"><table className="table"><thead><tr><th>Провайдер</th><th>Endpoint</th><th>Ключ</th><th>Состояние</th><th>Действия</th></tr></thead><tbody>{providers.map((provider) => <tr key={provider.id}><td><strong>{provider.label}</strong><p className="muted">{provider.provider_id} · {provider.kind}</p></td><td className="muted">{provider.base_url || "native"}</td><td><code>••••{provider.credential_last4 || "—"}</code></td><td><StatusPill tone={provider.enabled ? "ok" : "warn"}>{provider.enabled ? "активен" : "выключен"}</StatusPill></td><td><div className="row"><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => changeProvider(provider, "test")}>Проверить конфигурацию</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => provider.enabled ? changeProvider(provider, "disable") : setConfirmation({ provider, action: "activate" })}>{provider.enabled ? "Отключить" : "Активировать"}</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => setRotationId(rotationId === provider.id ? null : provider.id)}>Заменить ключ</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => setConfirmation({ provider, action: "delete" })}>Удалить</button></div>{rotationId === provider.id && <form className="stack" onSubmit={(event) => { event.preventDefault(); void replaceKey(provider); }}><label className="field">Новый API key<input type="password" value={replacementKey} onChange={(event) => setReplacementKey(event.target.value)} autoComplete="new-password" required /></label><div className="row"><button className="btn" type="submit" disabled={busy !== null || !replacementKey}>{busy === `rotate:${provider.id}` ? "Замена…" : "Сохранить новый ключ"}</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => { setRotationId(null); setReplacementKey(""); }}>Отмена</button></div></form>}</td></tr>)}</tbody></table></div>}
       </Surface>
+      <ConfirmDialog
+        open={confirmation !== null}
+        title={confirmation?.action === "delete" ? "Удалить AI-подключение?" : "Активировать AI-подключение?"}
+        description={confirmation?.action === "delete" ? `Подключение ${confirmation?.provider.label || ""} и его зашифрованный ключ будут удалены.` : "Подключение станет доступно для явно подтверждённых оператором запросов."}
+        confirmLabel={confirmation?.action === "delete" ? "Удалить" : "Активировать"}
+        dangerous={confirmation?.action === "delete"}
+        onCancel={() => setConfirmation(null)}
+        onConfirm={() => {
+          const current = confirmation;
+          setConfirmation(null);
+          if (current) void changeProvider(current.provider, current.action);
+        }}
+      />
     </div>
   );
 }

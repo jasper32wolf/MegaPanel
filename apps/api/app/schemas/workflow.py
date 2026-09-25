@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Literal
 from uuid import UUID
 
@@ -91,8 +92,14 @@ class PagePlanCreate(BaseModel):
     @field_validator("slug")
     @classmethod
     def normalize_slug(cls, value: str) -> str:
-        normalized = "/" + value.strip().strip("/")
-        return "/" if normalized == "/" else normalized
+        path = value.strip().strip("/").lower()
+        if not path:
+            return "/"
+        if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*", path):
+            raise ValueError(
+                "Page path must use lowercase Latin letters, digits, hyphens and slashes"
+            )
+        return f"/{path}"
 
 
 class PagePlanUpdate(BaseModel):

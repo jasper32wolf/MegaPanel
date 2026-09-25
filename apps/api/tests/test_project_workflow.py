@@ -32,6 +32,23 @@ def test_page_plan_normalizes_root_slug():
     )
 
 
+def test_page_plan_normalizes_valid_path_slug():
+    assert (
+        PagePlanCreate(
+            slug=" Repair-Washing-Machines/urgent-service ",
+            objective="Ремонт техники",
+            kit_key="service-local-v1",
+        ).slug
+        == "/repair-washing-machines/urgent-service"
+    )
+
+
+@pytest.mark.parametrize("slug", ["/../admin", "/repair//urgent", "/repair?x=1", "/ремонт"])
+def test_page_plan_rejects_invalid_path_slug(slug: str):
+    with pytest.raises(ValidationError, match="Page path"):
+        PagePlanCreate(slug=slug, objective="Ремонт техники", kit_key="service-local-v1")
+
+
 def test_project_selection_requires_keywords_and_primary_geo():
     project = SimpleNamespace(id=uuid4())
     _, _, blockers = __import__("asyncio").run(

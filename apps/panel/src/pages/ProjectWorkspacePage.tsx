@@ -516,7 +516,7 @@ export function ProjectWorkspacePage() {
       <Surface title="4. План страниц">
         <p className="muted">Coverage: {coverage?.covered || 0} из {coverage?.selected || 0} выбранных ключей связаны с планами.</p>
         <form className="stack" onSubmit={createPlan}>
-          <label className="field">Путь страницы<input value={planSlug} onChange={(event) => setPlanSlug(event.target.value)} placeholder="/" required /></label>
+          <label className="field">Путь страницы<input value={planSlug} onChange={(event) => setPlanSlug(event.target.value)} placeholder="/repair-washing-machines" required /><span className="muted">Латиница в нижнем регистре, цифры, дефисы и вложенные пути через `/`.</span></label>
           <label className="field">Цель страницы<input value={planObjective} onChange={(event) => setPlanObjective(event.target.value)} placeholder="Какую потребность закрывает страница" required /></label>
           <label className="field">Намерение<input value={planIntent} onChange={(event) => setPlanIntent(event.target.value)} placeholder="Например: заказать услугу" /></label>
           <label className="field">Комплект<select value={kitKey} onChange={(event) => setKitKey(event.target.value)}><option value="service-local-v1">Локальные услуги</option><option value="home-repair-v1">Домашний ремонт</option></select></label>

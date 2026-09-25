@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { api, useAuth } from "../lib/auth";
-import { DataTable, EmptyState, PageHeader, StatusPill, Surface } from "../components/ui";
+import { ConfirmDialog, DataTable, EmptyState, PageHeader, StatusPill, Surface } from "../components/ui";
 
 type Site = { id: string; domain: string; publish_state: string };
 type BulkResult = { operation_id: string; updated: number };
@@ -15,6 +15,7 @@ export function BulkPage() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [confirmation, setConfirmation] = useState<"apply" | "undo" | null>(null);
 
   useEffect(() => {
     api<Site[]>("/api/v1/sites", {}, token)
@@ -47,11 +48,10 @@ export function BulkPage() {
   async function applyContacts(event: FormEvent) {
     event.preventDefault();
     if (!selectedSites.length || !Object.keys(contacts).length) return;
-    const summary = [phone.trim() && `телефон: ${phone.trim()}`, email.trim() && `email: ${email.trim()}`]
-      .filter(Boolean)
-      .join(", ");
-    if (!window.confirm(`Изменить контакты на ${selectedSites.length} сайт(ах): ${summary}?`)) return;
+    setConfirmation("apply");
+  }
 
+  async function performApplyContacts() {
     setBusy(true);
     setError(null);
     setMessage(null);
@@ -71,7 +71,7 @@ export function BulkPage() {
   }
 
   async function undo() {
-    if (!result || !window.confirm("Отменить последнюю массовую замену контактов?")) return;
+    if (!result) return;
     setBusy(true);
     setError(null);
     try {
@@ -116,10 +116,24 @@ export function BulkPage() {
           <label className="field">Email <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="hello@example.ru" /></label>
           <div className="row">
             <button className="btn" type="submit" disabled={busy || !selectedSites.length || !Object.keys(contacts).length}>{busy ? "Применение…" : "Подтвердить изменение"}</button>
-            {result && <button className="btn btn-ghost" type="button" disabled={busy} onClick={undo}>Отменить последнее изменение</button>}
+            {result && <button className="btn btn-ghost" type="button" disabled={busy} onClick={() => setConfirmation("undo")}>Отменить последнее изменение</button>}
           </div>
         </form>
       </Surface>
+      <ConfirmDialog
+        open={confirmation !== null}
+        title={confirmation === "undo" ? "Отменить массовое изменение?" : "Изменить контакты выбранных сайтов?"}
+        description={confirmation === "undo" ? "Будет отменена последняя массовая замена контактов." : `Изменение затронет ${selectedSites.length} сайт(ов): ${selectedSites.map((site) => site.domain).join(", ")}.`}
+        confirmLabel={confirmation === "undo" ? "Отменить изменение" : "Изменить контакты"}
+        dangerous={confirmation === "undo"}
+        onCancel={() => setConfirmation(null)}
+        onConfirm={() => {
+          const action = confirmation;
+          setConfirmation(null);
+          if (action === "undo") void undo();
+          if (action === "apply") void performApplyContacts();
+        }}
+      />
     </div>
   );
 }
