@@ -2,31 +2,25 @@ from __future__ import annotations
 
 import ipaddress
 import secrets
-import time
-from pathlib import Path
 from urllib.parse import urlparse
 from uuid import UUID, uuid4
 
 from app.api.deps import AuthContext, require_roles
-from app.core.config import get_settings
 from app.db.session import get_db
 from app.models import Site
-from app.models.publish import SiteBuild, SitePage
+from app.models.publish import SitePage
 from app.schemas.common import SiteCreate, SiteOut
 from app.services.audit import append_audit
-from app.services.caddy_client import CaddyClient
 from app.services.indexnow import new_indexnow_key
 from app.services.leads import get_encryptor
 from app.services.morph import city_placeholders, inflect_cases
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from site_panel_shared.manifests import PageManifest, SiteManifest
-from site_panel_ssg import SiteBuilder
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
-settings = get_settings()
 
 
 class WebhookSettingsIn(BaseModel):
@@ -162,6 +156,34 @@ async def list_sites(
     return list(result.scalars().all())
 
 
+@router.get("/{site_id}/pages")
+async def list_pages(
+    site_id: UUID,
+    auth: AuthContext = Depends(
+        require_roles("superadmin", "tenant_admin", "manager", "editor", "viewer")
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    site = (await db.execute(select(Site).where(Site.id == site_id))).scalar_one_or_none()
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+    _ensure_tenant_access(auth, site.tenant_id)
+    pages = list(
+        (await db.execute(select(SitePage).where(SitePage.site_id == site_id))).scalars().all()
+    )
+    return [
+        {
+            "id": str(page.id),
+            "slug": page.slug,
+            "publish_state": page.publish_state,
+            "index_state": page.index_state,
+            "thin": page.thin,
+            "content_chars": page.content_chars,
+        }
+        for page in pages
+    ]
+
+
 @router.get("/{site_id}/webhook")
 async def get_webhook_settings(
     site_id: UUID,
@@ -215,150 +237,3 @@ async def update_webhook_settings(
     )
     await db.commit()
     return {"target_url": target_url, "secret_configured": True, "configured": True}
-
-
-@router.post("/{site_id}/build")
-async def build_site(
-    site_id: UUID,
-    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor")),
-    db: AsyncSession = Depends(get_db),
-) -> dict:
-    result = await db.execute(select(Site).where(Site.id == site_id))
-    site = result.scalar_one_or_none()
-    if not site:
-        raise HTTPException(status_code=404, detail="Site not found")
-    _ensure_tenant_access(auth, site.tenant_id)
-
-    if not site.indexnow_key:
-        site.indexnow_key = new_indexnow_key()
-    if not site.lead_token:
-        site.lead_token = secrets.token_urlsafe(32)
-
-    manifest = SiteManifest.model_validate(site.manifest)
-    pages_rows = (
-        (await db.execute(select(SitePage).where(SitePage.site_id == site.id))).scalars().all()
-    )
-    index_states = {p.slug: p.index_state for p in pages_rows}
-
-    builder = SiteBuilder(Path(settings.sites_root))
-    contacts = site.manifest.get("contacts") or {}
-    context = {
-        **(manifest.context or {}),
-        "phone": contacts.get("phone", ""),
-        "lead_token": site.lead_token,
-        "lead_api_url": "/api/v1/leads/public",
-        **render_contacts(contacts),
-    }
-    t0 = time.perf_counter()
-    build_result = builder.build(manifest, context, index_states=index_states)
-    duration_ms = int((time.perf_counter() - t0) * 1000)
-    build_hash = build_result["build_hash"]
-
-    # Write IndexNow key file
-    key_file = builder.site_dir(str(site.id)) / f"{site.indexnow_key}.txt"
-    key_file.write_text(site.indexnow_key, encoding="utf-8")
-
-    # Sync site_pages from build meta
-    existing_by_slug = {p.slug: p for p in pages_rows}
-    for meta in build_result["pages"]:
-        slug = meta["slug"]
-        row = existing_by_slug.get(slug)
-        if not row:
-            row = SitePage(
-                site_id=site.id,
-                tenant_id=site.tenant_id,
-                slug=slug,
-                publish_state=site.publish_state,
-                index_state=meta["index_state"],
-            )
-            db.add(row)
-        row.content_chars = meta["content_chars"]
-        row.thin = meta["thin"]
-        if meta["thin"]:
-            row.index_state = "noindex"
-        elif slug not in index_states:
-            row.index_state = meta["index_state"]
-
-    site.previous_build_hash = site.build_hash
-    site.build_hash = build_hash
-    site.version += 1
-
-    build_rec = SiteBuild(
-        site_id=site.id,
-        tenant_id=site.tenant_id,
-        status="success",
-        build_hash=build_hash,
-        previous_build_hash=site.previous_build_hash,
-        pages_built=len(build_result["pages"]),
-        duration_ms=duration_ms,
-        log=f"indexed={build_result['indexed_count']}",
-    )
-    db.add(build_rec)
-
-    # Best-effort Caddy configure
-    caddy = CaddyClient()
-    caddy_result = await caddy.upsert_site_vhost(
-        site.domain,
-        str(Path(settings.caddy_sites_root) / str(site.id) / "current"),
-        noindex_paths=[m["path"] for m in build_result["pages"] if m["index_state"] != "indexed"],
-    )
-    site.caddy_configured = bool(caddy_result.get("ok"))
-
-    await append_audit(
-        db,
-        action="site.build",
-        payload={"build_hash": build_hash, "domain": site.domain, "caddy": caddy_result},
-        tenant_id=site.tenant_id,
-        actor_id=auth.user.id,
-    )
-    await db.commit()
-    return {
-        "site_id": str(site.id),
-        "build_hash": build_hash,
-        "previous_build_hash": site.previous_build_hash,
-        "version": site.version,
-        "pages_built": len(build_result["pages"]),
-        "indexed_count": build_result["indexed_count"],
-        "duration_ms": duration_ms,
-        "caddy": caddy_result,
-    }
-
-
-@router.post("/{site_id}/rollback")
-async def rollback_site(
-    site_id: UUID,
-    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager")),
-    db: AsyncSession = Depends(get_db),
-) -> dict:
-    result = await db.execute(select(Site).where(Site.id == site_id))
-    site = result.scalar_one_or_none()
-    if not site:
-        raise HTTPException(status_code=404, detail="Site not found")
-    _ensure_tenant_access(auth, site.tenant_id)
-    if not site.previous_build_hash:
-        raise HTTPException(status_code=400, detail="No previous build")
-    builder = SiteBuilder(Path(settings.sites_root))
-    ok = builder.rollback(str(site.id), site.previous_build_hash)
-    if not ok:
-        # Soft swap even if hash mismatch file missing
-        root = Path(settings.sites_root) / str(site.id)
-        prev, current = root / "previous", root / "current"
-        if not prev.exists():
-            raise HTTPException(status_code=400, detail="Previous build directory missing")
-        backup = root / "rollback_tmp"
-        if current.exists():
-            current.rename(backup)
-        prev.rename(current)
-        if backup.exists():
-            backup.rename(prev)
-    old = site.build_hash
-    site.build_hash, site.previous_build_hash = site.previous_build_hash, old
-    await append_audit(
-        db,
-        action="site.rollback",
-        payload={"build_hash": site.build_hash},
-        tenant_id=site.tenant_id,
-        actor_id=auth.user.id,
-    )
-    await db.commit()
-    return {"build_hash": site.build_hash, "previous_build_hash": site.previous_build_hash}

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, useAuth } from "../lib/auth";
-import { DataTable, EmptyState, PageHeader, StatusPill, Surface } from "../components/ui";
+import { ConfirmDialog, DataTable, EmptyState, PageHeader, StatusPill, Surface } from "../components/ui";
 
 type Project = { id: string; name: string; domain: string | null; niche: string | null; site_id: string | null; current_fact_revision_id: string | null; domain_check_meta: { dns_status?: string; ssl_status?: string; checked_at?: string } };
 type FactRevision = { id: string; version: number; state: string; facts: Record<string, unknown>; source_notes: string | null };
@@ -18,6 +18,15 @@ type AIDraftQuote = { provider_id: string; model_id: string; estimated_cost_usd:
 type AIRunBrief = { id: string; action: string; status: string; output: { brief?: Record<string, unknown>; page_draft_id?: string; slot_copy?: BlockSlotCopy }; error_code: string | null; prompt_hash: string; cost_usd: number | null };
 type BlockSlotSchema = { block_id: string; slots: Record<string, { type: string; max_length: number }> };
 type BlockSlotCopy = { block_id: string; slots: Record<string, string | null>; fact_keys: string[]; warnings: string[] };
+type Confirmation = {
+  title: string;
+  description: string;
+  confirmLabel: string;
+  inputLabel?: string;
+  inputMinLength?: number;
+  dangerous?: boolean;
+  onConfirm: (value: string) => void;
+};
 
 function tone(state: string) {
   if (["approved", "applied", "pass", "confirmed"].includes(state)) return "ok" as const;
@@ -75,6 +84,7 @@ export function ProjectWorkspacePage() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
 
   const latestFact = facts[0] || null;
   const selectedKeywordSet = useMemo(() => new Set(selectedKeywordIds), [selectedKeywordIds]);
@@ -179,14 +189,32 @@ export function ProjectWorkspacePage() {
     await run("plan", () => api(`/api/v1/projects/${projectId}/page-plans`, { method: "POST", body: JSON.stringify({ slug: planSlug, objective: planObjective, intent: planIntent || null, kit_key: kitKey }) }, token), "Черновик плана страницы создан.");
   }
 
-  async function decision(plan: Plan, action: "submit-review" | "approve" | "reject") {
-    let reason: string | undefined;
-    if (action === "reject") {
-      reason = window.prompt("Укажите причину отклонения плана:") || undefined;
-      if (!reason) return;
+  async function performPlanDecision(
+    plan: Plan,
+    action: "submit-review" | "approve" | "reject",
+    reason?: string,
+  ) {
+    await run(
+      `${action}:${plan.id}`,
+      () => api(`/api/v1/projects/${projectId}/page-plans/${plan.id}/${action}`, { method: "POST", body: JSON.stringify({ reason }) }, token),
+      action === "approve" ? "План одобрен." : action === "reject" ? "План отклонён." : "План отправлен на проверку.",
+    );
+  }
+
+  function decision(plan: Plan, action: "submit-review" | "approve" | "reject") {
+    if (action === "submit-review") {
+      void performPlanDecision(plan, action);
+      return;
     }
-    if (action === "approve" && !window.confirm(`Одобрить план страницы ${plan.slug}?`)) return;
-    await run(`${action}:${plan.id}`, () => api(`/api/v1/projects/${projectId}/page-plans/${plan.id}/${action}`, { method: "POST", body: JSON.stringify({ reason }) }, token), action === "approve" ? "План одобрен." : action === "reject" ? "План отклонён." : "План отправлен на проверку.");
+    setConfirmation({
+      title: action === "approve" ? "Одобрить план страницы?" : "Отклонить план страницы?",
+      description: action === "approve" ? `План ${plan.slug} станет доступен для создания черновика.` : `План ${plan.slug} не будет изменять опубликованный сайт.`,
+      confirmLabel: action === "approve" ? "Одобрить" : "Отклонить",
+      inputLabel: action === "reject" ? "Причина отклонения" : undefined,
+      inputMinLength: action === "reject" ? 1 : 0,
+      dangerous: action === "reject",
+      onConfirm: (reason) => void performPlanDecision(plan, action, reason || undefined),
+    });
   }
 
   async function generate(plan: Plan) {
@@ -398,16 +426,23 @@ export function ProjectWorkspacePage() {
     await run(`draft-review:${draft.id}`, () => api(`/api/v1/projects/${projectId}/page-drafts/${draft.id}/submit-review`, { method: "POST" }, token), "Черновик отправлен на ручную проверку.");
   }
 
-  async function apply(draft: Draft) {
+  function apply(draft: Draft) {
     const warning = draft.last_qa_verdict === "warn";
-    let body: Record<string, string> | undefined;
-    if (warning) {
-      const justification = window.prompt("Опишите причину применения черновика с предупреждениями:");
-      if (!justification || justification.trim().length < 10) return;
-      body = { reason: "operator_review", justification };
-    }
-    if (!window.confirm("Применить черновик к манифесту? Это не собирает и не публикует сайт.")) return;
-    await run(`apply:${draft.id}`, () => api(`/api/v1/projects/${projectId}/page-drafts/${draft.id}/apply`, { method: "POST", body: body ? JSON.stringify(body) : undefined }, token), "Черновик применён к манифесту. Сборка и публикация остаются отдельными действиями.");
+    setConfirmation({
+      title: "Применить черновик к манифесту?",
+      description: "Это не собирает и не публикует сайт. Сборка и публикация остаются отдельными действиями.",
+      confirmLabel: "Применить",
+      inputLabel: warning ? "Причина применения с предупреждениями" : undefined,
+      inputMinLength: warning ? 10 : 0,
+      onConfirm: (justification) => {
+        const body = warning ? { reason: "operator_review", justification } : undefined;
+        void run(
+          `apply:${draft.id}`,
+          () => api(`/api/v1/projects/${projectId}/page-drafts/${draft.id}/apply`, { method: "POST", body: body ? JSON.stringify(body) : undefined }, token),
+          "Черновик применён к манифесту. Сборка и публикация остаются отдельными действиями.",
+        );
+      },
+    });
   }
 
   async function materializeBuild() {
@@ -418,14 +453,34 @@ export function ProjectWorkspacePage() {
     await run("domain-check", () => api(`/api/v1/projects/${projectId}/domain/check`, { method: "POST" }, token), "DNS-проверка сохранена. TLS проверяется после активации Caddy-vhost.");
   }
 
-  async function publishBuild(build: Build) {
-    if (!build.build_hash || !window.confirm(`Опубликовать сборку ${build.build_hash.slice(0, 12)}?`)) return;
-    await run(`publish:${build.id}`, () => api(`/api/v1/projects/${projectId}/builds/${build.id}/publish`, { method: "POST", body: JSON.stringify({ confirmed: true }) }, token), "Сборка опубликована.");
+  function publishBuild(build: Build) {
+    if (!build.build_hash) return;
+    setConfirmation({
+      title: "Опубликовать candidate-сборку?",
+      description: `Сборка ${build.build_hash.slice(0, 12)} станет публичной для домена проекта.`,
+      confirmLabel: "Опубликовать",
+      dangerous: true,
+      onConfirm: () => void run(
+        `publish:${build.id}`,
+        () => api(`/api/v1/projects/${projectId}/builds/${build.id}/publish`, { method: "POST", body: JSON.stringify({ confirmed: true }) }, token),
+        "Сборка опубликована.",
+      ),
+    });
   }
 
-  async function rollbackBuild(build: Build) {
-    if (!build.build_hash || !window.confirm(`Откатить сайт на ${build.build_hash.slice(0, 12)}?`)) return;
-    await run(`rollback:${build.id}`, () => api(`/api/v1/projects/${projectId}/rollbacks`, { method: "POST", body: JSON.stringify({ build_hash: build.build_hash, confirmed: true }) }, token), "Откат выполнен.");
+  function rollbackBuild(build: Build) {
+    if (!build.build_hash) return;
+    setConfirmation({
+      title: "Откатить сайт на эту сборку?",
+      description: `Публичная версия будет заменена сборкой ${build.build_hash.slice(0, 12)}.`,
+      confirmLabel: "Откатить",
+      dangerous: true,
+      onConfirm: () => void run(
+        `rollback:${build.id}`,
+        () => api(`/api/v1/projects/${projectId}/rollbacks`, { method: "POST", body: JSON.stringify({ build_hash: build.build_hash, confirmed: true }) }, token),
+        "Откат выполнен.",
+      ),
+    });
   }
 
   if (!project) return <p className="muted" aria-live="polite">Загрузка проекта…</p>;
@@ -524,6 +579,21 @@ export function ProjectWorkspacePage() {
         {builds.length === 0 ? <EmptyState title="Сборок пока нет" hint="После применения черновика создайте candidate-сборку." /> : <DataTable headers={["Статус", "Hash", "Страниц", "Действия"]}>{builds.map((build) => <tr key={build.id}><td><StatusPill tone={tone(build.status)}>{build.status}</StatusPill></td><td className="muted">{build.build_hash?.slice(0, 16) || "—"}</td><td>{build.pages_built}</td><td className="row">{build.build_hash && project.site_id && <a className="btn btn-ghost" href={`/api/v1/projects/${project.id}/builds/${build.id}/preview/`} target="_blank" rel="noreferrer">Preview</a>}{build.status === "ready" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => publishBuild(build)}>Опубликовать</button>}{build.status === "published" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => rollbackBuild(build)}>Откатить на эту сборку</button>}</td></tr>)}</DataTable>}
       </Surface>
       <Surface title="Следующий шаг"><p className="muted">После применения черновик меняет только манифест проекта. Candidate-сборка не становится публичной до явной публикации.</p>{project.site_id && <Link className="btn btn-ghost" to="/sites">Открыть сайт и сборки</Link>}</Surface>
+      <ConfirmDialog
+        open={confirmation !== null}
+        title={confirmation?.title || "Подтверждение"}
+        description={confirmation?.description || ""}
+        confirmLabel={confirmation?.confirmLabel || "Подтвердить"}
+        inputLabel={confirmation?.inputLabel}
+        inputMinLength={confirmation?.inputMinLength}
+        dangerous={confirmation?.dangerous}
+        onCancel={() => setConfirmation(null)}
+        onConfirm={(value) => {
+          const current = confirmation;
+          setConfirmation(null);
+          current?.onConfirm(value);
+        }}
+      />
     </div>
   );
 }

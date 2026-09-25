@@ -55,60 +55,13 @@ export function SitesPage() {
     load().catch((cause) => setError(cause instanceof Error ? cause.message : "Не удалось загрузить сайты"));
   }, [token]);
 
-  async function build(site: Site) {
-    setBusy(`${site.id}:build`);
-    setError(null);
-    try {
-      await api(`/api/v1/sites/${site.id}/build`, { method: "POST" }, token);
-      await load();
-      await openHistory(site);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Сборка не выполнена");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function publish(site: Site, publishState: "published" | "draft") {
-    const label = publishState === "published" ? "опубликовать" : "снять с публикации";
-    if (!window.confirm(`Вы уверены, что хотите ${label} ${site.domain}?`)) return;
-    setBusy(`${site.id}:publish`);
-    setError(null);
-    try {
-      await api(`/api/v1/publish/sites/${site.id}/publish`, {
-        method: "POST",
-        body: JSON.stringify({ publish_state: publishState }),
-      }, token);
-      await load();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Статус публикации не изменён");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function rollback(site: Site) {
-    if (!window.confirm(`Откатить ${site.domain} на предыдущую сборку?`)) return;
-    setBusy(`${site.id}:rollback`);
-    setError(null);
-    try {
-      await api(`/api/v1/sites/${site.id}/rollback`, { method: "POST" }, token);
-      await load();
-      await openHistory(site);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Откат недоступен");
-    } finally {
-      setBusy(null);
-    }
-  }
-
   async function openHistory(site: Site) {
     setSelected(site);
     setError(null);
     try {
       const [buildRows, pageRows, webhookSettings] = await Promise.all([
         api<Build[]>(`/api/v1/panel/builds/${site.id}`, {}, token),
-        api<SitePage[]>(`/api/v1/publish/sites/${site.id}/pages`, {}, token),
+        api<SitePage[]>(`/api/v1/sites/${site.id}/pages`, {}, token),
         api<WebhookSettings>(`/api/v1/sites/${site.id}/webhook`, {}, token),
       ]);
       setHistory(buildRows);
@@ -150,7 +103,7 @@ export function SitesPage() {
 
   return (
     <div>
-      <PageHeader title="Сайты" description="Черновики, сборки, публикация и безопасный откат статических релизов. План страниц и проверка качества перед выпуском относятся к дорожной карте развития." />
+      <PageHeader title="Сайты" description="Просмотр статуса, истории сборок, страниц и webhook. Сборка, публикация и откат выполняются только из Project workspace через candidate build и явное подтверждение." />
       {error && <p className="error">{error}</p>}
       <Surface>
         <DataTable headers={["Домен", "Статус", "Сборка", "Версия", "Действия"]}>
@@ -162,10 +115,7 @@ export function SitesPage() {
               <td>{site.version}</td>
               <td>
                 <div className="row row-tight">
-                  <button className="btn" type="button" disabled={busy !== null} onClick={() => build(site)}>{busy === `${site.id}:build` ? "Сборка…" : "Собрать"}</button>
-                  <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => publish(site, site.publish_state === "published" ? "draft" : "published")}>{site.publish_state === "published" ? "Снять" : "Опубликовать"}</button>
-                  <button className="btn btn-ghost" type="button" disabled={busy !== null || !site.build_hash} onClick={() => rollback(site)}>{busy === `${site.id}:rollback` ? "Откат…" : "Откат"}</button>
-                  <button className="btn btn-ghost" type="button" onClick={() => openHistory(site)}>Детали</button>
+                  <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => openHistory(site)}>Детали</button>
                 </div>
               </td>
             </tr>

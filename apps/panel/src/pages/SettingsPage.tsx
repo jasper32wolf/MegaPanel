@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, useAuth } from "../lib/auth";
-import { PageHeader, StatusPill, Surface } from "../components/ui";
+import { ConfirmDialog, PageHeader, StatusPill, Surface } from "../components/ui";
 
 type Operator = {
   id: string;
@@ -22,6 +22,7 @@ export function SettingsPage() {
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [sessionToRevoke, setSessionToRevoke] = useState<Session | null>(null);
 
   async function load() {
     const [me, apiHealth, activeSessions] = await Promise.all([
@@ -39,7 +40,6 @@ export function SettingsPage() {
   }, [token]);
 
   async function revokeSession(session: Session) {
-    if (!window.confirm("Отозвать эту сессию? Она не сможет обновить access token.")) return;
     setBusy(`session:${session.id}`);
     setError(null);
     try {

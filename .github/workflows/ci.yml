@@ -35,6 +35,86 @@ jobs:
           exit-code: "1"
 
 
+  integration-services:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: site_panel
+          POSTGRES_USER: site_panel
+          POSTGRES_PASSWORD: site_panel_dev
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U site_panel -d site_panel"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://site_panel:site_panel_dev@127.0.0.1:5432/site_panel
+      REDIS_URL: redis://127.0.0.1:6379/0
+      APP_SECRET_KEY: integration-secret-key-for-ci-only
+      APP_PEPPER: integration-pepper-for-ci-only
+      BLIND_INDEX_PEPPER: integration-blind-index-for-ci-only
+      FIELD_ENCRYPTION_KEY: integration-field-encryption-key-for-ci-only
+      SITES_ROOT: /tmp/site-panel-sites
+      UPLOADS_ROOT: /tmp/site-panel-uploads
+      DSAR_EXPORTS_ROOT: /tmp/site-panel-dsar
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          pip install -e packages/shared -e packages/security -e packages/ssg -e packages/block-library
+          pip install -e "apps/api[dev]"
+      - name: Clean database migration and service connections
+        run: |
+          cd apps/api
+          alembic upgrade head
+          python - <<'PY'
+          import asyncio
+          from sqlalchemy import text
+          from sqlalchemy.ext.asyncio import create_async_engine
+          import redis.asyncio as redis
+
+          async def main():
+              engine = create_async_engine("postgresql+asyncpg://site_panel:site_panel_dev@127.0.0.1:5432/site_panel")
+              async with engine.connect() as connection:
+                  assert (await connection.scalar(text("SELECT 1"))) == 1
+              await engine.dispose()
+              client = redis.from_url("redis://127.0.0.1:6379/0")
+              assert await client.ping()
+              await client.aclose()
+
+          asyncio.run(main())
+          PY
+      - name: API health smoke
+        run: |
+          cd apps/api
+          uvicorn app.main:app --host 127.0.0.1 --port 8000 >/tmp/site-panel-api.log 2>&1 &
+          api_pid=$!
+          trap 'kill "$api_pid"; wait "$api_pid" || true' EXIT
+          for attempt in $(seq 1 20); do
+            if curl --fail --silent http://127.0.0.1:8000/api/v1/health >/tmp/site-panel-health.json; then
+              break
+            fi
+            sleep 1
+          done
+          python -c 'import json; assert json.load(open("/tmp/site-panel-health.json"))["status"] == "ok"'
+
+
   release-automation:
     runs-on: ubuntu-latest
     steps:

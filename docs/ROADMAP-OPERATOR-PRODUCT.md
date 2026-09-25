@@ -91,7 +91,7 @@
 
 ### 5. Сборка, публикация и откат
 
-**Базовый контур реализован.** Candidate build не активирует release, preview требует аутентификацию, publish/rollback требуют selected hash и explicit confirmation. Нужны Docker/Caddy/domain runtime proof и закрытие legacy direct-publish bypass.
+**Базовый контур реализован.** Candidate build не активирует release, preview требует аутентификацию, publish/rollback требуют selected hash и explicit confirmation. Legacy direct build/publish/rollback endpoints исключены из release API; нужны Docker/Caddy/domain runtime proof.
 
 - Ошибка сборки или качества не должна заменять текущий release.
 - В UI должны быть видны причина, версия, затронутые страницы и следующее действие.
@@ -107,7 +107,7 @@
 
 ### 7. Ежедневный опыт оператора
 
-**Частично реализован.** Project workspace и базовые loading/error/status states есть; остаются accessible confirm dialog, complete keyboard/browser E2E and axe checks.
+**Частично реализован.** Project workspace и базовые loading/error/status states есть; подтверждения критичных переходов в Project workspace используют accessible native dialog. Остаются полный keyboard/browser E2E, axe checks и перевод остальных legacy confirm-диалогов.
 
 Приоритеты: очереди задач, статусы и причины блокировки, loading/empty/error/retry состояния, безопасные подтверждения, controlled reveal PII, keyboard navigation и browser-проверки основных действий. Раздел AI включает provider setup, архитектурный proposal→approval→draft PagePlan, отдельные PageDraft/SEO brief предложения и ограниченный server-owned `unique_core` block-slot proposal; произвольная генерация блоков, контента или публикация до отдельной реализации недоступны.
 

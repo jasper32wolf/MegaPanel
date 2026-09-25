@@ -21,9 +21,9 @@ Site Panel — кандидат self-hosted VPS-релиза для одного
 ## Предлагаемая последовательность развития
 
 1. Доказать текущий release-контур на staging VPS: миграции, single operator, Caddy/TLS, browser, форма лида, webhook retries/DLQ и restore.
-2. Завершить незакрытые части уже реализованного operator workflow: idempotent backfill legacy sites, production worker orchestration, accessible dialogs, Russian slug UX и закрытие legacy direct-publish bypass.
+2. Завершить незакрытые части уже реализованного operator workflow: idempotent backfill legacy sites, production worker orchestration, Russian slug UX и остальные legacy confirm-диалоги. Критичные переходы Project workspace уже используют accessible dialog, а legacy direct build/publish/rollback routes исключены из release API.
 3. Довести AI vertical slice: provider/model catalog and pricing freshness, authenticated browser + PostgreSQL proof, extend PageDraft copy/metadata slice to separate SEO briefs, block selection/slots and deterministic QA.
-4. Автоматизировать доказанные PostgreSQL/Docker/browser проверки в CI, наблюдаемость и восстановление.
+4. Выполнить добавленный CI service smoke на hosted runner и затем автоматизировать доказанные Docker/browser проверки, наблюдаемость и восстановление.
 5. Только затем рассматривать внешние источники, аналитику и масштабирование.
 
 > Текущий AI-код ещё не подтверждён runtime-проверкой провайдеров или реальным браузерным сценарным тестом. Статус и остаток работ ведутся в [ХОД-РАБОТ.md](./ХОД-РАБОТ.md) и [ROADMAP-OPERATOR-PRODUCT.md](./ROADMAP-OPERATOR-PRODUCT.md).

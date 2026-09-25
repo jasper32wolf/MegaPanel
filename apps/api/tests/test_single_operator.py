@@ -113,10 +113,21 @@ def test_access_token_contains_its_refresh_session_id(monkeypatch):
     assert payload["sid"] == str(session_id)
 
 
-def test_site_build_route_is_available_in_the_release_api():
+def test_legacy_direct_publish_routes_are_not_available_in_the_release_api():
     paths = app.openapi()["paths"]
 
-    assert "post" in paths["/api/v1/sites/{site_id}/build"]
+    assert "/api/v1/sites/{site_id}/build" not in paths
+    assert "/api/v1/sites/{site_id}/rollback" not in paths
+    assert "/api/v1/publish/sites/{site_id}/publish" not in paths
+    assert "/api/v1/publish/sites/{site_id}/pages" not in paths
+    assert "get" in paths["/api/v1/sites/{site_id}/pages"]
+
+    with TestClient(app) as client:
+        site_id = "00000000-0000-0000-0000-000000000000"
+        assert client.post(f"/api/v1/sites/{site_id}/build").status_code == 404
+        assert client.post(f"/api/v1/sites/{site_id}/rollback").status_code == 404
+        assert client.post(f"/api/v1/publish/sites/{site_id}/publish", json={}).status_code == 404
+        assert client.get(f"/api/v1/publish/sites/{site_id}/pages").status_code == 404
 
 
 def test_system_control_routes_are_registered_in_the_release_api():
