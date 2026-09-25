@@ -213,7 +213,7 @@ wait_for_api() {
   while (( $(date +%s) < deadline )); do
     if compose exec -T api python -c '
 from urllib.request import urlopen
-response = urlopen("http://127.0.0.1:8000/api/v1/health", timeout=5)
+response = urlopen("http://127.0.0.1:8000/api/v1/health/ready", timeout=5)
 raise SystemExit(0 if response.status == 200 else 1)
 ' >/dev/null 2>&1; then
       return 0

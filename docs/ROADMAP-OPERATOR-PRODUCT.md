@@ -12,7 +12,7 @@
 - append-only LeadOutcome, lead analysis summary и отдельный outcome history в inbox;
 - project-first panel workspace `/projects` и `/projects/:projectId` с loading/error/status пояснениями.
 
-Оставшиеся части этого roadmap — выполнить safe CLI backfill существующих сайтов на backed-up PostgreSQL, полноценный PostgreSQL/RLS migration proof, worker orchestration, Playwright/axe E2E, CI release job и production runtime proof.
+Оставшиеся части этого roadmap — выполнить safe CLI backfill существующих сайтов на backed-up PostgreSQL, получить первые hosted runs добавленных PostgreSQL/Redis worker smoke и Chromium operator workflow E2E до candidate preview, полноценный PostgreSQL/RLS migration proof, domain/lead/axe E2E, CI release job и production runtime proof.
 
 ## Как читать статусы
 
@@ -113,7 +113,7 @@
 
 ### 8. Наблюдаемость и восстановление
 
-**Частично реализовано.** Безопасный экран panel update/recovery, immutable release scripts, encrypted off-host backup и bounded code rollback существуют. Нужны измеримые readiness/alerts, реальный GitHub dispatch, регулярный restore drill и зафиксированные RPO/RTO. Пока такие прогоны не выполнены, recovery и SLA нельзя называть подтверждёнными.
+**Частично реализовано.** Безопасный экран panel update/recovery, immutable release scripts, encrypted off-host backup, bounded code rollback и раздельные liveness/readiness probes существуют. Нужны hosted CI, реальный GitHub dispatch, staging readiness/alert proof, регулярный restore drill и зафиксированные RPO/RTO. Пока такие прогоны не выполнены, recovery и SLA нельзя называть подтверждёнными.
 
 ### 9. AI-ассистированная структура сайтов, блоки и SEO
 

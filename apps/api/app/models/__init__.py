@@ -224,25 +224,6 @@ class MorphCache(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
-class OnboardingSession(Base):
-    __tablename__ = "onboarding_sessions"
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), index=True
-    )
-    actor_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
-    step: Mapped[str] = mapped_column(
-        String(64), default="niche"
-    )  # niche|geo|template|domain|build
-    payload: Mapped[dict] = mapped_column(JSONB, default=dict)
-    completed: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
-    )
-
-
 # Re-export phase-3 models
 from app.models.ai import (  # noqa: E402
     ContentHash,
@@ -330,7 +311,6 @@ __all__ = [
     "MediaAsset",
     "MorphCache",
     "Notification",
-    "OnboardingSession",
     "Plugin",
     "Project",
     "ProjectFactRevision",

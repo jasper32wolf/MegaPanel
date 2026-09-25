@@ -3,7 +3,7 @@
 Этот файл — **пошаговая инструкция «от нуля»** для локальной среды разработки.
 Читайте сверху вниз. Если что-то сломалось — сразу в раздел **«Вопросы и ответы»** в конце.
 
-> **Статус проверки 2026-09-17:** 146 API-тестов и production build панели проходят. Alembic graph достигает `0015_webhook_delivery`; безопасный single-active-operator access, TOTP login, формы лидов, encrypted webhook delivery, safe bulk contacts и production Compose isolation покрыты unit-регрессиями. Полный clean install с PostgreSQL/Redis, Docker и browser smoke пока не подтверждён в этой среде. Актуальные границы и release gate: [`docs/ХОД-РАБОТ.md`](./docs/ХОД-РАБОТ.md#6-установка-и-режимы-запуска-фактический-статус).
+> **Статус проверки 2026-09-25:** 269 API-тестов проходят, 2 PostgreSQL/Redis-gated integration tests skipped локально; production build панели проходит. Alembic graph достигает `0018_ai_provider_registry`; single-active-operator access, TOTP login, Project-first candidate workflow, encrypted webhook delivery, liveness/readiness, safe bulk contacts и production Compose isolation покрыты contract-регрессиями. Полный Docker/VPS, hosted CI и authenticated browser execution пока не подтверждены в этой среде. Актуальные границы и release gate: [`docs/ХОД-РАБОТ.md`](./docs/ХОД-РАБОТ.md#6-установка-и-режимы-запуска-фактический-статус).
 
 Связанные файлы:
 
@@ -260,6 +260,39 @@ Set-Location -LiteralPath "e:\РАБОТА\ПАНЕЛЬ ДЛЯ ГЕНЕРАЦИ�
 ./scripts/stop.sh --deps
 ```
 
+### Browser E2E: операторский workflow до candidate preview
+
+E2E-тест проверяет путь `миграция → bootstrap оператора → cookie-login → Dashboard → импорт keyword → география → Project → facts → PagePlan → draft/QA/apply → candidate preview` через локальный Vite proxy. Он создаёт только изолированные тестовые данные, не публикует сайт, не вызывает AI/CRM, не отправляет внешний webhook и не проверяет Caddy/TLS.
+
+Для локального запуска нужны доступные PostgreSQL и Redis, применённые миграции, отдельная тестовая БД и запущенные API (`127.0.0.1:8000`) с Vite (`127.0.0.1:5173`). Создайте временного оператора с теми же параметрами, что использует сценарий, затем установите Chromium и запустите тест:
+
+```powershell
+Set-Location -LiteralPath "e:\РАБОТА\ПАНЕЛЬ ДЛЯ ГЕНЕРАЦИИ САЙТОВ"
+$env:E2E_OPERATOR_EMAIL="e2e@example.test"
+$env:E2E_OPERATOR_PASSWORD="e2e-local-password"
+$env:E2E_OPERATOR_PASSWORD | python scripts\bootstrap_operator.py --email $env:E2E_OPERATOR_EMAIL --password-stdin
+
+Set-Location -LiteralPath "e:\РАБОТА\ПАНЕЛЬ ДЛЯ ГЕНЕРАЦИИ САЙТОВ\apps\panel"
+npm ci
+npx playwright install chromium
+npm run test:e2e
+```
+
+В GitHub Actions отдельный `panel-e2e` job сам поднимает service containers, применяет миграции и создаёт ephemeral CI-оператора. Первый успешный GitHub run является доказательством только этого узкого operator workflow до candidate preview; публичный домен, лиды, webhook receiver, Caddy и restore проверяются отдельно.
+
+### PostgreSQL/Redis integration: delivery и RLS
+
+Для проверок worker delivery и RLS нужны PostgreSQL и Redis с применёнными миграциями. Тест доставки подменяет только внешний HTTP-dispatch и не отправляет запросов во внешнюю сеть; RLS-тест проверяет, что tenant-scoped сессия выключает maintenance bypass и видит только свои сайты.
+
+```powershell
+$env:WEBHOOK_DELIVERY_INTEGRATION="1"
+$env:POSTGRES_RLS_INTEGRATION="1"
+$env:PYTHONPATH="apps\api;packages\block-library\src;packages\shared\src;packages\security\src;packages\ssg\src"
+.\.venv\Scripts\python.exe -m pytest apps/api/tests/test_webhook_delivery.py apps/api/tests/test_postgres_rls.py -q
+```
+
+В GitHub Actions это выполняет job `integration-services`. Успешный hosted run подтверждает service-container контракт, но не заменяет проверку production DB-role, Caddy, публичного receiver и restore drill.
+
 ### Backfill legacy-сайтов в Projects
 
 Если сайты были созданы до появления Project workflow, сначала выполните только просмотр:
@@ -449,13 +482,17 @@ Seed демо в режиме полного Docker иногда удобнее 
 
 ## 9. Проверки «всё ли живо»
 
-### Health API
+### Liveness и readiness API
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:8000/api/v1/health
+# Доступность процесса API без проверки зависимостей
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/health/live
+
+# Готовность для выпуска: bounded PostgreSQL SELECT 1 + Redis PING
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/health/ready
 ```
 
-Ожидается поле вроде `status: ok`.
+Оба успешных ответа содержат `status: ok`; `/ready` возвращает generic `503` при недоступности PostgreSQL или Redis. Старый `/api/v1/health` сохранён как compatibility alias liveness.
 
 ### Автотесты
 

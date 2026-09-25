@@ -62,7 +62,9 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: postgresql+asyncpg://site_panel:site_panel_dev@127.0.0.1:5432/site_panel
-      REDIS_URL: redis://127.0.0.1:6379/0
+      REDIS_URL: redis://127.0.0.1:6379/15
+      WEBHOOK_DELIVERY_INTEGRATION: "1"
+      POSTGRES_RLS_INTEGRATION: "1"
       APP_SECRET_KEY: integration-secret-key-for-ci-only
       APP_PEPPER: integration-pepper-for-ci-only
       BLIND_INDEX_PEPPER: integration-blind-index-for-ci-only
@@ -100,6 +102,10 @@ jobs:
 
           asyncio.run(main())
           PY
+      - name: Worker delivery and PostgreSQL RLS integration
+        run: |
+          cd apps/api
+          pytest tests/test_webhook_delivery.py tests/test_postgres_rls.py -q
       - name: API health smoke
         run: |
           cd apps/api
@@ -107,7 +113,7 @@ jobs:
           api_pid=$!
           trap 'kill "$api_pid"; wait "$api_pid" || true' EXIT
           for attempt in $(seq 1 20); do
-            if curl --fail --silent http://127.0.0.1:8000/api/v1/health >/tmp/site-panel-health.json; then
+            if curl --fail --silent http://127.0.0.1:8000/api/v1/health/ready >/tmp/site-panel-health.json; then
               break
             fi
             if [ "$attempt" -eq 20 ]; then
@@ -117,6 +123,130 @@ jobs:
             sleep 1
           done
           python -c 'import json; assert json.load(open("/tmp/site-panel-health.json"))["status"] == "ok"'
+
+
+  panel-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: site_panel
+          POSTGRES_USER: site_panel
+          POSTGRES_PASSWORD: site_panel_dev
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U site_panel -d site_panel"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      APP_ENV: development
+      DATABASE_URL: postgresql+asyncpg://site_panel:site_panel_dev@127.0.0.1:5432/site_panel
+      REDIS_URL: redis://127.0.0.1:6379/0
+      APP_SECRET_KEY: e2e-app-secret-key-for-ci-only
+      APP_PEPPER: e2e-app-pepper-for-ci-only
+      BLIND_INDEX_PEPPER: e2e-blind-index-for-ci-only
+      FIELD_ENCRYPTION_KEY: e2e-field-encryption-key-for-ci-only
+      PANEL_PUBLIC_URL: http://127.0.0.1:5173
+      CORS_ORIGINS: http://127.0.0.1:5173
+      SITES_ROOT: /tmp/site-panel-sites
+      UPLOADS_ROOT: /tmp/site-panel-uploads
+      DSAR_EXPORTS_ROOT: /tmp/site-panel-dsar
+      E2E_OPERATOR_EMAIL: e2e@example.test
+      E2E_OPERATOR_PASSWORD: e2e-ci-password
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install API and panel dependencies
+        run: |
+          pip install -e packages/shared -e packages/security -e packages/ssg -e packages/block-library
+          pip install -e "apps/api[dev]"
+          cd apps/panel
+          npm ci
+      - name: Migrate and bootstrap the E2E operator
+        run: |
+          cd apps/api
+          alembic upgrade head
+          cd ../..
+          printf '%s\n' "$E2E_OPERATOR_PASSWORD" | python scripts/bootstrap_operator.py --email "$E2E_OPERATOR_EMAIL" --password-stdin
+      - name: Install Chromium
+        run: |
+          cd apps/panel
+          npx playwright install --with-deps chromium
+      - name: Authenticated panel smoke
+        run: |
+          set -euo pipefail
+          api_pid=""
+          vite_pid=""
+          cleanup() {
+            kill "$api_pid" "$vite_pid" 2>/dev/null || true
+            wait "$api_pid" "$vite_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          (
+            cd apps/api
+            exec uvicorn app.main:app --host 127.0.0.1 --port 8000
+          ) >/tmp/site-panel-api.log 2>&1 &
+          api_pid=$!
+          for attempt in $(seq 1 20); do
+            if curl --fail --silent http://127.0.0.1:8000/api/v1/health/live >/dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 20 ]; then
+              echo "API health smoke timed out" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          (
+            cd apps/panel
+            exec npm run dev -- --host 127.0.0.1 --strictPort
+          ) >/tmp/site-panel-vite.log 2>&1 &
+          vite_pid=$!
+          for attempt in $(seq 1 20); do
+            if curl --fail --silent http://127.0.0.1:5173/ >/dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 20 ]; then
+              echo "Panel smoke timed out" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          for attempt in $(seq 1 20); do
+            if curl --fail --silent http://127.0.0.1:8000/api/v1/health/ready >/dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 20 ]; then
+              echo "API readiness smoke timed out" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          cd apps/panel
+          npm run test:e2e
+      - name: Print E2E logs
+        if: failure()
+        run: |
+          cat /tmp/site-panel-api.log || true
+          cat /tmp/site-panel-vite.log || true
 
 
   release-automation:

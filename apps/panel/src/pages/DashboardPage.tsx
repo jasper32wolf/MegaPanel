@@ -29,7 +29,7 @@ export function DashboardPage() {
 
   return (
     <div>
-      <PageHeader title="Обзор" description="Текущие действия, требующие внимания оператора." actions={<><Link className="btn btn-ghost" to="/onboarding">Новый сайт</Link><Link className="btn btn-ghost" to="/system">Обновить панель</Link><Link className="btn" to="/sites">Сайты</Link></>} />
+      <PageHeader title="Обзор" description="Текущие действия, требующие внимания оператора." actions={<><Link className="btn btn-ghost" to="/projects">Новый проект</Link><Link className="btn btn-ghost" to="/system">Обновить панель</Link><Link className="btn" to="/sites">Сайты</Link></>} />
       <div className="stat-grid">
         <div className="stat"><div className="label">Сайты</div><div className="value">{summary?.sites ?? "—"}</div><p className="muted" style={{ marginBottom: 0 }}>{summary ? `${summary.pages_estimate} страниц` : "Загрузка…"}</p></div>
         <div className="stat"><div className="label">Активные лиды</div><div className="value">{summary?.active_leads ?? "—"}</div><p className="muted" style={{ marginBottom: 0 }}>new и qualified</p></div>

@@ -16,6 +16,8 @@ build/
 node_modules/
 apps/panel/dist/
 apps/panel/tsconfig.tsbuildinfo
+apps/panel/playwright-report/
+apps/panel/test-results/
 *.local
 
 # Env & secrets

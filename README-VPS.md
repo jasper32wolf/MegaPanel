@@ -708,7 +708,7 @@ sudo -u sitepanel-deploy "$SITE_PANEL_ROOT/bin/release-manager.sh" status
 ```text
 current_release=<SHA>     # какая версия кода активна
 previous_release=<SHA>    # предыдущая рабочая версия
-health=ok                 # внутренний API ответил успешно
+health=ok                 # внутренний API прошёл PostgreSQL/Redis readiness
 last_backup_snapshot=<ID> # идентификатор последнего backup
 ```
 
@@ -1175,7 +1175,7 @@ docker system df
 
 - [ ] Installer прошёл на чистом supported VPS.
 - [ ] Панель открывается по `https://PANEL_DOMAIN` без ошибки сертификата.
-- [ ] API health доступен через panel same-origin path `/api/v1/health`.
+- [ ] API liveness доступен через panel same-origin path `/api/v1/health/live`, а readiness PostgreSQL/Redis — через `/api/v1/health/ready`.
 - [ ] Создан ровно один оператор.
 - [ ] TOTP реально включена и проверена повторным входом.
 - [ ] Снаружи не открыты PostgreSQL, Redis, API, Panel technical port и Caddy Admin.
@@ -1332,7 +1332,8 @@ sudo -u sitepanel-deploy docker compose \
 
 ```bash
 curl -I https://panel.example.ru/
-curl -fsS https://panel.example.ru/api/v1/health
+curl -fsS https://panel.example.ru/api/v1/health/live
+curl -fsS https://panel.example.ru/api/v1/health/ready
 ```
 
 Замените домен на ваш. Затем повторите `--phase verify`.

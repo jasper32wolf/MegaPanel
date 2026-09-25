@@ -412,7 +412,7 @@ verify_runtime() {
     return 2
   fi
   if ! curl --fail --silent --show-error --max-time 20 "https://$PANEL_DOMAIN/" >/dev/null || \
-     ! curl --fail --silent --show-error --max-time 20 "https://$PANEL_DOMAIN/api/v1/health" >/dev/null; then
+     ! curl --fail --silent --show-error --max-time 20 "https://$PANEL_DOMAIN/api/v1/health/ready" >/dev/null; then
     mark_pending verify "public_tls_or_proxy_not_ready"
     printf 'PENDING: public TLS or same-origin API proxy is not ready. Re-run --resume after DNS/ACME/firewall investigation.\n'
     return 2

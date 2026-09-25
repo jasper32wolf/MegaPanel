@@ -9,7 +9,6 @@ import { KeywordsPage } from "./pages/KeywordsPage";
 import { LeadsPage } from "./pages/LeadsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { MediaPage } from "./pages/MediaPage";
-import { OnboardingPage } from "./pages/OnboardingPage";
 import { OpsPage } from "./pages/OpsPage";
 import { ProjectsPage } from "./pages/ProjectsPage";
 import { ProjectWorkspacePage } from "./pages/ProjectWorkspacePage";
@@ -44,7 +43,6 @@ export default function App() {
                 <Route path="/blocks" element={<BlocksPage />} />
                 <Route path="/media" element={<MediaPage />} />
                 <Route path="/bulk" element={<BulkPage />} />
-                <Route path="/onboarding" element={<OnboardingPage />} />
                 <Route path="/leads" element={<LeadsPage />} />
                 <Route path="/ops" element={<OpsPage />} />
                 <Route path="/settings" element={<SettingsPage />} />

@@ -11,7 +11,7 @@ const groups = [
       { to: "/sites", label: "Сайты" },
       { to: "/keywords", label: "Семантика" },
       { to: "/geo", label: "География" },
-      { to: "/onboarding", label: "Новый сайт" },
+      { to: "/projects", label: "Новый проект" },
       { to: "/leads", label: "Лиды" },
     ],
   },

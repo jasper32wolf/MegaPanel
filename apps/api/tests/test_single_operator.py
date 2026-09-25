@@ -130,6 +130,19 @@ def test_legacy_direct_publish_routes_are_not_available_in_the_release_api():
         assert client.get(f"/api/v1/publish/sites/{site_id}/pages").status_code == 404
 
 
+def test_legacy_onboarding_routes_are_not_available_in_the_release_api():
+    paths = app.openapi()["paths"]
+
+    assert "/api/v1/onboarding/start" not in paths
+    assert "/api/v1/onboarding/{session_id}/step" not in paths
+    assert "/api/v1/onboarding/health-check" not in paths
+
+    with TestClient(app) as client:
+        assert client.post("/api/v1/onboarding/start", json={"niche": "repair"}).status_code == 404
+        assert client.post("/api/v1/onboarding/example/step", json={}).status_code == 404
+        assert client.get("/api/v1/onboarding/health-check").status_code == 404
+
+
 def test_system_control_routes_are_registered_in_the_release_api():
     paths = app.openapi()["paths"]
 

@@ -31,6 +31,13 @@ def test_production_services_stay_on_the_internal_network():
         assert service["networks"] == ["internal"]
 
 
+def test_production_api_healthcheck_uses_liveness():
+    healthcheck = production_compose()["services"]["api"]["healthcheck"]["test"]
+
+    assert "/api/v1/health/live" in " ".join(healthcheck)
+    assert "/api/v1/health/ready" not in " ".join(healthcheck)
+
+
 def test_production_api_and_worker_are_hardened():
     services = production_compose()["services"]
 

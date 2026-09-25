@@ -158,7 +158,7 @@ Storage credentials должны иметь доступ только к выд�
 
 | Variable | Значение |
 |---|---|
-| `PUBLIC_HEALTH_URL` | `https://api.example.ru/api/v1/health` |
+| `PUBLIC_HEALTH_URL` | `https://api.example.ru/api/v1/health/live` |
 
 Получите host key из доверенного канала: консоль провайдера, уже проверенный SSH fingerprint или out-of-band администраторская сессия. `ssh-keyscan` можно использовать только для формирования кандидата, который затем сверяется с доверенным fingerprint. Workflow не использует TOFU и запускает SSH с `StrictHostKeyChecking=yes`.
 
@@ -175,7 +175,7 @@ Storage credentials должны иметь доступ только к выд�
 7. При success `current` указывает на новый SHA, а прежний SHA становится `previous`.
 8. При failed health manager возвращает `current` на `previous` и повторно проверяет его health.
 
-CI сейчас не зелёный из-за существующего Ruff baseline. Это осознанно блокирует публикацию до исправления CI, а не обходится новым workflow.
+Hosted CI result для текущего candidate SHA ещё не зафиксирован. До успешного hosted run публикация остаётся заблокированной; локальные Ruff и YAML проверки не являются заменой GitHub evidence.
 
 ### 6.2. Ручный deploy проверенного старого SHA
 
@@ -217,11 +217,11 @@ GitHub Environment approval по-прежнему обязателен: запр
 
 | Ситуация | Действие |
 |---|---|
-| Публичный health отвечает | Никакой SSH-команды нет. |
-| Public probe не отвечает, внутренний API health отвечает | Нет restart/rollback: вероятны DNS/TLS/маршрутизация или GitHub network issue. Workflow фиксирует результат. |
-| Внутренний health не отвечает | `auto-recover`: restart `api worker panel caddy`, затем повторный health probe. |
-| Restart не помог | Code rollback на `previous`; запускается и проверяется прошлый release. |
-| Previous release не отвечает | Workflow завершается ошибкой; требуется оператор и manual recovery. |
+| Публичный liveness отвечает | Никакой SSH-команды нет. |
+| Public liveness не отвечает, внутренний API readiness отвечает | Нет restart/rollback: вероятны DNS/TLS/маршрутизация или GitHub network issue. Workflow фиксирует результат. |
+| Внутренний readiness не отвечает | `auto-recover`: restart `api worker panel caddy`, затем повторный readiness probe. |
+| Restart не помог | Code rollback на `previous`; запускается и проверяется его readiness. |
+| Previous release не готов | Workflow завершается ошибкой; требуется оператор и manual recovery. |
 | Повторная авария в cooldown | Не создаётся циклический restart: действие блокируется на 15 минут по умолчанию. |
 
 Автоматическая DB restore, cleanup volumes и `docker compose down -v` запрещены архитектурно.
@@ -232,9 +232,9 @@ GitHub Environment approval по-прежнему обязателен: запр
 
 | Operation | Действие |
 |---|---|
-| `status` | current/previous SHA, API health, last backup snapshot |
-| `restart` | controlled restart текущего release |
-| `rollback` | code rollback `current ↔ previous` с health probe |
+| `status` | current/previous SHA, API readiness, last backup snapshot |
+| `restart` | controlled restart текущего release с readiness acceptance |
+| `rollback` | code rollback `current ↔ previous` с readiness probe |
 | `recover` | выполнить bounded restart → rollback логику сейчас |
 | `restore` | destructive data restore указанного restic snapshot |
 
@@ -255,7 +255,7 @@ confirmation: RESTORE
 2. При необходимости выполните code rollback сначала. Если сервис ожил, data restore не нужен.
 3. Выберите проверенный snapshot: выполните `restic snapshots`, передав `RESTIC_REPOSITORY`, `RESTIC_PASSWORD_FILE` и, если нужны, AWS credentials явно через `env` как в §4.5. Не исполняйте `backup.env` через `source`.
 4. Запустите manual `restore` только после approval и `confirmation=RESTORE`.
-5. Скрипт проверяет manifest policy/version, останавливает application traffic, восстанавливает DB, sites, uploads и Caddy data/config, очищает DSAR exports, применяет migration и проверяет API health.
+5. Скрипт проверяет manifest policy/version, останавливает application traffic, восстанавливает DB, sites, uploads и Caddy data/config, очищает DSAR exports, применяет migration и проверяет API readiness.
 6. Обязательно вручную проверьте login, tenant isolation, sample site, upload path, lead path, TLS/external URLs и Caddy.
 
 ### 8.2. Новый VPS после полной потери старого

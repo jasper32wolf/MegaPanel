@@ -86,6 +86,7 @@ if [[ "$joined" == *" ps --services --status running "* ]]; then
   exit 0
 fi
 if [[ "$joined" == *" exec -T api python "* ]]; then
+  [[ "$joined" == *"/api/v1/health/ready"* ]] || exit 1
   if [[ -n "${FAKE_FAILED_RELEASE:-}" && "$compose_file" == *"/$FAKE_FAILED_RELEASE/"* ]]; then
     exit 1
   fi
@@ -200,6 +201,14 @@ assert_not_contains() {
   fi
 }
 
+assert_contains() {
+  local pattern="$1" file="$2" label="$3"
+  if ! grep -Fq -- "$pattern" "$file"; then
+    printf 'FAIL: expected content for %s: %s\n' "$label" "$pattern" >&2
+    exit 1
+  fi
+}
+
 # Explicit, valid deterministic IDs for archive/state assertions.
 OLD=1111111111111111111111111111111111111111
 GOOD=2222222222222222222222222222222222222222
@@ -251,6 +260,7 @@ run_or_report "$TMP/good.out" bash "$MANAGER" deploy "$GOOD"
 assert_eq "$(basename "$(readlink -f "$SITE_ROOT/current")")" "$GOOD" "good release becomes current"
 assert_eq "$(basename "$(readlink -f "$SITE_ROOT/previous")")" "$OLD" "old release becomes previous"
 assert_line 'health=ok' "$TMP/good.out" "good release health"
+assert_contains '/api/v1/health/ready' "$LOG" "release manager readiness probe"
 run_or_report "$TMP/backup.out" bash "$MANAGER" backup test
 assert_line 'backup_snapshot=deadbeef' "$TMP/backup.out" "backup snapshot"
 for archive in sites_data.tar.gz uploads_data.tar.gz caddy_data.tar.gz caddy_config.tar.gz; do

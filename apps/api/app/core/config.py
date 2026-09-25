@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     uploads_root: str = "./data/uploads"
     dsar_exports_root: str = "./data/dsar"
     dsar_export_ttl_hours: int = 24
+    health_readiness_timeout_seconds: float = Field(default=2.0, gt=0, le=10)
 
     sentry_dsn: str = ""
     log_level: str = "INFO"

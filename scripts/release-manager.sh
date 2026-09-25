@@ -246,11 +246,11 @@ running_services_are_present() {
   done
 }
 
-api_health_is_ok() {
+api_readiness_is_ok() {
   local release="$1"
   compose_for_release "$release" exec -T api python -c '
 from urllib.request import urlopen
-response = urlopen("http://127.0.0.1:8000/api/v1/health", timeout=5)
+response = urlopen("http://127.0.0.1:8000/api/v1/health/ready", timeout=5)
 raise SystemExit(0 if response.status == 200 else 1)
 ' >/dev/null 2>&1
 }
@@ -260,7 +260,7 @@ wait_for_health() {
   local deadline
   deadline=$(( $(date +%s) + HEALTH_TIMEOUT_SECONDS ))
   while (( $(date +%s) < deadline )); do
-    if running_services_are_present "$release" && api_health_is_ok "$release"; then
+    if running_services_are_present "$release" && api_readiness_is_ok "$release"; then
       return 0
     fi
     sleep 3

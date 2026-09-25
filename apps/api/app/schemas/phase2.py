@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -72,32 +71,3 @@ class MorphOut(BaseModel):
 class ToponymValidateRequest(BaseModel):
     name: str
     kind: str | None = "city"
-
-
-class OnboardingStart(BaseModel):
-    niche: str
-
-
-class OnboardingStep(BaseModel):
-    step: str = Field(pattern=r"^(niche|geo|template|domain|build)$")
-    payload: dict = Field(default_factory=dict)
-
-
-class OnboardingOut(BaseModel):
-    id: UUID
-    tenant_id: UUID
-    step: str
-    payload: dict
-    completed: bool
-    updated_at: datetime | None = None
-
-    model_config = {"from_attributes": True}
-
-
-class HealthCheckOut(BaseModel):
-    dns_ok: bool = False
-    ssl_ok: bool = False
-    llm_ok: bool = False
-    redis_ok: bool = False
-    db_ok: bool = True
-    details: dict = Field(default_factory=dict)

@@ -13,7 +13,6 @@ from app.api.v1 import (
     keywords,
     leads,
     media,
-    onboarding,
     panel,
     projects,
     security_ops,
@@ -29,7 +28,6 @@ api_router.include_router(sites.router, prefix="/sites", tags=["sites"])
 api_router.include_router(keywords.router, prefix="/keywords", tags=["keywords"])
 api_router.include_router(security_ops.router, prefix="/security", tags=["security"])
 api_router.include_router(geo.router, prefix="/geo", tags=["geo"])
-api_router.include_router(onboarding.router, prefix="/onboarding", tags=["onboarding"])
 api_router.include_router(blocks.router, prefix="/blocks", tags=["blocks"])
 api_router.include_router(media.router, prefix="/media", tags=["media"])
 api_router.include_router(domains.router, prefix="/domains", tags=["domains"])
