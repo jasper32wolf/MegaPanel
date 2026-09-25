@@ -110,6 +110,10 @@ jobs:
             if curl --fail --silent http://127.0.0.1:8000/api/v1/health >/tmp/site-panel-health.json; then
               break
             fi
+            if [ "$attempt" -eq 20 ]; then
+              echo "API health smoke timed out" >&2
+              exit 1
+            fi
             sleep 1
           done
           python -c 'import json; assert json.load(open("/tmp/site-panel-health.json"))["status"] == "ok"'
