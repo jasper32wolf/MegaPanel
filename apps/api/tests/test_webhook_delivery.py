@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import pytest
 from app.core.config import get_settings
-from app.db.session import open_db_session
+from app.db.session import engine, open_db_session
 from app.models import Site, Tenant
 from app.models.leads import Lead, WebhookDelivery, WebhookDeliveryAttempt
 from app.services import webhook_delivery
@@ -151,6 +151,7 @@ def test_worker_delivery_uses_postgres_redis_and_no_external_webhook(monkeypatch
     async def run() -> None:
         from redis.asyncio import from_url
 
+        await engine.dispose()
         redis = from_url(get_settings().redis_url)
         tenant_id = uuid4()
         secret = "integration-webhook-secret"
@@ -193,7 +194,9 @@ def test_worker_delivery_uses_postgres_redis_and_no_external_webhook(monkeypatch
                     idempotency_key=f"lead-{tenant_id.hex}",
                 )
                 db.add(tenant)
+                await db.flush()
                 db.add(site)
+                await db.flush()
                 db.add(lead)
                 await db.flush()
                 delivery = await create_lead_delivery(db, lead=lead, site=site)
@@ -297,7 +300,10 @@ def test_worker_delivery_uses_postgres_redis_and_no_external_webhook(monkeypatch
                     await db.execute(delete(Tenant).where(Tenant.id == tenant_id))
                     await db.commit()
             finally:
-                await redis.flushdb()
-                await redis.aclose()
+                try:
+                    await redis.flushdb()
+                    await redis.aclose()
+                finally:
+                    await engine.dispose()
 
     asyncio.run(run())

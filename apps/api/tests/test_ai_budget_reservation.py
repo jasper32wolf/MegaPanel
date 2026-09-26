@@ -21,7 +21,7 @@ RUN_AI_BUDGET_INTEGRATION = os.getenv("AI_BUDGET_INTEGRATION") == "1"
 )
 def test_concurrent_ai_budget_reservations_allow_only_one(monkeypatch) -> None:
     async def run() -> None:
-        from app.db.session import open_db_session
+        from app.db.session import engine, open_db_session
 
         tenant_id = uuid4()
         prompt = SimpleNamespace(prompt_id="test", version="1", content_hash="a" * 64)
@@ -96,8 +96,11 @@ def test_concurrent_ai_budget_reservations_allow_only_one(monkeypatch) -> None:
                 )
                 assert total == 0.6
         finally:
-            async with open_db_session() as db:
-                await db.execute(delete(Tenant).where(Tenant.id == tenant_id))
-                await db.commit()
+            try:
+                async with open_db_session() as db:
+                    await db.execute(delete(Tenant).where(Tenant.id == tenant_id))
+                    await db.commit()
+            finally:
+                await engine.dispose()
 
     asyncio.run(run())

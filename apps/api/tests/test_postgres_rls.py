@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 from app.core.config import get_settings
 from app.db.rls import set_tenant_rls
+from app.db.session import engine as app_engine
 from app.db.session import open_db_session
 from app.models import Site, Tenant
 from sqlalchemy import delete, select, text
@@ -46,6 +47,7 @@ def test_tenant_rls_explicitly_disables_a_prior_bypass() -> None:
 )
 def test_rls_scopes_sites_after_maintenance_session() -> None:
     async def run() -> None:
+        await app_engine.dispose()
         first_tenant_id = uuid4()
         second_tenant_id = uuid4()
         first_site_id = uuid4()
@@ -119,11 +121,14 @@ def test_rls_scopes_sites_after_maintenance_session() -> None:
         finally:
             if rls_engine is not None:
                 await rls_engine.dispose()
-            async with open_db_session() as db:
-                await db.execute(
-                    delete(Tenant).where(Tenant.id.in_((first_tenant_id, second_tenant_id)))
-                )
-                await db.execute(text(f"DROP ROLE IF EXISTS {RLS_ROLE}"))
-                await db.commit()
+            try:
+                async with open_db_session() as db:
+                    await db.execute(
+                        delete(Tenant).where(Tenant.id.in_((first_tenant_id, second_tenant_id)))
+                    )
+                    await db.execute(text(f"DROP ROLE IF EXISTS {RLS_ROLE}"))
+                    await db.commit()
+            finally:
+                await app_engine.dispose()
 
     asyncio.run(run())

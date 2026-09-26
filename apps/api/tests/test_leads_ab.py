@@ -170,7 +170,7 @@ def test_public_lead_accepts_generated_form_idempotency_fallback():
 )
 def test_public_lead_idempotency_is_site_scoped_and_atomic(monkeypatch) -> None:
     async def run() -> None:
-        from app.db.session import open_db_session
+        from app.db.session import engine, open_db_session
 
         tenant_id = uuid4()
         first_site_id = uuid4()
@@ -184,15 +184,18 @@ def test_public_lead_idempotency_is_site_scoped_and_atomic(monkeypatch) -> None:
         monkeypatch.setattr(leads, "append_audit", append_audit)
         try:
             async with open_db_session() as db:
+                db.add(
+                    Tenant(
+                        id=tenant_id,
+                        name="Lead idempotency integration",
+                        slug=f"lead-idempotency-{tenant_id.hex}",
+                        branding={},
+                        quotas={},
+                    )
+                )
+                await db.flush()
                 db.add_all(
                     [
-                        Tenant(
-                            id=tenant_id,
-                            name="Lead idempotency integration",
-                            slug=f"lead-idempotency-{tenant_id.hex}",
-                            branding={},
-                            quotas={},
-                        ),
                         Site(
                             id=first_site_id,
                             tenant_id=tenant_id,
@@ -254,9 +257,12 @@ def test_public_lead_idempotency_is_site_scoped_and_atomic(monkeypatch) -> None:
                 )
                 assert count == 2
         finally:
-            async with open_db_session() as db:
-                await db.execute(delete(Tenant).where(Tenant.id == tenant_id))
-                await db.commit()
+            try:
+                async with open_db_session() as db:
+                    await db.execute(delete(Tenant).where(Tenant.id == tenant_id))
+                    await db.commit()
+            finally:
+                await engine.dispose()
 
     asyncio.run(run())
 
