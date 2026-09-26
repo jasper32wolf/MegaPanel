@@ -73,8 +73,8 @@ test("оператор видит и отзывает другую сессию"
     ).toBeVisible();
 
     const revokeButtons = page.getByRole("button", { name: "Отозвать" });
+    await expect.poll(() => revokeButtons.count()).toBeGreaterThan(0);
     const before = await revokeButtons.count();
-    expect(before).toBeGreaterThan(0);
     await revokeButtons.first().click();
     await expect(page.getByRole("dialog")).toBeVisible();
     await page.getByRole("dialog").getByRole("button", { name: "Отозвать" }).click();
@@ -123,8 +123,11 @@ test("оператор создаёт и готовит candidate без пуб�
   await page.getByLabel("Домен").fill(domain);
   await page.getByLabel("Ниша").fill("E2E услуги");
   await page.getByRole("button", { name: "Создать проект" }).click();
-  await expect(page.getByText(projectName, { exact: true })).toBeVisible();
-  await page.getByRole("link", { name: "Открыть проект" }).click();
+  const projectCard = page.locator("article").filter({
+    has: page.getByText(projectName, { exact: true }),
+  });
+  await expect(projectCard).toHaveCount(1);
+  await projectCard.getByRole("link", { name: "Открыть проект" }).click();
   await expect(page).toHaveURL(/\/projects\/[0-9a-f-]+$/);
   await expect(page.getByRole("heading", { name: projectName })).toBeVisible();
 
