@@ -67,8 +67,10 @@ test("оператор видит и отзывает другую сессию"
   const otherContext = await browser.newContext({ baseURL: "http://127.0.0.1:5173" });
   try {
     await login(await otherContext.newPage());
-    await page.getByRole("link", { name: "Настройки" }).click();
-    await expect(page.getByRole("heading", { name: "Настройки" })).toBeVisible();
+    await page.getByRole("link", { name: "Настройки", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "Настройки", exact: true }),
+    ).toBeVisible();
 
     const revokeButtons = page.getByRole("button", { name: "Отозвать" });
     const before = await revokeButtons.count();
@@ -113,7 +115,9 @@ test("оператор создаёт и готовит candidate без пуб�
   await expect(page.getByText(city)).toBeVisible();
 
   await page.getByRole("link", { name: "Проекты" }).click();
-  await expect(page.getByRole("heading", { name: "Проекты" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Проекты", exact: true }),
+  ).toBeVisible();
   await page.getByLabel("Название проекта").fill(projectName);
   await page.getByLabel("Идентификатор проекта").fill(projectSlug);
   await page.getByLabel("Домен").fill(domain);
