@@ -41,6 +41,13 @@ def migrate_manifest(raw_manifest: object, encryptor: FieldEncryptor) -> dict | 
 
 
 def upgrade() -> None:
+    op.alter_column(
+        "alembic_version",
+        "version_num",
+        existing_type=sa.String(length=32),
+        type_=sa.String(length=128),
+        existing_nullable=False,
+    )
     bind = op.get_bind()
     sites = sa.table(
         "sites",

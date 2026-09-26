@@ -76,6 +76,40 @@ def test_webhook_target_accepts_public_https_url():
     )
 
 
+def test_legacy_webhook_secret_migration_widens_alembic_version_column(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    migration = _legacy_secret_migration()
+    events: list[str] = []
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    class Bind:
+        def execute(self, _: object) -> object:
+            return SimpleNamespace(all=lambda: [])
+
+    def alter_column(*args: object, **kwargs: object) -> None:
+        events.append("alter_column")
+        calls.append((args, kwargs))
+
+    def get_bind() -> Bind:
+        events.append("get_bind")
+        return Bind()
+
+    monkeypatch.setattr(migration.op, "alter_column", alter_column)
+    monkeypatch.setattr(migration.op, "get_bind", get_bind)
+    monkeypatch.setattr(migration, "_encryptor", lambda: object())
+
+    migration.upgrade()
+
+    assert events == ["alter_column", "get_bind"]
+    assert len(calls) == 1
+    args, kwargs = calls[0]
+    assert args == ("alembic_version", "version_num")
+    assert kwargs["existing_nullable"] is False
+    assert kwargs["existing_type"].length == 32
+    assert kwargs["type_"].length >= len(migration.revision)
+
+
 def test_legacy_webhook_secret_migration_encrypts_only_safe_configuration():
     class Encryptor:
         def encrypt(self, value: str) -> str:
