@@ -20,8 +20,13 @@ RLS_ROLE_PASSWORD = "site-panel-rls-test-password"
 
 
 async def drop_rls_role(db) -> None:
-    await db.execute(text(f"DROP OWNED BY {RLS_ROLE}"))
-    await db.execute(text(f"DROP ROLE IF EXISTS {RLS_ROLE}"))
+    role_exists = await db.scalar(
+        text("SELECT 1 FROM pg_roles WHERE rolname = :role_name"),
+        {"role_name": RLS_ROLE},
+    )
+    if role_exists:
+        await db.execute(text(f"DROP OWNED BY {RLS_ROLE}"))
+        await db.execute(text(f"DROP ROLE {RLS_ROLE}"))
 
 
 class FakeSession:

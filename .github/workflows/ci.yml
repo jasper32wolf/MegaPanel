@@ -186,7 +186,7 @@ jobs:
       SITES_ROOT: /tmp/site-panel-sites
       UPLOADS_ROOT: /tmp/site-panel-uploads
       DSAR_EXPORTS_ROOT: /tmp/site-panel-dsar
-      E2E_OPERATOR_EMAIL: e2e@example.test
+      E2E_OPERATOR_EMAIL: e2e@example.com
       E2E_OPERATOR_PASSWORD: e2e-ci-password
     steps:
       - uses: actions/checkout@v4

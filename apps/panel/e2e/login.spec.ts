@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-const email = process.env.E2E_OPERATOR_EMAIL || "e2e@example.test";
+const email = process.env.E2E_OPERATOR_EMAIL || "e2e@example.com";
 const password = process.env.E2E_OPERATOR_PASSWORD || "e2e-ci-password";
 
 async function login(page: Page) {

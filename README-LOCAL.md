@@ -268,7 +268,7 @@ E2E-тест проверяет cookie-login/Dashboard, видимость и п
 
 ```powershell
 Set-Location -LiteralPath "e:\РАБОТА\ПАНЕЛЬ ДЛЯ ГЕНЕРАЦИИ САЙТОВ"
-$env:E2E_OPERATOR_EMAIL="e2e@example.test"
+$env:E2E_OPERATOR_EMAIL="e2e@example.com"
 $env:E2E_OPERATOR_PASSWORD="e2e-local-password"
 $env:E2E_OPERATOR_PASSWORD | python scripts\bootstrap_operator.py --email $env:E2E_OPERATOR_EMAIL --password-stdin
 

@@ -201,6 +201,7 @@ def test_worker_delivery_uses_postgres_redis_and_no_external_webhook(monkeypatch
                 await db.flush()
                 delivery = await create_lead_delivery(db, lead=lead, site=site)
                 assert delivery is not None
+                await db.flush()
                 delivery_id = delivery.id
                 expected_payload = wire_payload(delivery, lead)
                 assert not {"phone", "email", "name", "message"}.intersection(delivery.payload)
@@ -255,6 +256,7 @@ def test_worker_delivery_uses_postgres_redis_and_no_external_webhook(monkeypatch
                 await db.flush()
                 retry_delivery = await create_lead_delivery(db, lead=retry_lead, site=site)
                 assert retry_delivery is not None
+                await db.flush()
                 retry_delivery_id = retry_delivery.id
                 await db.commit()
 
