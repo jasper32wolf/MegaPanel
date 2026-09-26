@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import pytest
 from app.api.v1.projects import _public_fact_values, _selection_snapshots
+from app.main import app
 from app.schemas.workflow import (
     FactRevisionCreate,
     LeadOutcomeIn,
@@ -70,6 +71,10 @@ def test_legacy_fact_serialization_removes_protected_webhook_fields():
     )
 
     assert facts["contacts"] == {"phone": "+79990000000"}
+
+
+def test_project_fact_revisions_route_is_registered():
+    assert "get" in app.openapi()["paths"]["/api/v1/projects/{project_id}/facts"]
 
 
 def test_project_selection_requires_keywords_and_primary_geo():

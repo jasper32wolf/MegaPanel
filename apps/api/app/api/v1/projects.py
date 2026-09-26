@@ -356,6 +356,7 @@ async def check_project_domain(
     return project.domain_check_meta
 
 
+@router.get("/{project_id}/facts")
 async def list_fact_revisions(
     project_id: UUID,
     auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor")),
