@@ -25,6 +25,42 @@ test("оператор входит и видит обзор", async ({ page }) 
   await login(page);
 });
 
+test("навигация не превращает выход в плавающий блок", async ({ page }) => {
+  await login(page);
+
+  const footer = page.locator(".nav-footer");
+  const logout = footer.getByRole("button", { name: "Выйти" });
+  await footer.scrollIntoViewIfNeeded();
+  await expect(logout).toBeVisible();
+
+  const layout = await page.evaluate(() => {
+    const navElement = document.querySelector<HTMLElement>(".nav");
+    const footerElement = document.querySelector<HTMLElement>(".nav-footer");
+    const mainElement = document.querySelector<HTMLElement>(".main");
+    if (!navElement || !footerElement || !mainElement) throw new Error("panel shell is incomplete");
+    const navRect = navElement.getBoundingClientRect();
+    const footerRect = footerElement.getBoundingClientRect();
+    const mainRect = mainElement.getBoundingClientRect();
+    return {
+      navOverflow: getComputedStyle(navElement).overflowY,
+      footerInsideNav: footerRect.left >= navRect.left && footerRect.right <= navRect.right,
+      footerInsideViewport: footerRect.top >= 0 && footerRect.bottom <= window.innerHeight,
+      footerBeforeMain: footerRect.right <= mainRect.left,
+    };
+  });
+
+  expect(layout.navOverflow).toBe("auto");
+  expect(layout.footerInsideNav).toBe(true);
+  expect(layout.footerInsideViewport).toBe(true);
+  expect(layout.footerBeforeMain).toBe(true);
+
+  await page.setViewportSize({ width: 760, height: 700 });
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Обзор" })).toBeVisible();
+  await expect(page.locator(".nav-footer").getByRole("button", { name: "Выйти" })).toBeVisible();
+  await expect(page.locator(".nav")).toHaveCSS("overflow-y", "visible");
+});
+
 test("оператор видит и отзывает другую сессию", async ({ page, browser }) => {
   await login(page);
 

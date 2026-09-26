@@ -102,10 +102,12 @@ textarea:focus-visible {
   position: sticky;
   top: 0;
   align-self: start;
+  min-height: 0;
   height: 100vh;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+  overflow-y: auto;
   padding: var(--space-5) var(--space-4);
   background:
     radial-gradient(ellipse 120% 60% at 0% 0%, #1a3d34 0%, transparent 55%),
@@ -198,8 +200,10 @@ textarea:focus-visible {
 }
 
 .nav-footer {
+  flex-shrink: 0;
   margin-top: auto;
   padding-top: var(--space-4);
+  background: var(--sidebar);
 }
 
 .main {
@@ -680,7 +684,9 @@ textarea:focus-visible {
   }
   .nav {
     position: relative;
+    min-height: auto;
     height: auto;
+    overflow: visible;
     border-right: none;
     border-bottom: 1px solid #1f2c27;
   }
