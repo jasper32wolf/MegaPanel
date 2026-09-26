@@ -79,7 +79,7 @@ export function DomainsPage() {
     setBusy(`health:${id}`);
     setError(null);
     try {
-      setHealth(await api<Health>(`/api/v1/domains/health/${id}`, {}, token));
+      setHealth(await api<Health>(`/api/v1/domains/health/${id}`, { method: "POST" }, token));
       await load();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Проверка не выполнена");

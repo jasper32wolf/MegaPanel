@@ -47,6 +47,17 @@ def _decrypt_secret(value: str) -> str | None:
         return None
 
 
+def wire_payload(delivery: WebhookDelivery, lead: Lead) -> dict:
+    encryptor = get_encryptor()
+    return {
+        **delivery.payload,
+        "phone": encryptor.decrypt(lead.phone_enc) if lead.phone_enc else None,
+        "email": encryptor.decrypt(lead.email_enc) if lead.email_enc else None,
+        "name": encryptor.decrypt(lead.name_enc) if lead.name_enc else None,
+        "message": encryptor.decrypt(lead.message_enc) if lead.message_enc else None,
+    }
+
+
 async def create_lead_delivery(
     db: AsyncSession, *, lead: Lead, site: Site
 ) -> WebhookDelivery | None:
@@ -54,11 +65,7 @@ async def create_lead_delivery(
     url = str(contacts.get("webhook_url") or "").strip()
     if not url:
         return None
-    legacy_secret = str(contacts.get("webhook_secret") or "")
-    secret_enc = str(contacts.get("webhook_secret_enc") or "")
-    target_secret_enc = secret_enc or (
-        get_encryptor().encrypt(legacy_secret) if legacy_secret else None
-    )
+    target_secret_enc = str(contacts.get("webhook_secret_enc") or "") or None
     payload = {
         "lead_id": str(lead.id),
         "site_id": str(site.id),
@@ -180,9 +187,11 @@ async def process_delivery(
     if not delivery.target_secret_enc:
         result = {"ok": False, "error": "Webhook secret is not configured"}
     else:
+        lead = await db.get(Lead, delivery.lead_id)
+        assert lead is not None
         secret = _decrypt_secret(delivery.target_secret_enc)
         result = (
-            await dispatch_webhook(delivery.target_url, delivery.payload, secret)
+            await dispatch_webhook(delivery.target_url, wire_payload(delivery, lead), secret)
             if secret is not None
             else {"ok": False, "error": "Webhook secret cannot be decrypted"}
         )

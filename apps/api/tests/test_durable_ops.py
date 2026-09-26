@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -40,6 +41,74 @@ def test_dsar_matches_any_provided_subject_identifier():
 
     assert dsar._matches_subject(email_match, Encryptor(), "subject@example.test", "subject-phone")
     assert dsar._matches_subject(phone_match, Encryptor(), "subject@example.test", "subject-phone")
+
+
+def test_dsar_delete_revokes_only_consents_for_matched_leads(monkeypatch):
+    class Encryptor:
+        def decrypt(self, value: str) -> str:
+            return value
+
+    class BlindIndex:
+        def index(self, value: str) -> str:
+            return f"blind:{value}"
+
+    class Result:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def scalars(self):
+            return self
+
+        def all(self):
+            return self.rows
+
+    subject = SimpleNamespace(
+        id=uuid4(),
+        idempotency_key="subject-key",
+        email_enc="subject@example.test",
+        phone_blind=None,
+        phone_enc="phone",
+        name_enc="name",
+        message_enc="message",
+        status="new",
+        meta={},
+    )
+    other = SimpleNamespace(
+        id=uuid4(),
+        idempotency_key="other-key",
+        email_enc="other@example.test",
+        phone_blind=None,
+    )
+    subject_consent = SimpleNamespace(revoked_at=None)
+    other_consent = SimpleNamespace(revoked_at=None)
+
+    class Session:
+        calls = 0
+
+        async def execute(self, statement):
+            self.calls += 1
+            if self.calls == 1:
+                return Result([subject, other])
+            params = statement.compile().params
+            assert ["blind:subject-key"] in params.values()
+            assert "blind:other-key" not in params.values()
+            return Result([subject_consent])
+
+    monkeypatch.setattr(dsar, "get_encryptor", Encryptor)
+    monkeypatch.setattr(dsar, "get_blind", BlindIndex)
+
+    result = asyncio.run(
+        dsar.process_dsar_job(
+            Session(),
+            tenant_id=uuid4(),
+            action="delete",
+            subject_email="subject@example.test",
+        )
+    )
+
+    assert result == {"action": "delete", "leads_erased": 1, "consents_revoked": 1}
+    assert subject_consent.revoked_at is not None
+    assert other_consent.revoked_at is None
 
 
 def test_audit_chain_verifier_accepts_valid_entries_and_flags_tampering():

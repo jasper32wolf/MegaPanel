@@ -3,7 +3,7 @@ from __future__ import annotations
 import ipaddress
 import socket
 from dataclasses import dataclass
-from urllib.parse import urlparse
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -32,6 +32,13 @@ def _is_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     return any(ip in net for net in _BLOCKED_NETWORKS)
 
 
+@dataclass(frozen=True)
+class PinnedURL:
+    transport_url: str
+    host_header: str
+    sni_hostname: str
+
+
 @dataclass
 class SSRFGuard:
     """DNS resolve + private IP block + socket-level pin for outbound fetches."""
@@ -48,36 +55,50 @@ class SSRFGuard:
             ip = ipaddress.ip_address(info[4][0])
             if _is_blocked(ip):
                 raise SSRFBlockedError(f"Blocked private/loopback IP for {host}: {ip}")
-        # Pin first public IP
         return str(ipaddress.ip_address(infos[0][4][0]))
 
     def validate_url(self, url: str) -> tuple[str, str, int]:
-        parsed = urlparse(url)
+        parsed = urlsplit(url)
         if parsed.scheme not in {"http", "https"}:
             raise SSRFBlockedError("Only http/https allowed")
         if not parsed.hostname:
             raise SSRFBlockedError("Missing hostname")
-        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        try:
+            port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        except ValueError as exc:
+            raise SSRFBlockedError("Invalid port") from exc
         pinned_ip = self.resolve_safe(parsed.hostname)
         return pinned_ip, parsed.hostname, port
 
-    async def fetch(self, url: str) -> httpx.Response:
+    def pin_url(self, url: str) -> PinnedURL:
         pinned_ip, hostname, port = self.validate_url(url)
-        parsed = urlparse(url)
-        # Connect to pinned IP, send Host header for virtual hosts
-        transport_url = f"{parsed.scheme}://{pinned_ip}:{port}{parsed.path or '/'}"
+        parsed = urlsplit(url)
+        default_port = 443 if parsed.scheme == "https" else 80
+        transport_host = f"[{pinned_ip}]" if ":" in pinned_ip else pinned_ip
+        host_header = hostname if port == default_port else f"{hostname}:{port}"
+        transport_url = f"{parsed.scheme}://{transport_host}:{port}{parsed.path or '/'}"
         if parsed.query:
             transport_url += f"?{parsed.query}"
+        return PinnedURL(
+            transport_url=transport_url,
+            host_header=host_header,
+            sni_hostname=hostname,
+        )
 
+    async def fetch(self, url: str) -> httpx.Response:
+        pinned = self.pin_url(url)
         async with httpx.AsyncClient(
             timeout=self.timeout,
             follow_redirects=self.allow_redirects,
             max_redirects=0,
         ) as client:
-            response = await client.get(
-                transport_url,
-                headers={"Host": hostname, "User-Agent": "SitePanelBot/0.1 (+internal)"},
+            request = client.build_request(
+                "GET",
+                pinned.transport_url,
+                headers={"Host": pinned.host_header, "User-Agent": "SitePanelBot/0.1 (+internal)"},
+                extensions={"sni_hostname": pinned.sni_hostname},
             )
+            response = await client.send(request)
             content = response.content
             if len(content) > self.max_response_bytes:
                 raise SSRFBlockedError("Response too large")

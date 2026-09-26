@@ -12,7 +12,7 @@ from app.api.v1.ai_providers import _adapter
 from app.api.v1.projects import _confirmed_facts, _project_or_404, _selection_snapshots
 from app.db.session import get_db
 from app.models import AIProviderConnection, AIRun, PagePlan, Project
-from app.providers import ProviderError, StructuredRequest
+from app.providers import ProviderError, StructuredRequest, Usage
 from app.schemas.ai import (
     AIRunOut,
     AIRunSummary,
@@ -37,6 +37,25 @@ router = APIRouter()
 def _hash_snapshot(snapshot: dict[str, Any]) -> str:
     encoded = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _usage_payload(usage: Usage | None) -> dict[str, int]:
+    if usage is None or not usage.known:
+        return {}
+    return {"input_tokens": usage.input_tokens, "output_tokens": usage.output_tokens}
+
+
+def _actual_cost(
+    usage: Usage | None,
+    pricing: dict[str, Any],
+    estimated_cost_usd: float,
+) -> float:
+    if usage is None or not usage.known:
+        return estimated_cost_usd
+    return (
+        usage.input_tokens * float(pricing["input_price_usd_per_million"])
+        + usage.output_tokens * float(pricing["output_price_usd_per_million"])
+    ) / 1_000_000
 
 
 def _proposal_out(run: AIRun) -> ArchitectureProposalOut:
@@ -94,6 +113,62 @@ def _summary_out(run: AIRun) -> AIRunSummary:
     )
 
 
+async def _reserve_ai_run(
+    *,
+    db: AsyncSession,
+    auth: AuthContext,
+    project_id: UUID | None,
+    provider_id: str,
+    model_id: str,
+    prompt: Any,
+    snapshot: dict[str, Any],
+    estimated_cost_usd: float,
+    action: str,
+) -> AIRun:
+    from app.services.ai_budget import reserve_ai_budget
+
+    await reserve_ai_budget(
+        db,
+        tenant_id=auth.tenant_id,
+        estimated_cost_usd=estimated_cost_usd,
+    )
+    run = AIRun(
+        tenant_id=auth.tenant_id,
+        project_id=project_id,
+        action=action,
+        status="reserved",
+        provider_id=provider_id,
+        model_id=model_id,
+        prompt_id=prompt.prompt_id,
+        prompt_version=prompt.version,
+        prompt_hash=prompt.content_hash,
+        input_snapshot_hash=_hash_snapshot(snapshot),
+        input_snapshot=snapshot,
+        output={},
+        usage={},
+        cost_usd=estimated_cost_usd,
+        error_code="budget_reserved",
+    )
+    db.add(run)
+    await db.flush()
+    await append_audit(
+        db,
+        action="ai.run.reserved",
+        payload={
+            "run_id": str(run.id),
+            "project_id": str(project_id),
+            "action": action,
+            "provider_id": provider_id,
+            "model_id": model_id,
+            "estimated_cost_usd": round(estimated_cost_usd, 8),
+        },
+        tenant_id=auth.tenant_id,
+        actor_id=auth.user.id,
+    )
+    await db.commit()
+    return run
+
+
 async def _record_failed_run(
     *,
     db: AsyncSession,
@@ -108,26 +183,31 @@ async def _record_failed_run(
     usage: dict[str, int] | None = None,
     cost_usd: float | None = None,
     request_id: str | None = None,
+    reservation: AIRun | None = None,
 ) -> None:
-    run = AIRun(
+    run = reservation or AIRun(
         tenant_id=auth.tenant_id,
         project_id=project_id,
         action=action,
-        status="failed",
         provider_id=provider_id,
         model_id=model_id,
         prompt_id=prompt.prompt_id,
         prompt_version=prompt.version,
         prompt_hash=prompt.content_hash,
         input_snapshot_hash=_hash_snapshot(snapshot),
-        request_id=request_id,
         input_snapshot=snapshot,
-        output={"pages": []},
-        usage=usage or {},
-        cost_usd=cost_usd,
-        error_code=error_code,
+        output={},
+        usage={},
     )
-    db.add(run)
+    run.status = "failed"
+    run.request_id = request_id or run.request_id
+    run.output = {"pages": []}
+    run.usage = usage or {}
+    if cost_usd is not None:
+        run.cost_usd = cost_usd
+    run.error_code = error_code
+    if reservation is None:
+        db.add(run)
     await db.flush()
     await append_audit(
         db,
@@ -394,6 +474,17 @@ async def propose_architecture(
         "provider_budget_confirmed": True,
         "estimate_confirmed_by_operator": body.confirmed_estimated_cost_usd,
     }
+    reservation = await _reserve_ai_run(
+        db=db,
+        auth=auth,
+        project_id=project_id,
+        provider_id=connection.provider_id,
+        model_id=body.model,
+        prompt=prompt,
+        snapshot=snapshot,
+        estimated_cost_usd=estimated_cost,
+        action="architecture.site-map",
+    )
     adapter = _adapter(connection, decrypt_provider_key(connection.encrypted_api_key))
     response = None
     try:
@@ -424,22 +515,20 @@ async def propose_architecture(
             prompt=prompt,
             snapshot=snapshot,
             error_code=exc.code,
+            usage=_usage_payload(exc.usage),
+            cost_usd=_actual_cost(exc.usage, pricing, estimated_cost),
+            request_id=exc.request_id,
+            reservation=reservation,
         )
         raise HTTPException(status_code=502, detail={"code": exc.code}) from exc
     except (ValueError, TypeError) as exc:
-        usage = None
-        actual_cost = None
-        request_id = None
-        if response is not None:
-            usage = {
-                "input_tokens": response.usage.input_tokens,
-                "output_tokens": response.usage.output_tokens,
-            }
-            actual_cost = (
-                response.usage.input_tokens * float(pricing["input_price_usd_per_million"])
-                + response.usage.output_tokens * float(pricing["output_price_usd_per_million"])
-            ) / 1_000_000
-            request_id = response.request_id
+        usage = _usage_payload(response.usage if response is not None else None)
+        actual_cost = _actual_cost(
+            response.usage if response is not None else None,
+            pricing,
+            estimated_cost,
+        )
+        request_id = response.request_id if response is not None else None
         await _record_failed_run(
             db=db,
             auth=auth,
@@ -452,14 +541,13 @@ async def propose_architecture(
             usage=usage,
             cost_usd=actual_cost,
             request_id=request_id,
+            reservation=reservation,
         )
         raise HTTPException(status_code=502, detail={"code": "invalid_ai_output"}) from exc
 
+    await db.delete(reservation)
     snapshot_hash = _hash_snapshot(snapshot)
-    actual_cost = (
-        response.usage.input_tokens * float(pricing["input_price_usd_per_million"])
-        + response.usage.output_tokens * float(pricing["output_price_usd_per_million"])
-    ) / 1_000_000
+    actual_cost = _actual_cost(response.usage, pricing, estimated_cost)
     cost_exceeded = actual_cost > body.max_cost_usd
     run = AIRun(
         tenant_id=auth.tenant_id,
@@ -475,12 +563,15 @@ async def propose_architecture(
         request_id=response.request_id,
         input_snapshot=snapshot,
         output={"pages": page_proposals},
-        usage={
-            "input_tokens": response.usage.input_tokens,
-            "output_tokens": response.usage.output_tokens,
-        },
+        usage=_usage_payload(response.usage),
         cost_usd=actual_cost,
-        error_code="actual_cost_exceeded_limit" if cost_exceeded else None,
+        error_code=(
+            "actual_cost_exceeded_limit"
+            if cost_exceeded
+            else "usage_unavailable"
+            if not response.usage.known
+            else None
+        ),
     )
     db.add(run)
     await db.flush()

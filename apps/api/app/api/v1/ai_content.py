@@ -7,7 +7,13 @@ from uuid import UUID
 
 from app.api.deps import AuthContext, require_roles
 from app.api.v1.ai_providers import _adapter
-from app.api.v1.ai_workspace import _record_failed_run, _run_out
+from app.api.v1.ai_workspace import (
+    _actual_cost,
+    _record_failed_run,
+    _reserve_ai_run,
+    _run_out,
+    _usage_payload,
+)
 from app.api.v1.projects import _plan_or_404, _project_or_404, _serialize_draft
 from app.core.security import sha256_hex
 from app.db.session import get_db
@@ -383,6 +389,17 @@ async def generate_seo_brief(
             "provider_budget_confirmed": True,
         },
     }
+    reservation = await _reserve_ai_run(
+        db=db,
+        auth=auth,
+        project_id=project_id,
+        provider_id=connection.provider_id,
+        model_id=body.model,
+        prompt=prompt,
+        snapshot=snapshot,
+        estimated_cost_usd=context["estimated_cost"],
+        action="seo.create-brief",
+    )
     response = None
     try:
         response = await _adapter(
@@ -417,22 +434,20 @@ async def generate_seo_brief(
             snapshot=snapshot,
             error_code=exc.code,
             action="seo.create-brief",
+            usage=_usage_payload(exc.usage),
+            cost_usd=_actual_cost(exc.usage, pricing, context["estimated_cost"]),
+            request_id=exc.request_id,
+            reservation=reservation,
         )
         raise HTTPException(status_code=502, detail={"code": exc.code}) from exc
     except (ValueError, TypeError) as exc:
-        usage = None
-        actual_cost = None
-        request_id = None
-        if response is not None:
-            usage = {
-                "input_tokens": response.usage.input_tokens,
-                "output_tokens": response.usage.output_tokens,
-            }
-            actual_cost = (
-                response.usage.input_tokens * float(pricing["input_price_usd_per_million"])
-                + response.usage.output_tokens * float(pricing["output_price_usd_per_million"])
-            ) / 1_000_000
-            request_id = response.request_id
+        usage = _usage_payload(response.usage if response is not None else None)
+        actual_cost = _actual_cost(
+            response.usage if response is not None else None,
+            pricing,
+            context["estimated_cost"],
+        )
+        request_id = response.request_id if response is not None else None
         await _record_failed_run(
             db=db,
             auth=auth,
@@ -446,13 +461,12 @@ async def generate_seo_brief(
             usage=usage,
             cost_usd=actual_cost,
             request_id=request_id,
+            reservation=reservation,
         )
         raise HTTPException(status_code=502, detail={"code": "invalid_ai_output"}) from exc
 
-    actual_cost = (
-        response.usage.input_tokens * float(pricing["input_price_usd_per_million"])
-        + response.usage.output_tokens * float(pricing["output_price_usd_per_million"])
-    ) / 1_000_000
+    await db.delete(reservation)
+    actual_cost = _actual_cost(response.usage, pricing, context["estimated_cost"])
     cost_exceeded = actual_cost > body.max_cost_usd
     run = AIRun(
         tenant_id=context["project"].tenant_id,
@@ -468,12 +482,15 @@ async def generate_seo_brief(
         request_id=response.request_id,
         input_snapshot=snapshot,
         output={"brief": output},
-        usage={
-            "input_tokens": response.usage.input_tokens,
-            "output_tokens": response.usage.output_tokens,
-        },
+        usage=_usage_payload(response.usage),
         cost_usd=actual_cost,
-        error_code="actual_cost_exceeded_limit" if cost_exceeded else None,
+        error_code=(
+            "actual_cost_exceeded_limit"
+            if cost_exceeded
+            else "usage_unavailable"
+            if not response.usage.known
+            else None
+        ),
     )
     db.add(run)
     await db.flush()
@@ -695,6 +712,17 @@ async def generate_ai_page_draft(
             "estimate_confirmed_by_operator": body.confirmed_estimated_cost_usd,
         },
     }
+    reservation = await _reserve_ai_run(
+        db=db,
+        auth=auth,
+        project_id=project_id,
+        provider_id=connection.provider_id,
+        model_id=body.model,
+        prompt=prompt,
+        snapshot=snapshot,
+        estimated_cost_usd=context["estimated_cost"],
+        action="content.page-draft-copy",
+    )
     response = None
     try:
         response = await _adapter(
@@ -727,22 +755,20 @@ async def generate_ai_page_draft(
             snapshot=snapshot,
             error_code=exc.code,
             action="content.page-draft-copy",
+            usage=_usage_payload(exc.usage),
+            cost_usd=_actual_cost(exc.usage, pricing, context["estimated_cost"]),
+            request_id=exc.request_id,
+            reservation=reservation,
         )
         raise HTTPException(status_code=502, detail={"code": exc.code}) from exc
     except (ValueError, TypeError) as exc:
-        usage = None
-        actual_cost = None
-        request_id = None
-        if response is not None:
-            usage = {
-                "input_tokens": response.usage.input_tokens,
-                "output_tokens": response.usage.output_tokens,
-            }
-            actual_cost = (
-                response.usage.input_tokens * float(pricing["input_price_usd_per_million"])
-                + response.usage.output_tokens * float(pricing["output_price_usd_per_million"])
-            ) / 1_000_000
-            request_id = response.request_id
+        usage = _usage_payload(response.usage if response is not None else None)
+        actual_cost = _actual_cost(
+            response.usage if response is not None else None,
+            pricing,
+            context["estimated_cost"],
+        )
+        request_id = response.request_id if response is not None else None
         await _record_failed_run(
             db=db,
             auth=auth,
@@ -756,6 +782,7 @@ async def generate_ai_page_draft(
             usage=usage,
             cost_usd=actual_cost,
             request_id=request_id,
+            reservation=reservation,
         )
         raise HTTPException(status_code=502, detail={"code": "invalid_ai_output"}) from exc
 
@@ -779,10 +806,8 @@ async def generate_ai_page_draft(
         [output["title"], output["h1"], output["meta_description"], output["unique_core"]]
     )
     content_hash = sha256_hex(content_text)
-    actual_cost = (
-        response.usage.input_tokens * float(pricing["input_price_usd_per_million"])
-        + response.usage.output_tokens * float(pricing["output_price_usd_per_million"])
-    ) / 1_000_000
+    await db.delete(reservation)
+    actual_cost = _actual_cost(response.usage, pricing, context["estimated_cost"])
     cost_exceeded = actual_cost > body.max_cost_usd
     ai_run = AIRun(
         tenant_id=context["project"].tenant_id,
@@ -798,12 +823,15 @@ async def generate_ai_page_draft(
         request_id=response.request_id,
         input_snapshot=snapshot,
         output={"copy": output},
-        usage={
-            "input_tokens": response.usage.input_tokens,
-            "output_tokens": response.usage.output_tokens,
-        },
+        usage=_usage_payload(response.usage),
         cost_usd=actual_cost,
-        error_code="actual_cost_exceeded_limit" if cost_exceeded else None,
+        error_code=(
+            "actual_cost_exceeded_limit"
+            if cost_exceeded
+            else "usage_unavailable"
+            if not response.usage.known
+            else None
+        ),
     )
     db.add(ai_run)
     await db.flush()
@@ -1048,6 +1076,17 @@ async def generate_block_slot_copy(
             "provider_budget_confirmed": True,
         },
     }
+    reservation = await _reserve_ai_run(
+        db=db,
+        auth=auth,
+        project_id=project_id,
+        provider_id=connection.provider_id,
+        model_id=body.model,
+        prompt=prompt,
+        snapshot=snapshot,
+        estimated_cost_usd=context["estimated_cost"],
+        action="content.block-slot-copy",
+    )
     response = None
     try:
         response = await _adapter(
@@ -1082,22 +1121,20 @@ async def generate_block_slot_copy(
             snapshot=snapshot,
             error_code=exc.code,
             action="content.block-slot-copy",
+            usage=_usage_payload(exc.usage),
+            cost_usd=_actual_cost(exc.usage, pricing, context["estimated_cost"]),
+            request_id=exc.request_id,
+            reservation=reservation,
         )
         raise HTTPException(status_code=502, detail={"code": exc.code}) from exc
     except (ValueError, TypeError) as exc:
-        usage = None
-        actual_cost = None
-        request_id = None
-        if response is not None:
-            usage = {
-                "input_tokens": response.usage.input_tokens,
-                "output_tokens": response.usage.output_tokens,
-            }
-            actual_cost = (
-                response.usage.input_tokens * float(pricing["input_price_usd_per_million"])
-                + response.usage.output_tokens * float(pricing["output_price_usd_per_million"])
-            ) / 1_000_000
-            request_id = response.request_id
+        usage = _usage_payload(response.usage if response is not None else None)
+        actual_cost = _actual_cost(
+            response.usage if response is not None else None,
+            pricing,
+            context["estimated_cost"],
+        )
+        request_id = response.request_id if response is not None else None
         await _record_failed_run(
             db=db,
             auth=auth,
@@ -1111,13 +1148,12 @@ async def generate_block_slot_copy(
             usage=usage,
             cost_usd=actual_cost,
             request_id=request_id,
+            reservation=reservation,
         )
         raise HTTPException(status_code=502, detail={"code": "invalid_ai_output"}) from exc
 
-    actual_cost = (
-        response.usage.input_tokens * float(pricing["input_price_usd_per_million"])
-        + response.usage.output_tokens * float(pricing["output_price_usd_per_million"])
-    ) / 1_000_000
+    await db.delete(reservation)
+    actual_cost = _actual_cost(response.usage, pricing, context["estimated_cost"])
     cost_exceeded = actual_cost > body.max_cost_usd
     run = AIRun(
         tenant_id=context["project"].tenant_id,
@@ -1133,12 +1169,15 @@ async def generate_block_slot_copy(
         request_id=response.request_id,
         input_snapshot=snapshot,
         output={"slot_copy": output},
-        usage={
-            "input_tokens": response.usage.input_tokens,
-            "output_tokens": response.usage.output_tokens,
-        },
+        usage=_usage_payload(response.usage),
         cost_usd=actual_cost,
-        error_code="actual_cost_exceeded_limit" if cost_exceeded else None,
+        error_code=(
+            "actual_cost_exceeded_limit"
+            if cost_exceeded
+            else "usage_unavailable"
+            if not response.usage.known
+            else None
+        ),
     )
     db.add(run)
     await db.flush()

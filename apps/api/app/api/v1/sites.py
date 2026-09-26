@@ -196,7 +196,7 @@ async def get_webhook_settings(
     _ensure_tenant_access(auth, site.tenant_id)
     contacts = (site.manifest or {}).get("contacts") or {}
     target_url = str(contacts.get("webhook_url") or "").strip() or None
-    secret_configured = bool(contacts.get("webhook_secret_enc") or contacts.get("webhook_secret"))
+    secret_configured = bool(contacts.get("webhook_secret_enc"))
     return {
         "target_url": target_url,
         "secret_configured": secret_configured,

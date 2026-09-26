@@ -25,6 +25,27 @@ test("оператор входит и видит обзор", async ({ page }) 
   await login(page);
 });
 
+test("оператор видит и отзывает другую сессию", async ({ page, browser }) => {
+  await login(page);
+
+  const otherContext = await browser.newContext({ baseURL: "http://127.0.0.1:5173" });
+  try {
+    await login(await otherContext.newPage());
+    await page.getByRole("link", { name: "Настройки" }).click();
+    await expect(page.getByRole("heading", { name: "Настройки" })).toBeVisible();
+
+    const revokeButtons = page.getByRole("button", { name: "Отозвать" });
+    const before = await revokeButtons.count();
+    expect(before).toBeGreaterThan(0);
+    await revokeButtons.first().click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await page.getByRole("dialog").getByRole("button", { name: "Отозвать" }).click();
+    await expect(revokeButtons).toHaveCount(before - 1);
+  } finally {
+    await otherContext.close();
+  }
+});
+
 test("оператор создаёт и готовит candidate без публикации", async ({ page }) => {
   const suffix = `${Date.now()}-${test.info().retry}`;
   const keyword = `E2E услуга ${suffix}`;

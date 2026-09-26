@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 from uuid import UUID
 
 from app.api.deps import AuthContext
 from app.api.v1.system import require_system_operator
+from app.core.security import sha256_hex
 from app.db.session import get_db
 from app.models import AIProviderConnection
 from app.providers import (
@@ -27,6 +29,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
+
+
+def _pricing_hash(pricing: dict) -> str:
+    return sha256_hex(
+        json.dumps(pricing, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    )
 
 
 def _out(connection: AIProviderConnection) -> ProviderConnectionOut:
@@ -81,6 +89,7 @@ async def update_provider_connection(
     if not connection:
         raise HTTPException(status_code=404, detail="Provider connection not found")
     changes = body.model_dump(exclude_unset=True)
+    previous_pricing = (connection.metadata_json or {}).get("model_pricing", {})
     model_ids = set(changes.get("models", connection.model_ids))
     if "model_pricing" in changes and not set(changes["model_pricing"]).issubset(model_ids):
         raise HTTPException(
@@ -99,7 +108,7 @@ async def update_provider_connection(
             **(connection.metadata_json or {}),
             "model_pricing": {
                 model_id: pricing.model_dump(mode="json")
-                for model_id, pricing in changes["model_pricing"].items()
+                for model_id, pricing in (body.model_pricing or {}).items()
             },
         }
     if "models" in changes:
@@ -114,6 +123,12 @@ async def update_provider_connection(
                 "credential_replaced": "api_key" in body.model_fields_set,
                 "models_updated": "models" in body.model_fields_set,
                 "label_updated": "label" in body.model_fields_set,
+                "pricing_updated": "model_pricing" in body.model_fields_set,
+                "pricing_model_ids": sorted(changes.get("model_pricing", {})),
+                "previous_pricing_hash": _pricing_hash(previous_pricing),
+                "updated_pricing_hash": _pricing_hash(
+                    (connection.metadata_json or {}).get("model_pricing", {})
+                ),
             },
             tenant_id=auth.tenant_id,
             actor_id=auth.user.id,

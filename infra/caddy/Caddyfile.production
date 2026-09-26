@@ -21,6 +21,7 @@
     Referrer-Policy strict-origin-when-cross-origin
     Strict-Transport-Security "max-age=31536000; includeSubDomains"
     X-Frame-Options DENY
+    Permissions-Policy "geolocation=(), microphone=(), camera=()"
   }
 }
 
@@ -32,6 +33,7 @@
     Referrer-Policy strict-origin-when-cross-origin
     Strict-Transport-Security "max-age=31536000; includeSubDomains"
     X-Frame-Options DENY
+    Permissions-Policy "geolocation=(), microphone=(), camera=()"
   }
 }
 
@@ -45,5 +47,7 @@
   header {
     X-Content-Type-Options nosniff
     Referrer-Policy strict-origin-when-cross-origin
+    X-Frame-Options DENY
+    Permissions-Policy "geolocation=(), microphone=(), camera=()"
   }
 }

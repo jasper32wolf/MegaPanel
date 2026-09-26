@@ -20,7 +20,7 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
 
 class CsrfMiddleware(BaseHTTPMiddleware):
     _safe_methods = {"GET", "HEAD", "OPTIONS"}
-    _exempt_paths = {"/api/v1/auth/login", "/api/v1/auth/refresh"}
+    _exempt_paths = {"/api/v1/auth/login"}
 
     async def dispatch(self, request: Request, call_next) -> Response:
         if (

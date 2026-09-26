@@ -107,7 +107,7 @@
 
 ### 7. Ежедневный опыт оператора
 
-**Частично реализован.** Project workspace и остальные operator actions используют accessible native dialogs вместо browser `confirm`/`prompt`; typed confirmation для удаления домена сохранено. Остаются полный keyboard/browser E2E и axe checks.
+**Частично реализован.** Project workspace и остальные operator actions используют accessible native dialogs вместо browser `confirm`/`prompt`; typed confirmation для удаления домена сохранено. Refresh rotation и state-changing domain health защищены CSRF contract; остаются полный keyboard/browser E2E, MFA/session rotation и axe checks.
 
 Приоритеты: очереди задач, статусы и причины блокировки, loading/empty/error/retry состояния, безопасные подтверждения, controlled reveal PII, keyboard navigation и browser-проверки основных действий. Раздел AI включает provider setup, архитектурный proposal→approval→draft PagePlan, отдельные PageDraft/SEO brief предложения и ограниченный server-owned `unique_core` block-slot proposal; произвольная генерация блоков, контента или публикация до отдельной реализации недоступны.
 
@@ -117,7 +117,7 @@
 
 ### 9. AI-ассистированная структура сайтов, блоки и SEO
 
-**Технический срез реализован частично и не прошёл PostgreSQL/browser/provider runtime proof.** VPS-wide provider registry/configuration, encrypted write-only keys, GLM/Zhipu и OpenAI-compatible gateways, versioned Markdown prompts, pricing quote, architecture proposal с approval→draft PagePlan, validated curated block selection, quote-gated plain-text copy/SEO metadata и отдельный approved `unique_core` block-slot proposal→noindex PageDraft import для утверждённого PagePlan существуют в working tree. Полный SEO/slot generation для произвольных полей, AI block selection, расширенные typed catalog slot schemas, Gemini/Mistral native adapters, provider discovery, async jobs и E2E пока не реализованы.
+**Технический срез реализован частично и не прошёл PostgreSQL/browser/provider runtime proof.** VPS-wide provider registry/configuration, encrypted write-only keys, GLM/Zhipu и OpenAI-compatible gateways, versioned Markdown prompts, pricing quote/audit hash, tenant-locked budget reservation с conservative accounting unknown usage, architecture proposal с approval→draft PagePlan, validated curated block selection, quote-gated plain-text copy/SEO metadata и отдельный approved `unique_core` block-slot proposal→noindex PageDraft import для утверждённого PagePlan существуют в working tree. Полный SEO/slot generation для произвольных полей, AI block selection, расширенные typed catalog slot schemas, Gemini/Mistral native adapters, provider discovery, async jobs и E2E пока не реализованы.
 
 - Поддерживать прямые native adapters и OpenAI-compatible endpoints для OpenRouter, gateway и operator-configured providers; произвольный endpoint требует серверного egress allowlist.
 - Тариф/free metadata должны иметь источник и timestamp; бесплатная модель выбирается только оператором и не является гарантией цены, квоты или uptime.

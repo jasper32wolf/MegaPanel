@@ -143,6 +143,13 @@ def test_legacy_onboarding_routes_are_not_available_in_the_release_api():
         assert client.get("/api/v1/onboarding/health-check").status_code == 404
 
 
+def test_lead_inbox_route_is_registered_before_dynamic_lead_paths():
+    paths = app.openapi()["paths"]
+
+    assert "get" in paths["/api/v1/leads/inbox"]
+    assert "/api/v1/leads/{lead_id}" in paths
+
+
 def test_system_control_routes_are_registered_in_the_release_api():
     paths = app.openapi()["paths"]
 

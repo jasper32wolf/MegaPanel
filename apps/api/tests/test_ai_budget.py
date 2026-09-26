@@ -3,7 +3,9 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from app.api.v1 import ai_workspace
 from app.core.config import Settings
+from app.providers import Usage
 from app.services import ai_budget
 from fastapi import HTTPException
 
@@ -42,6 +44,81 @@ def test_ai_budget_allows_under_limit(monkeypatch) -> None:
 
     assert len(db.statements) == 2
     assert all("ai_runs.tenant_id" in str(statement) for statement in db.statements)
+
+
+def test_unknown_provider_usage_keeps_the_conservative_estimate() -> None:
+    pricing = {
+        "input_price_usd_per_million": 1.0,
+        "output_price_usd_per_million": 2.0,
+    }
+
+    assert ai_workspace._actual_cost(Usage(), pricing, 0.6) == 0.6
+    assert ai_workspace._usage_payload(Usage()) == {}
+    assert ai_workspace._actual_cost(Usage(3, 4, reported=True), pricing, 0.6) == pytest.approx(
+        0.000011
+    )
+
+
+def test_failed_run_keeps_the_reservation_when_provider_usage_is_unknown(monkeypatch) -> None:
+    tenant_id = uuid4()
+    run = ai_workspace.AIRun(
+        tenant_id=tenant_id,
+        project_id=None,
+        action="test.reservation",
+        status="reserved",
+        provider_id="test-provider",
+        model_id="test-model",
+        prompt_id="test",
+        prompt_version="1",
+        prompt_hash="a" * 64,
+        input_snapshot_hash="b" * 64,
+        input_snapshot={},
+        output={},
+        usage={},
+        cost_usd=0.6,
+        error_code="budget_reserved",
+    )
+
+    class Database:
+        def __init__(self) -> None:
+            self.added: list[object] = []
+            self.commits = 0
+
+        def add(self, value: object) -> None:
+            self.added.append(value)
+
+        async def flush(self) -> None:
+            return None
+
+        async def commit(self) -> None:
+            self.commits += 1
+
+    database = Database()
+
+    async def append_audit(*_args, **_kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(ai_workspace, "append_audit", append_audit)
+
+    asyncio.run(
+        ai_workspace._record_failed_run(
+            db=database,
+            auth=SimpleNamespace(tenant_id=tenant_id, user=SimpleNamespace(id=uuid4())),
+            project_id=uuid4(),
+            provider_id="test-provider",
+            model_id="test-model",
+            prompt=SimpleNamespace(prompt_id="test", version="1", content_hash="a" * 64),
+            snapshot={},
+            error_code="network_error",
+            reservation=run,
+        )
+    )
+
+    assert database.added == []
+    assert database.commits == 1
+    assert run.status == "failed"
+    assert run.cost_usd == 0.6
+    assert run.error_code == "network_error"
 
 
 def test_ai_budget_kill_switch_blocks_before_provider_call(monkeypatch) -> None:

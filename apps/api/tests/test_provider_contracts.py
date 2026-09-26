@@ -56,9 +56,98 @@ def test_openai_compatible_parses_structured_output_and_usage(monkeypatch) -> No
             )
             result = await adapter.generate_structured(request())
             assert result.data == {"pages": []}
+            assert result.usage.known is True
             assert result.usage.input_tokens == 12
             assert result.usage.output_tokens == 7
             assert result.request_id == "req-1"
+
+    asyncio.run(run())
+
+
+def test_provider_marks_missing_usage_as_unknown(monkeypatch) -> None:
+    monkeypatch.setattr(egress, "allowlist", egress.allowlist | {"provider.test"})
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"pages": []}'}}]},
+        )
+
+    async def run() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            adapter = OpenAICompatibleAdapter(
+                provider_id="gateway",
+                base_url="https://provider.test/v1",
+                api_key="secret-value",
+                client=client,
+            )
+            result = await adapter.generate_structured(request())
+            assert result.usage.known is False
+            assert result.usage.input_tokens == 0
+            assert result.usage.output_tokens == 0
+
+    asyncio.run(run())
+
+
+def test_provider_keeps_explicit_zero_usage_as_known(monkeypatch) -> None:
+    monkeypatch.setattr(egress, "allowlist", egress.allowlist | {"provider.test"})
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": '{"pages": []}'}}],
+                "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+            },
+        )
+
+    async def run() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            adapter = OpenAICompatibleAdapter(
+                provider_id="gateway",
+                base_url="https://provider.test/v1",
+                api_key="secret-value",
+                client=client,
+            )
+            result = await adapter.generate_structured(request())
+            assert result.usage.known is True
+            assert result.usage.input_tokens == 0
+            assert result.usage.output_tokens == 0
+
+    asyncio.run(run())
+
+
+def test_provider_preserves_usage_when_structured_output_is_invalid(monkeypatch) -> None:
+    monkeypatch.setattr(egress, "allowlist", egress.allowlist | {"provider.test"})
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"x-request-id": "req-malformed"},
+            json={
+                "id": "chat-malformed",
+                "choices": [{"message": {"content": "not-json"}}],
+                "usage": {"prompt_tokens": 12, "completion_tokens": 7},
+            },
+        )
+
+    async def run() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            adapter = OpenAICompatibleAdapter(
+                provider_id="gateway",
+                base_url="https://provider.test/v1",
+                api_key="secret-value",
+                client=client,
+            )
+            with pytest.raises(ProviderError) as caught:
+                await adapter.generate_structured(request())
+
+            assert caught.value.code == "invalid_structured_output"
+            assert caught.value.request_id == "req-malformed"
+            assert caught.value.usage is not None
+            assert caught.value.usage.known is True
+            assert caught.value.usage.input_tokens == 12
+            assert caught.value.usage.output_tokens == 7
 
     asyncio.run(run())
 

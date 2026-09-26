@@ -23,7 +23,12 @@ from app.db.session import Base
 class Lead(Base):
     __tablename__ = "leads"
     __table_args__ = (
-        UniqueConstraint("tenant_id", "idempotency_key", name="uq_leads_tenant_idem"),
+        UniqueConstraint(
+            "tenant_id",
+            "site_id",
+            "idempotency_key",
+            name="uq_leads_tenant_site_idem",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -39,10 +44,10 @@ class Lead(Base):
     phone_blind: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     email_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
     name_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
-    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    message_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
     utm: Mapped[dict] = mapped_column(JSONB, default=dict)
     meta: Mapped[dict] = mapped_column(JSONB, default=dict)
-    idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
     qualification: Mapped[str | None] = mapped_column(String(32), nullable=True)
     crm_status: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

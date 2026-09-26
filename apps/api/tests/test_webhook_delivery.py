@@ -12,7 +12,12 @@ from app.models import Site, Tenant
 from app.models.leads import Lead, WebhookDelivery, WebhookDeliveryAttempt
 from app.services import webhook_delivery
 from app.services.leads import canonical_webhook_body, get_encryptor, sign_webhook
-from app.services.webhook_delivery import _retryable, create_lead_delivery, enqueue_delivery
+from app.services.webhook_delivery import (
+    _retryable,
+    create_lead_delivery,
+    enqueue_delivery,
+    wire_payload,
+)
 from app.worker import WorkerSettings, webhook_delivery_task
 from sqlalchemy import delete, select
 
@@ -76,6 +81,57 @@ def test_delivery_reuses_encrypted_site_secret():
     assert delivery.status == "queued"
 
 
+def test_delivery_rejects_plaintext_legacy_secret():
+    lead = SimpleNamespace(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        page_slug="/",
+        qualification="new",
+        idempotency_key="lead-1",
+        crm_status=None,
+    )
+    site = SimpleNamespace(
+        id=uuid4(),
+        domain="example.test",
+        manifest={
+            "contacts": {
+                "webhook_url": "https://hooks.example.test/lead",
+                "webhook_secret": "legacy-plaintext",
+            }
+        },
+    )
+    db = FakeDatabase()
+
+    delivery = asyncio.run(create_lead_delivery(db, lead=lead, site=site))
+
+    assert delivery is db.added[0]
+    assert delivery.target_secret_enc is None
+    assert delivery.status == "dead_letter"
+    assert delivery.last_error == "Webhook secret is not configured"
+
+
+def test_wire_payload_decrypts_pii_without_mutating_delivery_payload():
+    encryptor = get_encryptor()
+    delivery = SimpleNamespace(payload={"lead_id": str(uuid4())})
+    lead = SimpleNamespace(
+        phone_enc=encryptor.encrypt("+79991234567"),
+        email_enc=encryptor.encrypt("lead@example.test"),
+        name_enc=encryptor.encrypt("Тест"),
+        message_enc=encryptor.encrypt("Нужна консультация"),
+    )
+
+    payload = wire_payload(delivery, lead)
+
+    assert delivery.payload == {"lead_id": delivery.payload["lead_id"]}
+    assert payload == {
+        "lead_id": delivery.payload["lead_id"],
+        "phone": "+79991234567",
+        "email": "lead@example.test",
+        "name": "Тест",
+        "message": "Нужна консультация",
+    }
+
+
 def test_delivery_handles_an_undecryptable_secret(monkeypatch):
     class Encryptor:
         def decrypt(self, _: str) -> str:
@@ -120,6 +176,7 @@ def test_worker_delivery_uses_postgres_redis_and_no_external_webhook(monkeypatch
                     id=uuid4(),
                     tenant_id=tenant_id,
                     domain=f"webhook-{tenant_id.hex}.example.test",
+                    lead_token=f"lead-token-{tenant_id.hex}",
                     manifest={
                         "contacts": {
                             "webhook_url": "https://receiver.example.test/leads",
@@ -142,7 +199,8 @@ def test_worker_delivery_uses_postgres_redis_and_no_external_webhook(monkeypatch
                 delivery = await create_lead_delivery(db, lead=lead, site=site)
                 assert delivery is not None
                 delivery_id = delivery.id
-                expected_payload = dict(delivery.payload)
+                expected_payload = wire_payload(delivery, lead)
+                assert not {"phone", "email", "name", "message"}.intersection(delivery.payload)
                 await db.commit()
 
             assert await enqueue_delivery(delivery_id)

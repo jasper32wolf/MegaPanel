@@ -197,7 +197,7 @@ async def delete_domain(
     return {"id": str(domain_id), "deleted": True}
 
 
-@router.get("/health/{domain_id}")
+@router.post("/health/{domain_id}")
 async def domain_health(
     domain_id: UUID,
     auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager")),

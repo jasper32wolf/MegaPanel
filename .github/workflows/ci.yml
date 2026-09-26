@@ -35,6 +35,26 @@ jobs:
           exit-code: "1"
 
 
+  sbom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate CycloneDX SBOM
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: cyclonedx
+          output: site-panel.cdx.json
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: site-panel-cyclonedx-sbom
+          path: site-panel.cdx.json
+          if-no-files-found: error
+          retention-days: 30
+
+
   integration-services:
     runs-on: ubuntu-latest
     services:
@@ -65,6 +85,8 @@ jobs:
       REDIS_URL: redis://127.0.0.1:6379/15
       WEBHOOK_DELIVERY_INTEGRATION: "1"
       POSTGRES_RLS_INTEGRATION: "1"
+      AI_BUDGET_INTEGRATION: "1"
+      LEAD_IDEMPOTENCY_INTEGRATION: "1"
       APP_SECRET_KEY: integration-secret-key-for-ci-only
       APP_PEPPER: integration-pepper-for-ci-only
       BLIND_INDEX_PEPPER: integration-blind-index-for-ci-only
@@ -102,10 +124,10 @@ jobs:
 
           asyncio.run(main())
           PY
-      - name: Worker delivery and PostgreSQL RLS integration
+      - name: Worker delivery, RLS, budget and lead idempotency integration
         run: |
           cd apps/api
-          pytest tests/test_webhook_delivery.py tests/test_postgres_rls.py -q
+          pytest tests/test_webhook_delivery.py tests/test_postgres_rls.py tests/test_ai_budget_reservation.py tests/test_leads_ab.py -q
       - name: API health smoke
         run: |
           cd apps/api
@@ -242,6 +264,16 @@ jobs:
           done
           cd apps/panel
           npm run test:e2e
+      - name: Upload Playwright diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: panel-e2e-diagnostics
+          path: |
+            apps/panel/playwright-report
+            apps/panel/test-results
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Print E2E logs
         if: failure()
         run: |

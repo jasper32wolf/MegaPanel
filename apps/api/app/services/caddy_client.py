@@ -81,6 +81,9 @@ class CaddyClient:
                     "set": {
                         "X-Content-Type-Options": ["nosniff"],
                         "Referrer-Policy": ["strict-origin-when-cross-origin"],
+                        "Strict-Transport-Security": ["max-age=31536000; includeSubDomains"],
+                        "X-Frame-Options": ["DENY"],
+                        "Permissions-Policy": ["geolocation=(), microphone=(), camera=()"],
                     }
                 },
             },
@@ -101,7 +104,7 @@ class CaddyClient:
         }
         result = await self._request("PUT", f"/id/site-{hostname}", route)
         if not self._ok(result):
-            created = await self._request("POST", "/config/apps/http/servers/srv0/routes", route)
+            created = await self._request("POST", "/config/apps/http/servers/srv0/routes/0", route)
             return {
                 "ok": self._ok(created),
                 "upsert": result,

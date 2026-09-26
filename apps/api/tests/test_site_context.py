@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -13,6 +15,20 @@ from app.schemas.common import SiteCreate
 from fastapi import HTTPException
 from pydantic import ValidationError
 from site_panel_shared.manifests import SiteManifest
+
+
+def _legacy_secret_migration():
+    migration_path = (
+        Path(__file__).parents[1]
+        / "alembic"
+        / "versions"
+        / ("0021_encrypt_legacy_webhook_secrets.py")
+    )
+    spec = importlib.util.spec_from_file_location("legacy_webhook_secret_migration", migration_path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class WebhookSettingsDatabase:
@@ -60,6 +76,67 @@ def test_webhook_target_accepts_public_https_url():
     )
 
 
+def test_legacy_webhook_secret_migration_encrypts_only_safe_configuration():
+    class Encryptor:
+        def encrypt(self, value: str) -> str:
+            return f"encrypted:{value}"
+
+    manifest = _legacy_secret_migration().migrate_manifest(
+        {
+            "contacts": {
+                "webhook_url": " https://hooks.example.test/lead ",
+                "webhook_secret": "legacy-secret",
+            }
+        },
+        Encryptor(),
+    )
+
+    assert manifest == {
+        "contacts": {
+            "webhook_url": "https://hooks.example.test/lead",
+            "webhook_secret_enc": "encrypted:legacy-secret",
+        }
+    }
+
+
+def test_legacy_webhook_secret_migration_keeps_existing_ciphertext():
+    class Encryptor:
+        def encrypt(self, _: str) -> str:
+            raise AssertionError("An existing ciphertext must not be replaced")
+
+    manifest = _legacy_secret_migration().migrate_manifest(
+        {
+            "contacts": {
+                "webhook_url": "https://hooks.example.test/lead",
+                "webhook_secret": "legacy-secret",
+                "webhook_secret_enc": "existing-ciphertext",
+            }
+        },
+        Encryptor(),
+    )
+
+    assert manifest == {
+        "contacts": {
+            "webhook_url": "https://hooks.example.test/lead",
+            "webhook_secret_enc": "existing-ciphertext",
+        }
+    }
+
+
+def test_legacy_webhook_secret_migration_preserves_unsafe_target():
+    manifest = {
+        "contacts": {
+            "webhook_url": "http://127.0.0.1/lead",
+            "webhook_secret": "legacy-secret",
+        }
+    }
+
+    result = _legacy_secret_migration().migrate_manifest(manifest, object())
+
+    assert result is None
+    assert manifest["contacts"]["webhook_secret"] == "legacy-secret"
+
+
 def test_render_contacts_excludes_webhook_configuration():
     assert render_contacts(
         {
@@ -74,6 +151,30 @@ def test_render_contacts_excludes_webhook_configuration():
 def test_bulk_contacts_cannot_set_webhook_credentials():
     with pytest.raises(ValidationError, match="site webhook endpoint"):
         BulkEditBody(site_ids=[uuid4()], contacts={"webhook_secret": "do-not-store-this"})
+
+
+def test_webhook_settings_do_not_accept_plaintext_legacy_secret():
+    tenant_id = uuid4()
+    site = SimpleNamespace(
+        id=uuid4(),
+        tenant_id=tenant_id,
+        manifest={
+            "contacts": {
+                "webhook_url": "https://hooks.example.test/lead",
+                "webhook_secret": "legacy-plaintext",
+            }
+        },
+    )
+    db = WebhookSettingsDatabase(site)
+    auth = SimpleNamespace(role="superadmin", tenant_id=tenant_id, user=SimpleNamespace(id=uuid4()))
+
+    result = asyncio.run(sites_api.get_webhook_settings(site.id, auth, db))
+
+    assert result == {
+        "target_url": "https://hooks.example.test/lead",
+        "secret_configured": False,
+        "configured": False,
+    }
 
 
 def test_webhook_settings_encrypt_secret_and_redact_response(monkeypatch: pytest.MonkeyPatch):

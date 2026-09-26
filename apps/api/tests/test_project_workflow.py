@@ -4,8 +4,9 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from app.api.v1.projects import _selection_snapshots
+from app.api.v1.projects import _public_fact_values, _selection_snapshots
 from app.schemas.workflow import (
+    FactRevisionCreate,
     LeadOutcomeIn,
     PagePlanCreate,
     ProjectGeoUpdate,
@@ -47,6 +48,28 @@ def test_page_plan_normalizes_valid_path_slug():
 def test_page_plan_rejects_invalid_path_slug(slug: str):
     with pytest.raises(ValidationError, match="Page path"):
         PagePlanCreate(slug=slug, objective="Ремонт техники", kit_key="service-local-v1")
+
+
+@pytest.mark.parametrize("field", ["webhook_url", "webhook_secret", "webhook_secret_enc"])
+def test_fact_revision_rejects_protected_webhook_fields(field: str):
+    with pytest.raises(ValidationError, match="webhook credentials"):
+        FactRevisionCreate(facts={"service": "Ремонт", "contacts": {field: "secret"}})
+
+
+def test_legacy_fact_serialization_removes_protected_webhook_fields():
+    facts = _public_fact_values(
+        {
+            "service": "Ремонт",
+            "contacts": {
+                "phone": "+79990000000",
+                "webhook_url": "https://hooks.example.test/lead",
+                "webhook_secret": "plaintext",
+                "webhook_secret_enc": "encrypted",
+            },
+        }
+    )
+
+    assert facts["contacts"] == {"phone": "+79990000000"}
 
 
 def test_project_selection_requires_keywords_and_primary_geo():

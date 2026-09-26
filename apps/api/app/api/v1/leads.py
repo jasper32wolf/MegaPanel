@@ -4,10 +4,10 @@ import csv
 import io
 import json
 from datetime import UTC, datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from app.api.deps import AuthContext, require_roles
-from app.core.rate_limit import client_ip, lead_limiter
+from app.core.rate_limit import client_ip, rate_limit_key, shared_lead_limiter
 from app.db.session import get_db
 from app.models import Site
 from app.models.leads import Consent, Lead, WebhookDelivery, WebhookDeliveryAttempt
@@ -27,6 +27,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
@@ -41,8 +42,8 @@ class PublicLeadIn(BaseModel):
     message: str | None = None
     page_slug: str | None = None
     website: str | None = None
-    form_ts: float | None = None
-    idempotency_key: str | None = None
+    form_ts: float = Field(allow_inf_nan=False)
+    idempotency_key: str = Field(min_length=16, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
     utm: dict = Field(default_factory=dict)
     consent: bool = False
 
@@ -97,9 +98,12 @@ async def create_public_lead(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    lead_limiter.check(f"lead:{client_ip(request)}")
-    if check_honeypot(body.website) or check_time_lock(body.form_ts):
+    ip = client_ip(request)
+    await shared_lead_limiter.check(rate_limit_key("lead", ip))
+    if check_honeypot(body.website):
         return {"ok": True, "id": "suppressed"}
+    if check_time_lock(body.form_ts):
+        raise HTTPException(status_code=400, detail="Invalid form timestamp")
     if not body.consent:
         raise HTTPException(status_code=400, detail="Consent required")
 
@@ -111,17 +115,6 @@ async def create_public_lead(
     if not site:
         raise HTTPException(status_code=404, detail="Site not found")
 
-    if body.idempotency_key:
-        existing = await db.execute(
-            select(Lead).where(
-                Lead.tenant_id == site.tenant_id,
-                Lead.idempotency_key == body.idempotency_key,
-            )
-        )
-        hit = existing.scalar_one_or_none()
-        if hit:
-            return {"ok": True, "id": str(hit.id), "deduped": True}
-
     enc = get_encryptor()
     blind = get_blind()
     qualification = qualify_lead_local(body.message, body.phone)
@@ -130,6 +123,7 @@ async def create_public_lead(
         status = "qualified"
 
     lead = Lead(
+        id=uuid4(),
         tenant_id=site.tenant_id,
         site_id=site.id,
         page_slug=body.page_slug,
@@ -138,19 +132,55 @@ async def create_public_lead(
         phone_blind=blind.index(body.phone),
         email_enc=enc.encrypt(body.email) if body.email else None,
         name_enc=enc.encrypt(body.name) if body.name else None,
-        message=body.message,
+        message_enc=enc.encrypt(body.message) if body.message else None,
         utm=body.utm,
-        meta={"ip_hash": blind.index(client_ip(request))},
+        meta={"ip_hash": blind.index(ip)},
         idempotency_key=body.idempotency_key,
         qualification=qualification,
     )
-    db.add(lead)
-    await db.flush()
+    inserted_id = (
+        await db.execute(
+            pg_insert(Lead)
+            .values(
+                id=lead.id,
+                tenant_id=lead.tenant_id,
+                site_id=lead.site_id,
+                page_slug=lead.page_slug,
+                status=lead.status,
+                phone_enc=lead.phone_enc,
+                phone_blind=lead.phone_blind,
+                email_enc=lead.email_enc,
+                name_enc=lead.name_enc,
+                message_enc=lead.message_enc,
+                utm=lead.utm,
+                meta=lead.meta,
+                idempotency_key=lead.idempotency_key,
+                qualification=lead.qualification,
+            )
+            .on_conflict_do_nothing(
+                index_elements=[Lead.tenant_id, Lead.site_id, Lead.idempotency_key]
+            )
+            .returning(Lead.id)
+        )
+    ).scalar_one_or_none()
+    if inserted_id is None:
+        hit = (
+            await db.execute(
+                select(Lead).where(
+                    Lead.tenant_id == site.tenant_id,
+                    Lead.site_id == site.id,
+                    Lead.idempotency_key == body.idempotency_key,
+                )
+            )
+        ).scalar_one()
+        return {"ok": True, "id": str(hit.id), "deduped": True}
+    lead = await db.get(Lead, inserted_id)
+    assert lead is not None
     db.add(
         Consent(
             tenant_id=site.tenant_id,
             site_id=site.id,
-            visitor_id=blind.index(body.idempotency_key or str(lead.id)),
+            visitor_id=blind.index(body.idempotency_key),
             purposes={"lead": True},
         )
     )
@@ -300,6 +330,7 @@ def _serialize_lead_outcome(outcome: LeadOutcome) -> dict:
     }
 
 
+@router.get("/inbox")
 async def lead_inbox(
     status: str | None = None,
     site_id: UUID | None = None,
@@ -397,7 +428,7 @@ async def export_leads(
                 _csv_cell(encryptor.decrypt(lead.phone_enc) if lead.phone_enc else None),
                 _csv_cell(encryptor.decrypt(lead.email_enc) if lead.email_enc else None),
                 _csv_cell(encryptor.decrypt(lead.name_enc) if lead.name_enc else None),
-                _csv_cell(lead.message),
+                _csv_cell(encryptor.decrypt(lead.message_enc) if lead.message_enc else None),
                 _csv_cell(json.dumps(lead.utm or {}, ensure_ascii=False, separators=(",", ":"))),
                 _csv_cell(lead.created_at.isoformat() if lead.created_at else None),
             ]
@@ -481,7 +512,7 @@ async def reveal_lead_pii(
         "phone": encryptor.decrypt(lead.phone_enc) if lead.phone_enc else None,
         "email": encryptor.decrypt(lead.email_enc) if lead.email_enc else None,
         "name": encryptor.decrypt(lead.name_enc) if lead.name_enc else None,
-        "message": lead.message,
+        "message": encryptor.decrypt(lead.message_enc) if lead.message_enc else None,
     }
 
 

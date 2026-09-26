@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
 import time
 from typing import Any
 
@@ -26,11 +27,17 @@ def check_honeypot(website_field: str | None) -> bool:
     return bool(website_field and website_field.strip())
 
 
-def check_time_lock(form_ts: float | None, *, min_seconds: float = 2.5) -> bool:
-    """Return True if spam (submitted too fast)."""
-    if form_ts is None:
-        return False
-    return (time.time() - form_ts) < min_seconds
+def check_time_lock(
+    form_ts: float,
+    *,
+    min_seconds: float = 2.5,
+    max_seconds: float = 24 * 60 * 60,
+    now: float | None = None,
+) -> bool:
+    """Return True when a form timestamp is invalid or suspicious."""
+    submitted_at = time.time() if now is None else now
+    age = submitted_at - form_ts
+    return not math.isfinite(form_ts) or age < min_seconds or age > max_seconds
 
 
 def qualify_lead_local(message: str | None, phone: str | None) -> str:
@@ -57,22 +64,26 @@ async def dispatch_webhook(url: str, payload: dict[str, Any], secret: str) -> di
     from site_panel_security import SSRFBlockedError, SSRFGuard
 
     try:
-        SSRFGuard().validate_url(url)
+        pinned = SSRFGuard().pin_url(url)
     except SSRFBlockedError as exc:
         return {"ok": False, "error": f"ssrf_blocked: {exc}"}
     body = canonical_webhook_body(payload)
     signature = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
     try:
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
-            resp = await client.post(
-                url,
+            request = client.build_request(
+                "POST",
+                pinned.transport_url,
                 content=body,
                 headers={
+                    "Host": pinned.host_header,
                     "X-Signature-SHA256": signature,
                     "Content-Type": "application/json",
                     "Idempotency-Key": str(payload.get("idempotency_key", "")),
                 },
+                extensions={"sni_hostname": pinned.sni_hostname},
             )
+            resp = await client.send(request)
             return {"status": resp.status_code, "ok": resp.status_code < 300}
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": str(exc)}

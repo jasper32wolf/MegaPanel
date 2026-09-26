@@ -26,6 +26,7 @@ from app.models import (
     SitePage,
 )
 from app.schemas.workflow import (
+    PROTECTED_CONTACT_FIELDS,
     BuildPublishRequest,
     BuildRollbackRequest,
     FactRevisionCreate,
@@ -98,12 +99,22 @@ def _facts_hash(facts: dict) -> str:
     return sha256_hex(json.dumps(facts, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
 
 
+def _public_fact_values(facts: dict) -> dict:
+    values = dict(facts or {})
+    contacts = values.get("contacts")
+    if isinstance(contacts, dict):
+        values["contacts"] = {
+            key: value for key, value in contacts.items() if key not in PROTECTED_CONTACT_FIELDS
+        }
+    return values
+
+
 def _serialize_fact(revision: ProjectFactRevision) -> dict:
     return {
         "id": str(revision.id),
         "version": revision.version,
         "state": revision.state,
-        "facts": revision.facts or {},
+        "facts": _public_fact_values(revision.facts or {}),
         "source_notes": revision.source_notes,
         "facts_hash": revision.facts_hash,
         "supersedes_id": str(revision.supersedes_id) if revision.supersedes_id else None,
@@ -1174,7 +1185,7 @@ async def apply_page_draft(
         raise HTTPException(
             status_code=409, detail={"blockers": ["Plan fact revision is unavailable"]}
         )
-    fact_values = facts.facts or {}
+    fact_values = _public_fact_values(facts.facts or {})
     contacts = dict(fact_values.get("contacts") or {})
     if not project.domain:
         raise HTTPException(
@@ -1204,7 +1215,12 @@ async def apply_page_draft(
         manifest = SiteManifest.model_validate(site.manifest)
         pages = [existing for existing in manifest.pages if existing.slug != page.slug]
         manifest.pages = [*pages, page]
-        manifest.contacts = contacts
+        protected_contacts = {
+            key: value
+            for key, value in (manifest.contacts or {}).items()
+            if key in PROTECTED_CONTACT_FIELDS
+        }
+        manifest.contacts = {**contacts, **protected_contacts}
         manifest.legal = dict(fact_values.get("legal") or {})
         manifest.context = {**(manifest.context or {}), **context}
         manifest.version += 1

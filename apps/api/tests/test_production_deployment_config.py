@@ -10,10 +10,42 @@ CADDYFILE_PATH = ROOT / "infra" / "caddy" / "Caddyfile.production"
 WORKER_DOCKERFILE_PATH = ROOT / "infra" / "docker" / "Dockerfile.worker"
 PROVISIONER_PATH = ROOT / "scripts" / "install-production-vps.sh"
 DEV_INSTALLER_PATH = ROOT / "scripts" / "install.sh"
+CI_PATH = ROOT / ".github" / "workflows" / "ci.yml"
 
 
 def production_compose() -> dict:
     return yaml.safe_load(COMPOSE_PATH.read_text(encoding="utf-8"))
+
+
+def test_ci_publishes_a_cyclonedx_sbom_artifact():
+    workflow = yaml.safe_load(CI_PATH.read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["sbom"]["steps"]
+
+    assert any(
+        step.get("uses") == "aquasecurity/trivy-action@v0.36.0"
+        and step.get("with", {}).get("format") == "cyclonedx"
+        and step.get("with", {}).get("output") == "site-panel.cdx.json"
+        for step in steps
+    )
+    assert any(
+        step.get("uses") == "actions/upload-artifact@v4"
+        and step.get("with", {}).get("path") == "site-panel.cdx.json"
+        for step in steps
+    )
+
+
+def test_panel_e2e_always_uploads_playwright_diagnostics():
+    workflow = yaml.safe_load(CI_PATH.read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["panel-e2e"]["steps"]
+
+    assert any(
+        step.get("uses") == "actions/upload-artifact@v4"
+        and step.get("if") == "always()"
+        and step.get("with", {}).get("name") == "panel-e2e-diagnostics"
+        and "apps/panel/playwright-report" in step.get("with", {}).get("path", "")
+        and "apps/panel/test-results" in step.get("with", {}).get("path", "")
+        for step in steps
+    )
 
 
 def test_production_compose_exposes_only_caddy_http_ports():
@@ -57,6 +89,8 @@ def test_caddy_proxies_only_through_the_public_origins():
     assert "reverse_proxy panel:80" in config
     assert "/.well-known/security.txt" not in config
     assert "Strict-Transport-Security" in config
+    assert config.count('Permissions-Policy "geolocation=(), microphone=(), camera=()"') == 3
+    assert config.count("X-Frame-Options DENY") == 3
 
 
 def test_worker_image_uses_the_api_owned_delivery_registry():

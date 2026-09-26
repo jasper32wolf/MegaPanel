@@ -7,7 +7,6 @@ import time
 from typing import Any
 from urllib.parse import quote
 
-import httpx
 from site_panel_security import SSRFGuard
 
 
@@ -28,19 +27,9 @@ class NominatimClient:
         if query in self._cache:
             return self._cache[query]
         await self._throttle()
-        # Prefer SSRF-guarded resolve; Nominatim is public HTTPS
         url = f"https://nominatim.openstreetmap.org/search?q={quote(query)}&format=json&limit=5"
-        try:
-            resp = await self._guard.fetch(url)
-            data = resp.json()
-        except Exception:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.get(
-                    "https://nominatim.openstreetmap.org/search",
-                    params={"q": query, "format": "json", "limit": 5},
-                    headers={"User-Agent": "SitePanel/0.1 (geo-import; contact@example.com)"},
-                )
-                resp.raise_for_status()
-                data = resp.json()
+        resp = await self._guard.fetch(url)
+        resp.raise_for_status()
+        data = resp.json()
         self._cache[query] = data
         return data

@@ -10,6 +10,7 @@ type Operator = {
 };
 
 type Health = { status: string; version: string; env: string };
+type Readiness = { status: string };
 type TotpSetup = { secret: string; otpauth_url: string; pending: boolean };
 type Session = { id: string; current: boolean; created_at: string | null; expires_at: string; revoked_at: string | null };
 
@@ -17,6 +18,7 @@ export function SettingsPage() {
   const { token } = useAuth();
   const [operator, setOperator] = useState<Operator | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
+  const [readiness, setReadiness] = useState<Readiness | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [setup, setSetup] = useState<TotpSetup | null>(null);
   const [code, setCode] = useState("");
@@ -25,13 +27,15 @@ export function SettingsPage() {
   const [sessionToRevoke, setSessionToRevoke] = useState<Session | null>(null);
 
   async function load() {
-    const [me, apiHealth, activeSessions] = await Promise.all([
+    const [me, apiHealth, apiReadiness, activeSessions] = await Promise.all([
       api<Operator>("/api/v1/security/me", {}, token),
-      api<Health>("/api/v1/health", {}, token),
+      api<Health>("/api/v1/health/live", {}, token),
+      api<Readiness>("/api/v1/health/ready", {}, token).catch(() => null),
       api<Session[]>("/api/v1/security/sessions", {}, token),
     ]);
     setOperator(me);
     setHealth(apiHealth);
+    setReadiness(apiReadiness);
     setSessions(activeSessions);
   }
 
@@ -110,7 +114,7 @@ export function SettingsPage() {
         {operator?.mfa_enabled && <form onSubmit={disableTotp} className="stack"><p className="muted" style={{ margin: 0 }}>Чтобы отключить TOTP, подтвердите текущий одноразовый код. Это действие записывается в audit log.</p><label className="field">Текущий код<input value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 8))} inputMode="numeric" autoComplete="one-time-code" required /></label><button className="btn btn-ghost" type="submit" disabled={busy !== null || code.length < 6}>{busy === "disable" ? "Отключение…" : "Отключить TOTP"}</button></form>}
       </Surface>
       <Surface title="Активные сессии"><p className="muted">Отзыв другой сессии прекращает обновление токена на том устройстве. Уже выданный access token может действовать до 15 минут.</p><div className="table-wrap"><table className="table"><thead><tr><th>Создана</th><th>Истекает</th><th>Состояние</th><th></th></tr></thead><tbody>{sessions.map((session) => <tr key={session.id}><td className="muted">{session.created_at?.slice(0, 19) || "—"}</td><td className="muted">{session.expires_at.slice(0, 19)}</td><td><StatusPill tone={session.revoked_at ? "danger" : session.current ? "ok" : "accent"}>{session.revoked_at ? "отозвана" : session.current ? "текущая" : "активна"}</StatusPill></td><td>{!session.current && !session.revoked_at && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => setSessionToRevoke(session)}>{busy === `session:${session.id}` ? "Отзыв…" : "Отозвать"}</button>}</td></tr>)}{sessions.length === 0 && <tr><td colSpan={4} className="muted">Сессий нет</td></tr>}</tbody></table></div></Surface>
-      <Surface title="Системная диагностика"><div className="row"><StatusPill tone={health?.status === "ok" ? "ok" : "danger"}>API: {health?.status || "недоступен"}</StatusPill><span className="muted">Версия: {health?.version || "—"}</span><span className="muted">Режим: {health?.env || "—"}</span></div><p className="muted" style={{ marginBottom: 0 }}>Резервные копии и внешние сервисы проверяются только на сервере; панель не показывает и не хранит их секреты.</p></Surface>
+      <Surface title="Системная диагностика"><div className="row"><StatusPill tone={health?.status === "ok" ? "ok" : "danger"}>API: {health?.status || "недоступен"}</StatusPill><StatusPill tone={readiness?.status === "ok" ? "ok" : "danger"}>PostgreSQL / Redis: {readiness?.status || "недоступны"}</StatusPill><span className="muted">Версия: {health?.version || "—"}</span><span className="muted">Режим: {health?.env || "—"}</span></div><p className="muted" style={{ marginBottom: 0 }}>Резервные копии и внешние сервисы проверяются только на сервере; панель не показывает и не хранит их секреты.</p></Surface>
       <ConfirmDialog
         open={sessionToRevoke !== null}
         title="Отозвать сессию?"

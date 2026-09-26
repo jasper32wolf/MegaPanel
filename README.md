@@ -115,11 +115,10 @@ The legacy standalone `apps/worker` package was removed: the only supported work
 
 Последний локальный прогон в этом working tree:
 
-- `pytest apps/api/tests -q` — **258 passed**;
-- `ruff check packages apps/api` — проходит;
-- panel production build — проходит;
-- release-manager Linux state-transition shell test на Windows штатно пропускается;
-- Docker, browser и реальный VPS staging drill здесь не выполнялись.
+- `pytest apps/api/tests -q` — **315 passed, 4 Docker-gated/integration tests skipped**;
+- `ruff check .`, `ruff format --check .` и `git diff --check` — проходят;
+- panel production build проходит;
+- Docker/browser execution, hosted CI и реальный VPS staging drill здесь не выполнялись.
 
 Не заменяйте реальное доказательство конфигурационным review или unit tests. До public use выполните checklist из [README-VPS.md](./README-VPS.md) и обновите фактический журнал только подтверждёнными результатами.
 

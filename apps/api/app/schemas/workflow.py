@@ -12,6 +12,7 @@ PagePlanState = Literal["draft", "review", "approved", "rejected"]
 PageDraftState = Literal["queued", "generating", "draft", "review", "applied", "rejected", "failed"]
 QaVerdict = Literal["pass", "warn", "block"]
 _PAGE_PATH = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*")
+PROTECTED_CONTACT_FIELDS = frozenset({"webhook_url", "webhook_secret", "webhook_secret_enc"})
 
 
 def normalize_page_plan_slug(value: str) -> str:
@@ -48,6 +49,9 @@ class FactRevisionCreate(BaseModel):
     def require_business_facts(cls, value: dict) -> dict:
         if not value:
             raise ValueError("Provide confirmed business facts")
+        contacts = value.get("contacts")
+        if isinstance(contacts, dict) and PROTECTED_CONTACT_FIELDS.intersection(contacts):
+            raise ValueError("Configure webhook credentials through site webhook settings")
         return value
 
 

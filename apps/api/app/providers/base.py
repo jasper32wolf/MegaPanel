@@ -45,6 +45,11 @@ class StructuredRequest:
 class Usage:
     input_tokens: int = 0
     output_tokens: int = 0
+    reported: bool = False
+
+    @property
+    def known(self) -> bool:
+        return self.reported
 
 
 @dataclass(frozen=True)
@@ -57,10 +62,20 @@ class StructuredResponse:
 
 
 class ProviderError(RuntimeError):
-    def __init__(self, code: str, message: str, *, retryable: bool = False) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        retryable: bool = False,
+        usage: Usage | None = None,
+        request_id: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.retryable = retryable
+        self.usage = usage
+        self.request_id = request_id
 
 
 class ProviderAdapter(Protocol):

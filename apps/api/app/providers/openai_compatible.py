@@ -22,6 +22,24 @@ Transport = Callable[[httpx.Request], Awaitable[httpx.Response]]
 MAX_RESPONSE_BYTES = 1_048_576
 
 
+def _usage(data: dict[str, Any]) -> Usage:
+    usage_data = data.get("usage")
+    if not isinstance(usage_data, dict):
+        return Usage()
+    try:
+        return Usage(
+            input_tokens=int(
+                usage_data.get("prompt_tokens") or usage_data.get("input_tokens") or 0
+            ),
+            output_tokens=int(
+                usage_data.get("completion_tokens") or usage_data.get("output_tokens") or 0
+            ),
+            reported=True,
+        )
+    except (TypeError, ValueError):
+        return Usage()
+
+
 class OpenAICompatibleAdapter:
     kind = ProviderKind.OPENAI_COMPATIBLE
 
@@ -133,6 +151,8 @@ class OpenAICompatibleAdapter:
             "response_format": {"type": "json_object"},
         }
         data, response = await self._request(payload)
+        usage = _usage(data)
+        request_id = response.headers.get("x-request-id") or data.get("id")
         try:
             content = data["choices"][0]["message"]["content"]
             if not isinstance(content, str):
@@ -140,26 +160,24 @@ class OpenAICompatibleAdapter:
             result = json.loads(content)
         except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
             raise ProviderError(
-                "invalid_structured_output", "Provider returned invalid structured output"
+                "invalid_structured_output",
+                "Provider returned invalid structured output",
+                usage=usage,
+                request_id=request_id,
             ) from exc
         if not isinstance(result, dict):
             raise ProviderError(
-                "invalid_structured_output", "Provider output must be a JSON object"
+                "invalid_structured_output",
+                "Provider output must be a JSON object",
+                usage=usage,
+                request_id=request_id,
             )
-        usage_data = data.get("usage") or {}
         return StructuredResponse(
             provider_id=self.provider_id,
             model=request.model,
             data=result,
-            usage=Usage(
-                input_tokens=int(
-                    usage_data.get("prompt_tokens") or usage_data.get("input_tokens") or 0
-                ),
-                output_tokens=int(
-                    usage_data.get("completion_tokens") or usage_data.get("output_tokens") or 0
-                ),
-            ),
-            request_id=response.headers.get("x-request-id") or data.get("id"),
+            usage=usage,
+            request_id=request_id,
         )
 
     async def list_models(self) -> list[ProviderModel]:

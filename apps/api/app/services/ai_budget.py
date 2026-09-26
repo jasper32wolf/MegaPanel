@@ -6,7 +6,7 @@ from uuid import UUID
 from app.core.config import get_settings
 from app.models import AIRun
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -61,4 +61,23 @@ async def enforce_ai_budget(
         )
 
 
-__all__ = ["enforce_ai_budget"]
+async def reserve_ai_budget(
+    db: AsyncSession,
+    *,
+    tenant_id: UUID,
+    estimated_cost_usd: float,
+) -> None:
+    bind = db.get_bind() if hasattr(db, "get_bind") else None
+    if bind is not None and bind.dialect.name == "postgresql":
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:tenant_id))"),
+            {"tenant_id": str(tenant_id)},
+        )
+    await enforce_ai_budget(
+        db,
+        tenant_id=tenant_id,
+        estimated_cost_usd=estimated_cost_usd,
+    )
+
+
+__all__ = ["enforce_ai_budget", "reserve_ai_budget"]

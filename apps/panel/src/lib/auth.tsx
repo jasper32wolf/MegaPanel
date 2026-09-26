@@ -23,8 +23,12 @@ function isMutation(method?: string): boolean {
 }
 
 async function refreshSession(): Promise<boolean> {
+  const headers = new Headers();
+  const csrf = csrfToken();
+  if (csrf) headers.set("X-CSRF-Token", csrf);
   const res = await fetch("/api/v1/auth/refresh", {
     method: "POST",
+    headers,
     credentials: "include",
   });
   return res.ok;

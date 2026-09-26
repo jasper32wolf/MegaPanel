@@ -87,7 +87,7 @@ async def process_dsar_job(
                     "phone": enc.decrypt(lead.phone_enc) if lead.phone_enc else None,
                     "email": enc.decrypt(lead.email_enc) if lead.email_enc else None,
                     "name": enc.decrypt(lead.name_enc) if lead.name_enc else None,
-                    "message": lead.message,
+                    "message": enc.decrypt(lead.message_enc) if lead.message_enc else None,
                     "created_at": lead.created_at.isoformat() if lead.created_at else None,
                 }
             )
@@ -109,7 +109,7 @@ async def process_dsar_job(
             lead.phone_enc = None
             lead.email_enc = None
             lead.name_enc = None
-            lead.message = None
+            lead.message_enc = None
             lead.phone_blind = None
             lead.status = "erased"
             lead.meta = {**(lead.meta or {}), "dsar_erased_at": datetime.now(UTC).isoformat()}

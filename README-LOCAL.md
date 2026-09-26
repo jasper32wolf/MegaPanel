@@ -3,7 +3,7 @@
 Этот файл — **пошаговая инструкция «от нуля»** для локальной среды разработки.
 Читайте сверху вниз. Если что-то сломалось — сразу в раздел **«Вопросы и ответы»** в конце.
 
-> **Статус проверки 2026-09-25:** 269 API-тестов проходят, 2 PostgreSQL/Redis-gated integration tests skipped локально; production build панели проходит. Alembic graph достигает `0018_ai_provider_registry`; single-active-operator access, TOTP login, Project-first candidate workflow, encrypted webhook delivery, liveness/readiness, safe bulk contacts и production Compose isolation покрыты contract-регрессиями. Полный Docker/VPS, hosted CI и authenticated browser execution пока не подтверждены в этой среде. Актуальные границы и release gate: [`docs/ХОД-РАБОТ.md`](./docs/ХОД-РАБОТ.md#6-установка-и-режимы-запуска-фактический-статус).
+> **Статус проверки 2026-09-26:** 315 API-тестов проходят, 4 Docker-gated/integration tests skipped локально; production build панели проходит. Alembic graph достигает `0021_encrypt_legacy_webhook_secrets`; single-active-operator access, TOTP/session/CSRF contracts, Project-first candidate workflow, encrypted lead PII и webhook delivery, liveness/readiness, safe bulk contacts, CycloneDX SBOM definition и production Compose isolation покрыты regression-тестами. Полный Docker/VPS, hosted CI и authenticated browser execution пока не подтверждены в этой среде. Актуальные границы и release gate: [`docs/ХОД-РАБОТ.md`](./docs/ХОД-РАБОТ.md#6-установка-и-режимы-запуска-фактический-статус).
 
 Связанные файлы:
 
@@ -262,7 +262,7 @@ Set-Location -LiteralPath "e:\РАБОТА\ПАНЕЛЬ ДЛЯ ГЕНЕРАЦИ�
 
 ### Browser E2E: операторский workflow до candidate preview
 
-E2E-тест проверяет путь `миграция → bootstrap оператора → cookie-login → Dashboard → импорт keyword → география → Project → facts → PagePlan → draft/QA/apply → candidate preview` через локальный Vite proxy. Он создаёт только изолированные тестовые данные, не публикует сайт, не вызывает AI/CRM, не отправляет внешний webhook и не проверяет Caddy/TLS.
+E2E-тест проверяет cookie-login/Dashboard, видимость и подтверждённый отзыв другой cookie-сессии, а также путь `импорт keyword → география → Project → facts → PagePlan → draft/QA/apply → candidate preview` через локальный Vite proxy. Он создаёт только изолированные тестовые данные, не публикует сайт, не вызывает AI/CRM, не отправляет внешний webhook и не проверяет Caddy/TLS.
 
 Для локального запуска нужны доступные PostgreSQL и Redis, применённые миграции, отдельная тестовая БД и запущенные API (`127.0.0.1:8000`) с Vite (`127.0.0.1:5173`). Создайте временного оператора с теми же параметрами, что использует сценарий, затем установите Chromium и запустите тест:
 
@@ -280,15 +280,16 @@ npm run test:e2e
 
 В GitHub Actions отдельный `panel-e2e` job сам поднимает service containers, применяет миграции и создаёт ephemeral CI-оператора. Первый успешный GitHub run является доказательством только этого узкого operator workflow до candidate preview; публичный домен, лиды, webhook receiver, Caddy и restore проверяются отдельно.
 
-### PostgreSQL/Redis integration: delivery и RLS
+### PostgreSQL/Redis integration: delivery, RLS и AI budget reservation
 
-Для проверок worker delivery и RLS нужны PostgreSQL и Redis с применёнными миграциями. Тест доставки подменяет только внешний HTTP-dispatch и не отправляет запросов во внешнюю сеть; RLS-тест проверяет, что tenant-scoped сессия выключает maintenance bypass и видит только свои сайты.
+Для проверок worker delivery, RLS и AI budget reservation нужны PostgreSQL и Redis с применёнными миграциями. Тест доставки подменяет только внешний HTTP-dispatch и не отправляет запросов во внешнюю сеть; RLS-тест проверяет, что tenant-scoped сессия выключает maintenance bypass и видит только свои сайты; AI-тест запускает две независимые сессии и допускает одну reservation при общем лимите.
 
 ```powershell
 $env:WEBHOOK_DELIVERY_INTEGRATION="1"
 $env:POSTGRES_RLS_INTEGRATION="1"
+$env:AI_BUDGET_INTEGRATION="1"
 $env:PYTHONPATH="apps\api;packages\block-library\src;packages\shared\src;packages\security\src;packages\ssg\src"
-.\.venv\Scripts\python.exe -m pytest apps/api/tests/test_webhook_delivery.py apps/api/tests/test_postgres_rls.py -q
+.\.venv\Scripts\python.exe -m pytest apps/api/tests/test_webhook_delivery.py apps/api/tests/test_postgres_rls.py apps/api/tests/test_ai_budget_reservation.py -q
 ```
 
 В GitHub Actions это выполняет job `integration-services`. Успешный hosted run подтверждает service-container контракт, но не заменяет проверку production DB-role, Caddy, публичного receiver и restore drill.

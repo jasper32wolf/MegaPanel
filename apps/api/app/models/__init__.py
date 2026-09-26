@@ -101,7 +101,7 @@ class Site(Base):
     version: Mapped[int] = mapped_column(Integer, default=1)
     niche: Mapped[str | None] = mapped_column(String(128), nullable=True)
     indexnow_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    lead_token: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
+    lead_token: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     caddy_configured: Mapped[bool] = mapped_column(Boolean, default=False)
     project_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),

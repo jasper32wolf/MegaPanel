@@ -83,12 +83,14 @@ def test_rls_scopes_sites_after_maintenance_session() -> None:
                             id=first_site_id,
                             tenant_id=first_tenant_id,
                             domain=f"rls-first-{first_site_id.hex}.example.test",
+                            lead_token=f"lead-token-{first_site_id.hex}",
                             manifest={},
                         ),
                         Site(
                             id=second_site_id,
                             tenant_id=second_tenant_id,
                             domain=f"rls-second-{second_site_id.hex}.example.test",
+                            lead_token=f"lead-token-{second_site_id.hex}",
                             manifest={},
                         ),
                     ]
