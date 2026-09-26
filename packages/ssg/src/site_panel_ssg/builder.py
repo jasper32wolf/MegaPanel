@@ -298,6 +298,9 @@ class SiteBuilder:
                     html = html.replace(
                         "</body>", '  <script src="/site-panel-leads.js" defer></script>\n</body>'
                     )
+                html = html.replace(
+                    "</body>", '  <script src="/cookie-banner.js" defer></script>\n</body>'
+                )
                 schema = json.dumps(schema_org_jsonld(site, page, ctx), ensure_ascii=False).replace(
                     "</", "<\\/"
                 )

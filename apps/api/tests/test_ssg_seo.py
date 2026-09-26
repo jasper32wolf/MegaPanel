@@ -43,6 +43,7 @@ def test_ssg_writes_seo_artifacts(tmp_path: Path):
     assert (current / "index.html.gz").exists()
     assert (current / "privacy" / "index.html").exists()
     assert (current / "cookie-banner.js").exists()
+    assert '<script src="/cookie-banner.js" defer></script>' in html
 
 
 def test_thin_guard():

@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+from html import escape
 from typing import Any
 
 
 def render_privacy(org: dict[str, Any], jurisdiction: str = "152-FZ") -> str:
-    name = org.get("org") or org.get("name") or "Оператор"
-    inn = org.get("inn") or "—"
-    email = org.get("email") or "privacy@example.com"
-    address = org.get("address") or "—"
+    name = escape(str(org.get("org") or org.get("name") or "Оператор"))
+    inn = escape(str(org.get("inn") or "—"))
+    email = escape(str(org.get("email") or "privacy@example.com"))
+    address = escape(str(org.get("address") or "—"))
+    jurisdiction = escape(jurisdiction)
     return f"""<!DOCTYPE html>
 <html lang="ru"><head><meta charset="utf-8"><title>Политика конфиденциальности</title></head>
 <body>
@@ -24,7 +26,7 @@ def render_privacy(org: dict[str, Any], jurisdiction: str = "152-FZ") -> str:
 
 
 def render_terms(org: dict[str, Any]) -> str:
-    name = org.get("org") or "Исполнитель"
+    name = escape(str(org.get("org") or "Исполнитель"))
     return f"""<!DOCTYPE html>
 <html lang="ru"><head><meta charset="utf-8"><title>Пользовательское соглашение</title></head>
 <body>
