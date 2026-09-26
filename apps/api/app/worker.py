@@ -26,7 +26,7 @@ async def webhook_delivery_task(ctx: dict, delivery_id: str, trigger: str = "aut
         logger.info("webhook_delivery_processed", delivery_id=delivery_id, status=result["status"])
         return result
     except Exception as exc:  # noqa: BLE001
-        logger.error("webhook_delivery_failed", delivery_id=delivery_id, error=str(exc))
+        logger.exception("webhook_delivery_failed", delivery_id=delivery_id, error=str(exc))
         return {"error": str(exc)}
 
 

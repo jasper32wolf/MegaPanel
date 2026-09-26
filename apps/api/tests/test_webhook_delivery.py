@@ -208,7 +208,7 @@ def test_worker_delivery_uses_postgres_redis_and_no_external_webhook(monkeypatch
 
             assert await enqueue_delivery(delivery_id)
             result = await webhook_delivery_task({}, str(delivery_id))
-            assert result["status"] == "delivered"
+            assert result.get("status") == "delivered", result
 
             async with open_db_session() as db:
                 delivery = await db.get(WebhookDelivery, delivery_id)

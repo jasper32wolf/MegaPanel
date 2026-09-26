@@ -262,6 +262,31 @@ jobs:
             fi
             sleep 1
           done
+          python - <<'PY'
+          import http.cookiejar
+          import json
+          import os
+          import urllib.request
+
+          cookies = http.cookiejar.CookieJar()
+          client = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookies))
+          payload = json.dumps(
+              {
+                  "email": os.environ["E2E_OPERATOR_EMAIL"],
+                  "password": os.environ["E2E_OPERATOR_PASSWORD"],
+              }
+          ).encode()
+          login = urllib.request.Request(
+              "http://127.0.0.1:8000/api/v1/auth/login",
+              data=payload,
+              headers={"Content-Type": "application/json"},
+          )
+          with client.open(login) as response:
+              assert response.status == 200, response.read().decode()
+          with client.open("http://127.0.0.1:8000/api/v1/security/me") as response:
+              assert response.status == 200, response.read().decode()
+          print("Authenticated API smoke passed")
+          PY
           cd apps/panel
           npm run test:e2e
       - name: Upload Playwright diagnostics

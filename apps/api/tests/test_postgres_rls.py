@@ -19,6 +19,11 @@ RLS_ROLE = "site_panel_rls_test"
 RLS_ROLE_PASSWORD = "site-panel-rls-test-password"
 
 
+async def drop_rls_role(db) -> None:
+    await db.execute(text(f"DROP OWNED BY {RLS_ROLE}"))
+    await db.execute(text(f"DROP ROLE IF EXISTS {RLS_ROLE}"))
+
+
 class FakeSession:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, str] | None]] = []
@@ -56,7 +61,7 @@ def test_rls_scopes_sites_after_maintenance_session() -> None:
         rls_engine = None
         try:
             async with open_db_session() as db:
-                await db.execute(text(f"DROP ROLE IF EXISTS {RLS_ROLE}"))
+                await drop_rls_role(db)
                 await db.execute(
                     text(
                         f"CREATE ROLE {RLS_ROLE} LOGIN PASSWORD "
@@ -126,7 +131,7 @@ def test_rls_scopes_sites_after_maintenance_session() -> None:
                     await db.execute(
                         delete(Tenant).where(Tenant.id.in_((first_tenant_id, second_tenant_id)))
                     )
-                    await db.execute(text(f"DROP ROLE IF EXISTS {RLS_ROLE}"))
+                    await drop_rls_role(db)
                     await db.commit()
             finally:
                 await app_engine.dispose()
