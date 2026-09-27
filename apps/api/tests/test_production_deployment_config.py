@@ -81,6 +81,20 @@ def test_production_api_and_worker_are_hardened():
         assert service["tmpfs"] == ["/tmp"]
 
 
+def test_worker_healthcheck_uses_arq_liveness_key():
+    worker = production_compose()["services"]["worker"]
+
+    assert worker["healthcheck"] == {
+        "test": ["CMD", "arq", "--check", "app.worker.WorkerSettings"],
+        "interval": "30s",
+        "timeout": "5s",
+        "retries": 3,
+        "start_period": "40s",
+    }
+    source = (ROOT / "apps" / "api" / "app" / "worker.py").read_text(encoding="utf-8")
+    assert "health_check_interval = 30" in source
+
+
 def test_caddy_proxies_only_through_the_public_origins():
     config = CADDYFILE_PATH.read_text(encoding="utf-8")
 

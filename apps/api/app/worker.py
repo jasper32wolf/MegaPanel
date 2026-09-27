@@ -58,3 +58,4 @@ class WorkerSettings:
     redis_settings = RedisSettings.from_dsn(settings.redis_url)
     max_jobs = 10
     job_timeout = 600
+    health_check_interval = 30
