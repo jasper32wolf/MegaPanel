@@ -238,10 +238,13 @@ test("оператор создаёт и готовит candidate без пуб�
   await leadForm.getByLabel("Телефон").fill(leadPhone);
   await leadForm.getByLabel("Комментарий").fill(leadMessage);
   await leadForm.getByLabel("Согласие на обработку ПДн").check();
-  await leadForm.getByRole("button", { name: "Отправить", exact: true }).click();
+  const submitLead = leadForm.getByRole("button", { name: "Отправить", exact: true });
+  await expect(submitLead).toBeEnabled();
+  await submitLead.click();
   const leadResponse = await leadResponsePromise;
-  expect(leadResponse.status()).toBe(201);
-  const submittedLead = (await leadResponse.json()) as { id: string };
+  const leadResponseBody = await leadResponse.text();
+  expect(leadResponse.status(), `lead submit ${leadResponse.status()}: ${leadResponseBody}`).toBe(201);
+  const submittedLead = JSON.parse(leadResponseBody) as { id: string };
   await expect(leadForm.getByText("Заявка отправлена. Мы скоро свяжемся с вами.")).toBeVisible();
 
   const candidateRow = page.getByRole("row").filter({ has: preview });

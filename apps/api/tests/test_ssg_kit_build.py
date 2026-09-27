@@ -92,6 +92,9 @@ def test_ssg_kit_build_contains_core_blocks(tmp_path: Path):
     assert (nested / "cookie-banner.js").exists()
     lead_script = (root / "site-panel-leads.js").read_text(encoding="utf-8")
     assert "form.dataset.idempotencyKey" in lead_script
+    assert "const minFormAge = 2500;" in lead_script
+    assert "button.disabled = true;" in lead_script
+    assert "prepareForm(form);" in lead_script
 
 
 def test_candidate_build_does_not_activate_until_requested(tmp_path: Path):

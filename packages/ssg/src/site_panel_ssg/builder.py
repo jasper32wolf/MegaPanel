@@ -16,23 +16,36 @@ from site_panel_ssg.legal import COOKIE_BANNER_JS, write_legal_pack
 from site_panel_ssg.templates import content_hash, fill_slots, page_url, render_page
 
 THIN_CONTENT_MIN_CHARS = 350
+LEAD_FORM_MIN_AGE_MS = 2500
 LEAD_FORM_SCRIPT = """(() => {
   const query = new URLSearchParams(window.location.search);
+  const minFormAge = 2500;
   const setIdempotencyKey = (form) => {
     form.dataset.idempotencyKey = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
   };
-  const setTimestamp = (form) => {
+  const prepareForm = (form) => {
     const input = form.elements.namedItem("form_ts");
+    const button = form.querySelector('button[type="submit"]');
+    const readyAt = Date.now() + minFormAge;
     if (input) input.value = String(Date.now() / 1000);
+    form.dataset.readyAt = String(readyAt);
+    setIdempotencyKey(form);
+    if (button) {
+      button.disabled = true;
+      window.setTimeout(() => { button.disabled = false; }, minFormAge);
+    }
   };
   document.addEventListener("DOMContentLoaded", () => {
     document.querySelectorAll("form[data-site-panel-lead-form]").forEach((form) => {
-      setTimestamp(form);
-      setIdempotencyKey(form);
+      prepareForm(form);
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
-        const data = new FormData(form);
         const status = form.querySelector(".sp-lead-status");
+        if (Date.now() < Number(form.dataset.readyAt || 0)) {
+          if (status) status.textContent = "Подождите несколько секунд перед отправкой.";
+          return;
+        }
+        const data = new FormData(form);
         const button = form.querySelector('button[type="submit"]');
         const utm = Object.fromEntries(
           [...query.entries()].filter(([key]) => key.startsWith("utm_"))
@@ -61,8 +74,7 @@ LEAD_FORM_SCRIPT = """(() => {
           });
           if (!response.ok) throw new Error("lead_submit_failed");
           form.reset();
-          setTimestamp(form);
-          setIdempotencyKey(form);
+          prepareForm(form);
           if (status) status.textContent = "Заявка отправлена. Мы скоро свяжемся с вами.";
         } catch {
           if (status) status.textContent = "Не удалось отправить заявку. Попробуйте ещё раз.";
