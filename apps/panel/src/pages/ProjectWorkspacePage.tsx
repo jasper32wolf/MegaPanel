@@ -503,13 +503,13 @@ export function ProjectWorkspacePage() {
       </Surface>
       <Surface title="2. Семантика проекта">
         <p className="muted">Выберите уже импортированные ключевые фразы. Это не создаёт страницы и не запускает генерацию.</p>
-        <DataTable headers={["", "Фраза", "Намерение"]}>{keywords.map((keyword) => <tr key={keyword.id}><td><input aria-label={`Выбрать ${keyword.phrase}`} type="checkbox" checked={selectedKeywordSet.has(keyword.id)} onChange={() => toggleKeyword(keyword.id)} /></td><td>{keyword.phrase}</td><td>{keyword.meta?.intent || "—"}</td></tr>)}</DataTable>
+        <DataTable headers={["", "Фраза", "Намерение"]}>{keywords.map((keyword) => <tr key={keyword.id}><td><input aria-label={`Выбрать ${keyword.phrase}`} type="checkbox" disabled={busy !== null} checked={selectedKeywordSet.has(keyword.id)} onChange={() => toggleKeyword(keyword.id)} /></td><td>{keyword.phrase}</td><td>{keyword.meta?.intent || "—"}</td></tr>)}</DataTable>
         {keywords.length === 0 && <EmptyState title="В библиотеке нет ключевых фраз" hint="Сначала импортируйте CSV в разделе «Семантика»." />}
         <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={saveKeywords}>Сохранить выбранные ключи</button>
       </Surface>
       <Surface title="3. География проекта">
         <p className="muted">Выберите проверенные места из локального справочника и один основной город/район для страниц.</p>
-        <DataTable headers={["", "Основное", "Место", "Тип"]}>{places.map((place) => <tr key={place.id}><td><input aria-label={`Добавить ${place.name}`} type="checkbox" checked={selectedGeoSet.has(place.id)} onChange={() => toggleGeo(place.id)} /></td><td><input aria-label={`Основное место ${place.name}`} type="radio" name="primary-geo" disabled={!selectedGeoSet.has(place.id)} checked={primaryGeoId === place.id} onChange={() => setPrimaryGeoId(place.id)} /></td><td>{place.name}</td><td>{place.kind}</td></tr>)}</DataTable>
+        <DataTable headers={["", "Основное", "Место", "Тип"]}>{places.map((place) => <tr key={place.id}><td><input aria-label={`Добавить ${place.name}`} type="checkbox" disabled={busy !== null} checked={selectedGeoSet.has(place.id)} onChange={() => toggleGeo(place.id)} /></td><td><input aria-label={`Основное место ${place.name}`} type="radio" name="primary-geo" disabled={busy !== null || !selectedGeoSet.has(place.id)} checked={primaryGeoId === place.id} onChange={() => setPrimaryGeoId(place.id)} /></td><td>{place.name}</td><td>{place.kind}</td></tr>)}</DataTable>
         {places.length === 0 && <EmptyState title="Справочник географии пуст" hint="Добавьте город или район в разделе «География»." />}
         <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={saveGeo}>Сохранить географию</button>
       </Surface>

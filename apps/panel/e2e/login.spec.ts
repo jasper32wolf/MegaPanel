@@ -141,11 +141,17 @@ test("оператор создаёт и готовит candidate без пуб�
 
   await page.getByLabel(`Выбрать ${keyword}`).check();
   await page.getByRole("button", { name: "Сохранить выбранные ключи" }).click();
-  await page.getByLabel(`Добавить ${city}`).check();
+  const addPlace = page.getByLabel(`Добавить ${city}`);
+  await expect(addPlace).toBeEnabled();
+  await addPlace.check();
   const primaryPlace = page.getByLabel(`Основное место ${city}`);
   await expect(primaryPlace).toBeEnabled();
   await primaryPlace.check();
   await page.getByRole("button", { name: "Сохранить географию" }).click();
+  await expect(page.getByText("География проекта сохранена.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Сохранить географию" })).toBeEnabled();
+  await expect(addPlace).toBeChecked();
+  await expect(primaryPlace).toBeChecked();
 
   await page.getByLabel("Путь страницы").fill("/");
   await page.getByLabel("Цель страницы").fill("Проверка основного operator workflow");
