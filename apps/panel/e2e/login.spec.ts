@@ -139,8 +139,12 @@ test("оператор создаёт и готовит candidate без пуб�
   await page.getByRole("button", { name: "Подтвердить факты" }).click();
   await expect(page.getByText(/версия 1: confirmed/)).toBeVisible();
 
-  await page.getByLabel(`Выбрать ${keyword}`).check();
+  const selectedKeyword = page.getByLabel(`Выбрать ${keyword}`);
+  await selectedKeyword.check();
   await page.getByRole("button", { name: "Сохранить выбранные ключи" }).click();
+  await expect(page.getByText("Семантика проекта сохранена.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Сохранить выбранные ключи" })).toBeEnabled();
+  await expect(selectedKeyword).toBeChecked();
   const addPlace = page.getByLabel(`Добавить ${city}`);
   await expect(addPlace).toBeEnabled();
   await addPlace.check();
@@ -152,13 +156,25 @@ test("оператор создаёт и готовит candidate без пуб�
   await expect(page.getByRole("button", { name: "Сохранить географию" })).toBeEnabled();
   await expect(addPlace).toBeChecked();
   await expect(primaryPlace).toBeChecked();
+  await expect(selectedKeyword).toBeChecked();
 
   await page.getByLabel("Путь страницы").fill("/");
   await page.getByLabel("Цель страницы").fill("Проверка основного operator workflow");
   await page.getByLabel("Намерение").fill("заказать услугу");
   await page.getByRole("button", { name: "Создать черновик плана" }).click();
-  await expect(page.getByRole("button", { name: "На проверку" })).toBeVisible();
-  await page.getByRole("button", { name: "На проверку" }).click();
+  await expect(page.getByText("Черновик плана страницы создан.")).toBeVisible();
+  const submitPlan = page.getByRole("button", { name: "На проверку" });
+  await expect(submitPlan).toBeEnabled();
+  const reviewResponsePromise = page.waitForResponse((response) =>
+    response.request().method() === "POST" &&
+    /\/page-plans\/[^/]+\/submit-review$/.test(new URL(response.url()).pathname),
+  );
+  await submitPlan.click();
+  const reviewResponse = await reviewResponsePromise;
+  expect(reviewResponse.ok(), `submit-review ${reviewResponse.status()}: ${await reviewResponse.text()}`).toBe(true);
+  expect((await reviewResponse.json()).state).toBe("review");
+  await expect(page.locator("main [aria-busy]")).toHaveAttribute("aria-busy", "false");
+  expect(await page.getByRole("alert").allTextContents()).toEqual([]);
   const approvePlan = page.getByRole("button", { name: "Одобрить" }).first();
   await expect(approvePlan).toBeVisible();
   await approvePlan.click();
