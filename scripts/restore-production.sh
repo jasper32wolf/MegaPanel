@@ -88,7 +88,7 @@ load_backup_env() {
   # entries are accepted; substitutions, commands, exports, and other keys are
   # never evaluated or imported.
   unset RESTIC_REPOSITORY RESTIC_PASSWORD_FILE AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
-  unset BACKUP_KEEP_DAILY BACKUP_KEEP_WEEKLY BACKUP_KEEP_MONTHLY BACKUP_RUN_CHECK
+  unset BACKUP_KEEP_DAILY BACKUP_KEEP_WEEKLY BACKUP_KEEP_MONTHLY BACKUP_RUN_CHECK RESTIC_S3_BUCKET_LOOKUP
   while IFS= read -r line || [[ -n "$line" ]]; do
     line="${line%$'\r'}"
     [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
@@ -96,7 +96,7 @@ load_backup_env() {
     key="${BASH_REMATCH[1]}"
     value="${BASH_REMATCH[2]}"
     case "$key" in
-      RESTIC_REPOSITORY|RESTIC_PASSWORD_FILE|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|BACKUP_KEEP_DAILY|BACKUP_KEEP_WEEKLY|BACKUP_KEEP_MONTHLY|BACKUP_RUN_CHECK)
+      RESTIC_REPOSITORY|RESTIC_PASSWORD_FILE|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|RESTIC_S3_BUCKET_LOOKUP|BACKUP_KEEP_DAILY|BACKUP_KEEP_WEEKLY|BACKUP_KEEP_MONTHLY|BACKUP_RUN_CHECK)
         ;;
       *)
         die "backup_env_key_not_allowed"
@@ -109,6 +109,7 @@ load_backup_env() {
       RESTIC_PASSWORD_FILE) RESTIC_PASSWORD_FILE="$value" ;;
       AWS_ACCESS_KEY_ID) AWS_ACCESS_KEY_ID="$value" ;;
       AWS_SECRET_ACCESS_KEY) AWS_SECRET_ACCESS_KEY="$value" ;;
+      RESTIC_S3_BUCKET_LOOKUP) RESTIC_S3_BUCKET_LOOKUP="$value" ;;
       BACKUP_KEEP_DAILY) BACKUP_KEEP_DAILY="$value" ;;
       BACKUP_KEEP_WEEKLY) BACKUP_KEEP_WEEKLY="$value" ;;
       BACKUP_KEEP_MONTHLY) BACKUP_KEEP_MONTHLY="$value" ;;

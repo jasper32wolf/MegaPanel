@@ -12,7 +12,7 @@ from typing import Any
 from site_panel_shared.enums import IndexState
 from site_panel_shared.manifests import PageManifest, SiteManifest
 
-from site_panel_ssg.legal import write_legal_pack
+from site_panel_ssg.legal import COOKIE_BANNER_JS, write_legal_pack
 from site_panel_ssg.templates import content_hash, fill_slots, page_url, render_page
 
 THIN_CONTENT_MIN_CHARS = 350
@@ -287,19 +287,18 @@ class SiteBuilder:
         hashes: list[str] = []
         indexed_urls: list[str] = []
         page_meta: list[dict[str, Any]] = []
-        has_lead_forms = False
         ctx = {**(context or {}), "site_id": str(site.site_id)}
 
         try:
             for page in site.pages:
                 html = render_page(site, page, ctx)
-                if any(block.type == "lead_form" for block in page.blocks):
-                    has_lead_forms = True
+                has_lead_form = any(block.type == "lead_form" for block in page.blocks)
+                if has_lead_form:
                     html = html.replace(
-                        "</body>", '  <script src="/site-panel-leads.js" defer></script>\n</body>'
+                        "</body>", '  <script src="site-panel-leads.js" defer></script>\n</body>'
                     )
                 html = html.replace(
-                    "</body>", '  <script src="/cookie-banner.js" defer></script>\n</body>'
+                    "</body>", '  <script src="cookie-banner.js" defer></script>\n</body>'
                 )
                 schema = json.dumps(schema_org_jsonld(site, page, ctx), ensure_ascii=False).replace(
                     "</", "<\\/"
@@ -327,6 +326,11 @@ class SiteBuilder:
                 output = staging / "index.html" if not slug else staging / slug / "index.html"
                 output.parent.mkdir(parents=True, exist_ok=True)
                 output.write_text(html, encoding="utf-8")
+                (output.parent / "cookie-banner.js").write_text(COOKIE_BANNER_JS, encoding="utf-8")
+                if has_lead_form:
+                    (output.parent / "site-panel-leads.js").write_text(
+                        LEAD_FORM_SCRIPT, encoding="utf-8"
+                    )
                 if compress:
                     write_precompressed(output)
 
@@ -349,8 +353,6 @@ class SiteBuilder:
                 render_sitemap(site.domain, indexed_urls), encoding="utf-8"
             )
             write_legal_pack(staging, site.legal or {})
-            if has_lead_forms:
-                (staging / "site-panel-leads.js").write_text(LEAD_FORM_SCRIPT, encoding="utf-8")
             build_hash = hashlib.sha256("".join(hashes).encode()).hexdigest()
             (staging / "BUILD_HASH").write_text(build_hash, encoding="utf-8")
             (staging / "pages_meta.json").write_text(

@@ -39,7 +39,15 @@ def test_ssg_kit_build_contains_core_blocks(tmp_path: Path):
                 service="Ремонт",
                 blocks=blocks,
                 unique_core="Уникальное ядро превью комплекта для теста сборки.",
-            )
+            ),
+            PageManifest(
+                slug="/district",
+                title_template="{service} в {city_prep}",
+                h1_template="{service} в {city_prep}",
+                service="Ремонт",
+                blocks=blocks,
+                unique_core="Уникальное ядро вложенной страницы для теста сборки.",
+            ),
         ],
         contacts={"phone": "+7000"},
         legal={"org": "Test"},
@@ -70,11 +78,19 @@ def test_ssg_kit_build_contains_core_blocks(tmp_path: Path):
     assert 'data-lead-token="tttttttttttttttttttttttttttttttt"' in html
     assert 'data-endpoint="/api/v1/leads/public"' in html
     assert 'href="/cookie-policy/"' in html
-    assert (tmp_path / str(site_id) / "current" / "cookie-policy" / "index.html").exists()
-    assert (tmp_path / str(site_id) / "current" / "site-panel-leads.js").exists()
-    lead_script = (tmp_path / str(site_id) / "current" / "site-panel-leads.js").read_text(
-        encoding="utf-8"
-    )
+    assert 'src="site-panel-leads.js"' in html
+    assert 'src="cookie-banner.js"' in html
+    root = tmp_path / str(site_id) / "current"
+    nested = root / "district"
+    assert (root / "cookie-policy" / "index.html").exists()
+    assert (root / "site-panel-leads.js").exists()
+    assert (root / "cookie-banner.js").exists()
+    nested_html = (nested / "index.html").read_text(encoding="utf-8")
+    assert 'src="site-panel-leads.js"' in nested_html
+    assert 'src="cookie-banner.js"' in nested_html
+    assert (nested / "site-panel-leads.js").exists()
+    assert (nested / "cookie-banner.js").exists()
+    lead_script = (root / "site-panel-leads.js").read_text(encoding="utf-8")
     assert "form.dataset.idempotencyKey" in lead_script
 
 

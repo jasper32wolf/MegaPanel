@@ -37,17 +37,8 @@
   }
 }
 
-# Client-site vhosts are added by the Caddy Admin API. This fallback handles
-# static content before a hostname has an explicit vhost and never exposes the
-# admin panel or API directly.
+# Client-site vhosts are added by the Caddy Admin API. Never serve the shared
+# release volume from a catch-all host: it contains private candidate builds.
 :80 {
-  root * /srv/sites
-  encode zstd gzip
-  file_server
-  header {
-    X-Content-Type-Options nosniff
-    Referrer-Policy strict-origin-when-cross-origin
-    X-Frame-Options DENY
-    Permissions-Policy "geolocation=(), microphone=(), camera=()"
-  }
+  respond "Not found" 404
 }

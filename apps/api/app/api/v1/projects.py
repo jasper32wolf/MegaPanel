@@ -75,6 +75,23 @@ async def _project_or_404(db: AsyncSession, project_id: UUID, auth: AuthContext)
     return project
 
 
+async def _project_site_or_409(db: AsyncSession, project: Project) -> Site:
+    if not project.site_id:
+        raise HTTPException(status_code=409, detail="Project has no site")
+    site = (
+        await db.execute(
+            select(Site).where(Site.id == project.site_id, Site.tenant_id == project.tenant_id)
+        )
+    ).scalar_one_or_none()
+    if (
+        not site
+        or site.tenant_id != project.tenant_id
+        or (site.project_id is not None and site.project_id != project.id)
+    ):
+        raise HTTPException(status_code=409, detail="Project site link is invalid")
+    return site
+
+
 def _serialize_project(project: Project) -> dict:
     return {
         "id": str(project.id),
@@ -1212,7 +1229,7 @@ async def apply_page_draft(
     }
     page = PageManifest.model_validate(draft.page_manifest)
     if project.site_id:
-        site = (await db.execute(select(Site).where(Site.id == project.site_id))).scalar_one()
+        site = await _project_site_or_409(db, project)
         manifest = SiteManifest.model_validate(site.manifest)
         pages = [existing for existing in manifest.pages if existing.slug != page.slug]
         manifest.pages = [*pages, page]
@@ -1334,7 +1351,11 @@ async def list_project_builds(
         (
             await db.execute(
                 select(SiteBuild)
-                .where(SiteBuild.project_id == project.id)
+                .where(
+                    SiteBuild.project_id == project.id,
+                    SiteBuild.tenant_id == project.tenant_id,
+                    SiteBuild.site_id == project.site_id,
+                )
                 .order_by(SiteBuild.created_at.desc())
             )
         )
@@ -1366,7 +1387,7 @@ async def materialize_project_build(
         raise HTTPException(
             status_code=409, detail={"blockers": ["Apply a page draft before building"]}
         )
-    site = (await db.execute(select(Site).where(Site.id == project.site_id))).scalar_one()
+    site = await _project_site_or_409(db, project)
     manifest = SiteManifest.model_validate(site.manifest)
     rows = list(
         (await db.execute(select(SitePage).where(SitePage.site_id == site.id))).scalars().all()
@@ -1482,25 +1503,29 @@ async def preview_project_build(
     db: AsyncSession = Depends(get_db),
 ) -> FileResponse:
     project = await _project_or_404(db, project_id, auth)
+    if not project.site_id:
+        raise HTTPException(status_code=404, detail="Preview build not found")
+    site = await _project_site_or_409(db, project)
     build = (
         await db.execute(
-            select(SiteBuild).where(SiteBuild.id == build_id, SiteBuild.project_id == project.id)
+            select(SiteBuild).where(
+                SiteBuild.id == build_id,
+                SiteBuild.project_id == project.id,
+                SiteBuild.tenant_id == project.tenant_id,
+                SiteBuild.site_id == site.id,
+            )
         )
     ).scalar_one_or_none()
-    if (
-        not build
-        or build.status not in {"ready", "published"}
-        or not build.build_hash
-        or not project.site_id
-    ):
+    if not build or build.status not in {"ready", "published"} or not build.build_hash:
         raise HTTPException(status_code=404, detail="Preview build not found")
     root = (
         SiteBuilder(Path(settings.sites_root))
-        .release_path(str(project.site_id), build.build_hash)
+        .release_path(str(site.id), build.build_hash)
         .resolve()
     )
     relative = preview_path.strip("/")
-    target = (root / relative / "index.html" if relative else root / "index.html").resolve()
+    candidate = (root / relative).resolve() if relative else root / "index.html"
+    target = candidate if candidate.is_file() else (candidate / "index.html").resolve()
     if root not in target.parents or not target.is_file():
         raise HTTPException(status_code=404, detail="Preview page not found")
     return FileResponse(
@@ -1528,16 +1553,21 @@ async def publish_project_build(
             status_code=409,
             detail={"blockers": ["Run a successful DNS check before publish"]},
         )
+    site = await _project_site_or_409(db, project)
     build = (
         await db.execute(
-            select(SiteBuild).where(SiteBuild.id == build_id, SiteBuild.project_id == project.id)
+            select(SiteBuild).where(
+                SiteBuild.id == build_id,
+                SiteBuild.project_id == project.id,
+                SiteBuild.tenant_id == project.tenant_id,
+                SiteBuild.site_id == site.id,
+            )
         )
     ).scalar_one_or_none()
     if not build or build.status != "ready" or not build.build_hash:
         raise HTTPException(
             status_code=409, detail={"blockers": ["Select a ready candidate build"]}
         )
-    site = (await db.execute(select(Site).where(Site.id == project.site_id))).scalar_one()
     old_hash = site.build_hash
     builder = SiteBuilder(Path(settings.sites_root))
     if not builder.activate(str(site.id), build.build_hash):
@@ -1608,11 +1638,13 @@ async def rollback_project_build(
     project = await _project_or_404(db, project_id, auth)
     if not project.site_id:
         raise HTTPException(status_code=409, detail="Project has no site")
-    site = (await db.execute(select(Site).where(Site.id == project.site_id))).scalar_one()
+    site = await _project_site_or_409(db, project)
     target = (
         await db.execute(
             select(SiteBuild).where(
                 SiteBuild.project_id == project.id,
+                SiteBuild.tenant_id == project.tenant_id,
+                SiteBuild.site_id == site.id,
                 SiteBuild.build_hash == body.build_hash,
                 SiteBuild.status.in_(["published", "ready", "rolled_back"]),
             )

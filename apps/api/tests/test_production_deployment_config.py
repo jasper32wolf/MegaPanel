@@ -7,6 +7,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[3]
 COMPOSE_PATH = ROOT / "infra" / "docker" / "docker-compose.production.yml"
 CADDYFILE_PATH = ROOT / "infra" / "caddy" / "Caddyfile.production"
+DEV_CADDYFILE_PATH = ROOT / "infra" / "caddy" / "Caddyfile"
 WORKER_DOCKERFILE_PATH = ROOT / "infra" / "docker" / "Dockerfile.worker"
 PROVISIONER_PATH = ROOT / "scripts" / "install-production-vps.sh"
 DEV_INSTALLER_PATH = ROOT / "scripts" / "install.sh"
@@ -89,8 +90,17 @@ def test_caddy_proxies_only_through_the_public_origins():
     assert "reverse_proxy panel:80" in config
     assert "/.well-known/security.txt" not in config
     assert "Strict-Transport-Security" in config
-    assert config.count('Permissions-Policy "geolocation=(), microphone=(), camera=()"') == 3
-    assert config.count("X-Frame-Options DENY") == 3
+    assert config.count('Permissions-Policy "geolocation=(), microphone=(), camera=()"') == 2
+    assert config.count("X-Frame-Options DENY") == 2
+
+
+def test_caddy_fallback_never_serves_candidate_release_volume():
+    for path in (CADDYFILE_PATH, DEV_CADDYFILE_PATH):
+        config = path.read_text(encoding="utf-8")
+
+        assert "root * /srv/sites" not in config
+        assert "file_server" not in config
+        assert 'respond "Not found" 404' in config
 
 
 def test_worker_image_uses_the_api_owned_delivery_registry():

@@ -14,12 +14,16 @@ def set_csrf_cookies(client: TestClient, token: str = "csrf-token") -> None:
     client.cookies.set(CSRF_COOKIE_NAME, token)
 
 
-def test_login_remains_the_only_auth_mutation_without_csrf_cookie():
+def test_login_and_public_lead_submission_are_csrf_exempt():
     csrf_app = FastAPI()
     csrf_app.add_middleware(CsrfMiddleware)
 
     @csrf_app.post("/api/v1/auth/login")
     async def login() -> dict[str, bool]:
+        return {"ok": True}
+
+    @csrf_app.post("/api/v1/leads/public")
+    async def public_lead() -> dict[str, bool]:
         return {"ok": True}
 
     @csrf_app.post("/api/v1/auth/refresh")
@@ -29,6 +33,7 @@ def test_login_remains_the_only_auth_mutation_without_csrf_cookie():
     with TestClient(csrf_app) as client:
         assert client.post("/api/v1/auth/login").status_code == 200
         set_csrf_cookies(client)
+        assert client.post("/api/v1/leads/public").status_code == 200
         assert client.post("/api/v1/auth/refresh").status_code == 403
         assert (
             client.post("/api/v1/auth/refresh", headers={"X-CSRF-Token": "csrf-token"}).status_code

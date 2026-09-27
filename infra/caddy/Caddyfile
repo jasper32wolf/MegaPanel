@@ -3,14 +3,8 @@
   auto_https disable_redirects
 }
 
+# Per-site vhosts are added dynamically via Caddy Admin API. Candidate
+# releases share this volume and must not be exposed by an unknown host.
 :80 {
-  root * /srv/sites
-  encode zstd gzip
-  file_server
-  header {
-    X-Content-Type-Options nosniff
-    Referrer-Policy strict-origin-when-cross-origin
-  }
+  respond "Not found" 404
 }
-
-# Per-site vhosts are added dynamically via Caddy Admin API (phase 5).

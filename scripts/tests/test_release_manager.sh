@@ -22,6 +22,7 @@ SITE_ROOT="$TMP/site-panel"
 FAKE_BIN="$TMP/bin"
 LOG="$TMP/docker.log"
 RESTIC_PAYLOAD="$TMP/restic-payload"
+RESTIC_OPTIONS_LOG="$TMP/restic-options.log"
 mkdir -p "$SITE_ROOT/releases" "$SITE_ROOT/incoming" "$SITE_ROOT/shared/release-state" "$SITE_ROOT/bin" "$FAKE_BIN" "$RESTIC_PAYLOAD"
 printf '%s\n' \
   'APP_ENV=production' \
@@ -39,7 +40,10 @@ printf '%s\n' \
   'API_PUBLIC_URL=https://api.test' \
   'CORS_ORIGINS=https://panel.test' >"$SITE_ROOT/shared/.env"
 chmod 0600 "$SITE_ROOT/shared/.env"
-printf '%s\n' 'RESTIC_REPOSITORY=s3:test' "RESTIC_PASSWORD_FILE=$TMP/restic-password" >"$SITE_ROOT/shared/backup.env"
+printf '%s\n' \
+  'RESTIC_REPOSITORY=s3:test' \
+  "RESTIC_PASSWORD_FILE=$TMP/restic-password" \
+  'RESTIC_S3_BUCKET_LOOKUP=path' >"$SITE_ROOT/shared/backup.env"
 printf '%s\n' 'test-password' >"$TMP/restic-password"
 
 cat >"$FAKE_BIN/docker" <<'EOF'
@@ -107,6 +111,7 @@ set -Eeuo pipefail
 [[ -r "${RESTIC_PASSWORD_FILE:-}" ]]
 while [[ "${1:-}" == "-o" ]]; do
   [[ "${2:-}" == s3.bucket-lookup=* ]] || exit 1
+  printf '%s\n' "$2" >>"${FAKE_RESTIC_OPTIONS_LOG:?}"
   shift 2
 done
 command="${1:-}"
@@ -250,6 +255,7 @@ make_archive "$BAD"
 export PATH="$FAKE_BIN:$PATH"
 export FAKE_DOCKER_LOG="$LOG"
 export FAKE_RESTIC_PAYLOAD="$RESTIC_PAYLOAD"
+export FAKE_RESTIC_OPTIONS_LOG="$RESTIC_OPTIONS_LOG"
 export FAKE_SHARED_ENV="$SITE_ROOT/shared/.env"
 export SITE_PANEL_ROOT="$SITE_ROOT"
 export COMPOSE_PROJECT="site-panel"
@@ -314,11 +320,15 @@ assert_fails bash "$ROOT/scripts/restore-production.sh" --snapshot deadbeef --co
   printf 'FAIL: backup.env executed shell code\n' >&2
   exit 1
 }
-printf '%s\n' 'RESTIC_REPOSITORY=s3:test' "RESTIC_PASSWORD_FILE=$TMP/restic-password" >"$SITE_ROOT/shared/backup.env"
+printf '%s\n' \
+  'RESTIC_REPOSITORY=s3:test' \
+  "RESTIC_PASSWORD_FILE=$TMP/restic-password" \
+  'RESTIC_S3_BUCKET_LOOKUP=path' >"$SITE_ROOT/shared/backup.env"
 
 unset FAKE_FAILED_RELEASE
 run_or_report "$TMP/restore.out" bash "$ROOT/scripts/restore-production.sh" --snapshot deadbeef --confirm-restore
 assert_line 'restore=ok' "$TMP/restore.out" "restore result"
+assert_eq "$(tail -n 1 "$RESTIC_OPTIONS_LOG")" "s3.bucket-lookup=path" "restore lookup strategy"
 for volume in sites_data uploads_data caddy_data caddy_config dsar_data; do
   grep -Fq "site-panel_${volume}:/data" "$LOG"
 done

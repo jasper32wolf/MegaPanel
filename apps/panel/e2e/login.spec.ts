@@ -219,8 +219,46 @@ test("оператор создаёт и готовит candidate без пуб�
   const [previewPage] = await Promise.all([page.waitForEvent("popup"), preview.click()]);
   await expect(previewPage).toHaveURL(/\/preview\/$/);
   await expect(previewPage.getByRole("heading", { name: "E2E услуга", exact: true })).toBeVisible();
+  const leadForm = previewPage.locator("form[data-site-panel-lead-form]");
+  await expect(leadForm).toBeVisible();
+  await expect(leadForm).toHaveAttribute("data-endpoint", "/api/v1/leads/public");
+  await expect(leadForm.locator('input[name="form_ts"]')).not.toHaveValue("");
+  await expect(leadForm).toHaveAttribute("data-idempotency-key", /.+/);
+  const leadPhone = `+7999${Date.now().toString().slice(-7)}`;
+  const leadName = `E2E клиент ${suffix}`;
+  const leadMessage = "E2E заявка из приватного preview";
+  const leadResponsePromise = previewPage.waitForResponse((response) =>
+    response.request().method() === "POST" &&
+    new URL(response.url()).pathname === "/api/v1/leads/public",
+  );
+  await leadForm.getByLabel("Имя").fill(leadName);
+  await leadForm.getByLabel("Телефон").fill(leadPhone);
+  await leadForm.getByLabel("Комментарий").fill(leadMessage);
+  await leadForm.getByLabel("Согласие на обработку ПДн").check();
+  await leadForm.getByRole("button", { name: "Отправить", exact: true }).click();
+  const leadResponse = await leadResponsePromise;
+  expect(leadResponse.status()).toBe(201);
+  const submittedLead = (await leadResponse.json()) as { id: string };
+  await expect(leadForm.getByText("Заявка отправлена. Мы скоро свяжемся с вами.")).toBeVisible();
+
   const candidateRow = page.getByRole("row").filter({ has: preview });
   await expect(candidateRow.getByRole("cell", { name: "ready", exact: true })).toBeVisible();
   await expect(candidateRow.getByRole("button", { name: "Опубликовать" })).toBeVisible();
+  expect(publishRequests).toEqual([]);
+  await previewPage.close();
+
+  await page.getByRole("link", { name: "Лиды" }).click();
+  await expect(page.getByRole("heading", { name: "Лиды", exact: true })).toBeVisible();
+  await page.getByLabel("Поиск").fill(domain);
+  await page.getByRole("button", { name: "Найти", exact: true }).click();
+  const leadRow = page.getByRole("row").filter({ has: page.getByText(domain, { exact: true }) });
+  await expect(leadRow).toHaveCount(1);
+  await leadRow.getByRole("button", { name: "Открыть" }).click();
+  await expect(page.getByRole("heading", { name: "Карточка лида", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Раскрыть контакты и сообщение" }).click();
+  await expect(page.getByText(leadPhone, { exact: true })).toBeVisible();
+  await expect(page.getByText(leadName, { exact: true })).toBeVisible();
+  await expect(page.getByText(leadMessage, { exact: true })).toBeVisible();
+  expect(submittedLead.id).toMatch(/^[0-9a-f-]{36}$/);
   expect(publishRequests).toEqual([]);
 });

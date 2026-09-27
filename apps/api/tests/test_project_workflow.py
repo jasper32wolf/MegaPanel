@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from app.api.v1.projects import _public_fact_values, _selection_snapshots
+from app.api.v1 import projects
+from app.api.v1.projects import _project_site_or_409, _public_fact_values, _selection_snapshots
 from app.main import app
 from app.schemas.workflow import (
     FactRevisionCreate,
@@ -15,6 +18,7 @@ from app.schemas.workflow import (
 )
 from app.services.generation import create_page_draft
 from app.services.qa import run_page_qa
+from fastapi import HTTPException
 from pydantic import ValidationError
 
 
@@ -25,6 +29,25 @@ class SelectionDatabase:
     async def execute(self, _: object) -> object:
         rows = self.rows.pop(0)
         return SimpleNamespace(all=lambda: rows)
+
+
+class ProjectSiteDatabase:
+    def __init__(self, site: object | None):
+        self.site = site
+        self.statement: object | None = None
+
+    async def execute(self, statement: object) -> object:
+        self.statement = statement
+        return SimpleNamespace(scalar_one_or_none=lambda: self.site)
+
+
+class PreviewDatabase:
+    def __init__(self, rows: list[object]):
+        self.rows = rows
+
+    async def execute(self, _: object) -> object:
+        row = self.rows.pop(0)
+        return SimpleNamespace(scalar_one_or_none=lambda: row)
 
 
 def test_page_plan_normalizes_root_slug():
@@ -77,11 +100,74 @@ def test_project_fact_revisions_route_is_registered():
     assert "get" in app.openapi()["paths"]["/api/v1/projects/{project_id}/facts"]
 
 
+def test_project_site_link_requires_matching_tenant_and_reciprocal_project():
+    tenant_id = uuid4()
+    project = SimpleNamespace(id=uuid4(), site_id=uuid4(), tenant_id=tenant_id)
+    legacy_site = SimpleNamespace(id=project.site_id, tenant_id=tenant_id, project_id=None)
+    db = ProjectSiteDatabase(legacy_site)
+
+    assert asyncio.run(_project_site_or_409(db, project)) is legacy_site
+    assert "sites.tenant_id" in str(db.statement)
+
+    invalid_sites = (
+        None,
+        SimpleNamespace(id=project.site_id, tenant_id=uuid4(), project_id=None),
+        SimpleNamespace(id=project.site_id, tenant_id=tenant_id, project_id=uuid4()),
+    )
+    for site in invalid_sites:
+        with pytest.raises(HTTPException, match="Project site link is invalid") as exc_info:
+            asyncio.run(_project_site_or_409(ProjectSiteDatabase(site), project))
+        assert exc_info.value.status_code == 409
+
+
+def test_authenticated_preview_serves_release_assets_without_path_traversal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    tenant_id = uuid4()
+    project_id = uuid4()
+    site_id = uuid4()
+    build_id = uuid4()
+    build_hash = "a" * 64
+    project = SimpleNamespace(id=project_id, tenant_id=tenant_id, site_id=site_id)
+    site = SimpleNamespace(id=site_id, tenant_id=tenant_id, project_id=project_id)
+    build = SimpleNamespace(id=build_id, status="ready", build_hash=build_hash)
+    auth = SimpleNamespace(role="superadmin", tenant_id=tenant_id, user=SimpleNamespace(id=uuid4()))
+    release = tmp_path / str(site_id) / "releases" / build_hash
+    release.mkdir(parents=True)
+    asset = release / "site-panel-leads.js"
+    asset.write_text("window.leadFormReady = true;", encoding="utf-8")
+    monkeypatch.setattr(projects.settings, "sites_root", str(tmp_path))
+
+    response = asyncio.run(
+        projects.preview_project_build(
+            project_id,
+            build_id,
+            "site-panel-leads.js",
+            auth,
+            PreviewDatabase([project, site, build]),
+        )
+    )
+
+    assert Path(response.path) == asset
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["x-robots-tag"] == "noindex, nofollow"
+
+    with pytest.raises(HTTPException, match="Preview page not found") as exc_info:
+        asyncio.run(
+            projects.preview_project_build(
+                project_id,
+                build_id,
+                "../../outside",
+                auth,
+                PreviewDatabase([project, site, build]),
+            )
+        )
+    assert exc_info.value.status_code == 404
+
+
 def test_project_selection_requires_keywords_and_primary_geo():
     project = SimpleNamespace(id=uuid4())
-    _, _, blockers = __import__("asyncio").run(
-        _selection_snapshots(SelectionDatabase([], []), project)
-    )
+    _, _, blockers = asyncio.run(_selection_snapshots(SelectionDatabase([], []), project))
 
     assert blockers == [
         "Select at least one project keyword",
@@ -98,7 +184,7 @@ def test_project_selection_snapshots_operator_choices():
     geo_binding = SimpleNamespace(role="primary", position=0, morph_overrides={})
     project = SimpleNamespace(id=uuid4())
 
-    keywords, geo, blockers = __import__("asyncio").run(
+    keywords, geo, blockers = asyncio.run(
         _selection_snapshots(
             SelectionDatabase([(keyword_binding, keyword)], [(geo_binding, place)]), project
         )
