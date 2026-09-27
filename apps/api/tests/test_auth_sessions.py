@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
 from app.api.v1 import auth
 from app.core.security import ACCESS_COOKIE_NAME, REFRESH_COOKIE_NAME, create_refresh_token
 from app.models import AuthSession
+from fastapi import HTTPException
 from starlette.requests import Request
 from starlette.responses import Response
 
@@ -81,6 +84,39 @@ def test_refresh_rotates_the_persisted_session_and_cookies(monkeypatch):
     ]
     assert any(value.startswith(f"{ACCESS_COOKIE_NAME}=") for value in set_cookies)
     assert any(value.startswith(f"{REFRESH_COOKIE_NAME}=") for value in set_cookies)
+
+
+def test_refresh_reuse_of_a_revoked_session_clears_cookies(monkeypatch):
+    user = SimpleNamespace(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        role="superadmin",
+        is_active=True,
+    )
+    monkeypatch.setattr(auth.settings, "app_secret_key", "test-session-key-" + "x" * 32)
+    refresh_token = create_refresh_token(user.id)
+    revoked_session = auth._new_session(user, refresh_token)
+    revoked_session.revoked_at = datetime.now(UTC)
+    database = RefreshDatabase(revoked_session, user)
+    response = Response()
+
+    with pytest.raises(HTTPException, match="Refresh session expired or reused") as exc_info:
+        asyncio.run(auth.refresh(refresh_request(refresh_token), response, database))
+
+    assert exc_info.value.status_code == 401
+    assert database.added == []
+    assert database.commits == 1
+    set_cookies = [
+        value.decode() for name, value in response.raw_headers if name.lower() == b"set-cookie"
+    ]
+    access_cookie = next(
+        value for value in set_cookies if value.startswith(f"{ACCESS_COOKIE_NAME}=")
+    )
+    refresh_cookie = next(
+        value for value in set_cookies if value.startswith(f"{REFRESH_COOKIE_NAME}=")
+    )
+    assert "Max-Age=0" in access_cookie
+    assert "Max-Age=0" in refresh_cookie
 
 
 def test_production_session_cookies_are_secure_and_scoped(monkeypatch):
