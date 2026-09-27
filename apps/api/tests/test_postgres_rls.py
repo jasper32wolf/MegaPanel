@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import subprocess
+import sys
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -11,6 +15,7 @@ from app.db.rls import set_tenant_rls
 from app.db.session import engine as app_engine
 from app.db.session import open_db_session
 from app.models import PageDraft, PagePlan, Project, Site, Tenant
+from site_panel_security import FieldEncryptor
 from sqlalchemy import delete, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -204,5 +209,147 @@ def test_workflow_update_timestamps_can_be_serialized_after_commit() -> None:
                 await db.execute(delete(Tenant).where(Tenant.id == tenant_id))
                 await db.commit()
             await app_engine.dispose()
+
+    asyncio.run(run())
+
+
+@pytest.mark.skipif(
+    not RUN_POSTGRES_RLS_INTEGRATION,
+    reason="requires a local PostgreSQL service with database creation privileges",
+)
+def test_legacy_webhook_secret_upgrade_on_existing_database() -> None:
+    api_dir = Path(__file__).resolve().parents[1]
+
+    async def run() -> None:
+        source_url = make_url(get_settings().database_url)
+        assert source_url.host in {"127.0.0.1", "localhost"} and source_url.database == "site_panel"
+        database_name = f"site_panel_upgrade_{uuid4().hex}"
+        upgrade_url = source_url.set(database=database_name)
+        admin_engine = create_async_engine(source_url, isolation_level="AUTOCOMMIT")
+        created = False
+
+        def upgrade(revision: str) -> None:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "alembic",
+                    "-c",
+                    str(api_dir / "alembic.ini"),
+                    "upgrade",
+                    revision,
+                ],
+                cwd=api_dir,
+                env={
+                    **os.environ,
+                    "DATABASE_URL": upgrade_url.render_as_string(hide_password=False),
+                },
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
+            assert result.returncode == 0, result.stderr
+
+        try:
+            async with admin_engine.connect() as connection:
+                await connection.execute(text(f"CREATE DATABASE {database_name}"))
+            created = True
+            await asyncio.to_thread(upgrade, "0020_encrypt_lead_message")
+
+            isolated_engine = create_async_engine(upgrade_url)
+            tenant_id, safe_id, unsafe_id = uuid4(), uuid4(), uuid4()
+            safe_secret = "migration-safe-legacy-secret"
+            unsafe_secret = "migration-unsafe-legacy-secret"
+            try:
+                async with isolated_engine.begin() as connection:
+                    revision = await connection.scalar(
+                        text("SELECT version_num FROM alembic_version")
+                    )
+                    assert revision == "0020_encrypt_lead_message"
+                    version_column_length = await connection.scalar(
+                        text(
+                            "SELECT character_maximum_length FROM information_schema.columns "
+                            "WHERE table_name = 'alembic_version' AND column_name = 'version_num'"
+                        )
+                    )
+                    assert version_column_length == 32
+                    await connection.execute(
+                        text("INSERT INTO tenants (id, name, slug) VALUES (:id, :name, :slug)"),
+                        {"id": tenant_id, "name": "Upgrade fixture", "slug": database_name},
+                    )
+                    for site_id, domain, manifest in (
+                        (
+                            safe_id,
+                            "safe.example.test",
+                            {
+                                "contacts": {
+                                    "webhook_url": "https://hooks.example.test/lead",
+                                    "webhook_secret": safe_secret,
+                                }
+                            },
+                        ),
+                        (
+                            unsafe_id,
+                            "unsafe.example.test",
+                            {
+                                "contacts": {
+                                    "webhook_url": "http://127.0.0.1/lead",
+                                    "webhook_secret": unsafe_secret,
+                                }
+                            },
+                        ),
+                    ):
+                        await connection.execute(
+                            text(
+                                "INSERT INTO sites (id, tenant_id, domain, lead_token, manifest) "
+                                "VALUES (:id, :tenant_id, :domain, :lead_token, "
+                                "CAST(:manifest AS jsonb))"
+                            ),
+                            {
+                                "id": site_id,
+                                "tenant_id": tenant_id,
+                                "domain": domain,
+                                "lead_token": uuid4().hex,
+                                "manifest": json.dumps(manifest),
+                            },
+                        )
+            finally:
+                await isolated_engine.dispose()
+
+            await asyncio.to_thread(upgrade, "head")
+            isolated_engine = create_async_engine(upgrade_url)
+            try:
+                async with isolated_engine.connect() as connection:
+                    revision = await connection.scalar(
+                        text("SELECT version_num FROM alembic_version")
+                    )
+                    assert revision == "0021_encrypt_legacy_webhook_secrets"
+                    version_column_length = await connection.scalar(
+                        text(
+                            "SELECT character_maximum_length FROM information_schema.columns "
+                            "WHERE table_name = 'alembic_version' AND column_name = 'version_num'"
+                        )
+                    )
+                    assert version_column_length >= len("0021_encrypt_legacy_webhook_secrets")
+                    rows = await connection.execute(text("SELECT id, manifest FROM sites"))
+                    manifests = dict(rows.all())
+                safe_contacts = manifests[safe_id]["contacts"]
+                assert "webhook_secret" not in safe_contacts
+                encryptor = FieldEncryptor.from_base64(get_settings().field_encryption_key)
+                assert encryptor.decrypt(safe_contacts["webhook_secret_enc"]) == safe_secret
+                assert manifests[unsafe_id]["contacts"] == {
+                    "webhook_url": "http://127.0.0.1/lead",
+                    "webhook_secret": unsafe_secret,
+                }
+            finally:
+                await isolated_engine.dispose()
+        finally:
+            try:
+                if created:
+                    async with admin_engine.connect() as connection:
+                        await connection.execute(text(f"DROP DATABASE {database_name}"))
+            finally:
+                await admin_engine.dispose()
 
     asyncio.run(run())

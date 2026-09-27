@@ -4,7 +4,7 @@
 
 ## Реализованный срез 2026-09-20
 
-Следующие части roadmap уже реализованы на уровне API/UI и автоматических проверок, но ещё не прошли PostgreSQL, Docker/Caddy и browser E2E proof:
+Следующие части roadmap реализованы на уровне API/UI и проверок. Hosted PostgreSQL/Redis integration и browser E2E до candidate preview подтверждены для SHA `69b75c3`; upgraded-БД, Docker/Caddy и полный production-origin browser flow ещё не проверены:
 
 - `Project`, immutable fact revisions, project-bound keyword/geo selection и PagePlan state machine;
 - deterministic PageDraft generation из approved inputs, QA `pass/warn/block`, audited warning override и explicit apply без публикации;
@@ -12,7 +12,7 @@
 - append-only LeadOutcome, lead analysis summary и отдельный outcome history в inbox;
 - project-first panel workspace `/projects` и `/projects/:projectId` с loading/error/status пояснениями.
 
-Оставшиеся части этого roadmap — выполнить safe CLI backfill существующих сайтов на backed-up PostgreSQL, получить первые hosted runs добавленных PostgreSQL/Redis worker smoke и Chromium operator workflow E2E до candidate preview, полноценный PostgreSQL/RLS migration proof, domain/lead/axe E2E, CI release job и production runtime proof.
+Оставшиеся части этого roadmap — выполнить safe CLI backfill существующих сайтов на backed-up PostgreSQL, подтвердить upgraded-БД и Docker worker/Caddy runtime, domain/lead/axe E2E и внешний production-origin smoke. Hosted CI для SHA `69b75c3` уже подтвердил PostgreSQL/Redis integration и Chromium operator workflow до приватного candidate preview, а GitHub deploy workflow успешно завершился; это не заменяет live VPS/TLS proof.
 
 ## Как читать статусы
 
@@ -22,7 +22,7 @@
 | **Проверено** | Для возможности есть указанный автоматический тест или реальный runtime-прогон. |
 | **Предлагается** | Направление будущей работы; не является доступной функцией. |
 
-На текущем этапе реализованы базовые single-user access, TOTP/cookie sessions, curated sites, encrypted lead inbox, per-site webhooks, durable delivery и ограниченный GitHub-managed update/recovery control plane. Автоматические проверки подтверждают контрактный уровень, но GitHub dispatch, Docker/VPS, PostgreSQL/RLS, Caddy/TLS и browser end-to-end сценарии ещё требуют отдельного доказательства.
+Реализованы базовые single-user access, TOTP/cookie sessions, curated sites, encrypted lead inbox, per-site webhooks, durable delivery и ограниченный GitHub-managed update/recovery control plane. Hosted CI подтвердил PostgreSQL/Redis integration и browser candidate-flow, GitHub deploy workflow завершился успешно; GitHub dispatch из панели, upgraded-БД, Docker worker/Caddy/TLS, внешний VPS и полный browser lead/domain/publish сценарий требуют отдельного доказательства.
 
 ## Граница первого релиза
 

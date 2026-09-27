@@ -2,23 +2,34 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
+from html.parser import HTMLParser
+from pathlib import Path
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from app.core.config import get_settings
 from app.db.session import engine, open_db_session
+from app.main import app
 from app.models import Site, Tenant
-from app.models.leads import Lead, WebhookDelivery, WebhookDeliveryAttempt
+from app.models.leads import Consent, Lead, WebhookDelivery, WebhookDeliveryAttempt
 from app.services import webhook_delivery
 from app.services.leads import canonical_webhook_body, get_encryptor, sign_webhook
 from app.services.webhook_delivery import (
     _retryable,
     create_lead_delivery,
     enqueue_delivery,
+    resend_delivery,
     wire_payload,
 )
 from app.worker import WorkerSettings, webhook_delivery_task
+from arq.constants import default_queue_name
+from arq.worker import Worker
+from httpx import ASGITransport, AsyncClient
+from site_panel_blocks import instantiate_blocks, load_kit
+from site_panel_shared.manifests import BlockDef, PageManifest, SiteManifest
+from site_panel_ssg import SiteBuilder
 from sqlalchemy import delete, select
 
 RUN_WEBHOOK_DELIVERY_INTEGRATION = os.getenv("WEBHOOK_DELIVERY_INTEGRATION") == "1"
@@ -147,7 +158,57 @@ def test_delivery_handles_an_undecryptable_secret(monkeypatch):
     not RUN_WEBHOOK_DELIVERY_INTEGRATION,
     reason="requires PostgreSQL and isolated Redis service containers",
 )
-def test_worker_delivery_uses_postgres_redis_and_no_external_webhook(monkeypatch):
+def test_worker_delivery_uses_postgres_redis_and_no_external_webhook(monkeypatch, tmp_path: Path):
+    class LeadFormParser(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__()
+            self.attributes: dict[str, str | None] = {}
+
+        def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+            if tag == "form" and any(name == "data-site-panel-lead-form" for name, _ in attrs):
+                self.attributes = dict(attrs)
+
+    def build_form(site_id: UUID, tenant_id: UUID, domain: str, token: str) -> dict:
+        kit = load_kit("service-local-v1")
+        lead_blocks = [block for block in kit.blocks if block.type == "lead_form"]
+        assert len(lead_blocks) == 1
+        instances, _ = instantiate_blocks(lead_blocks, site_id, kit.theme)
+        manifest = SiteManifest(
+            site_id=site_id,
+            tenant_id=tenant_id,
+            domain=domain,
+            contacts={"phone": "+79990000000"},
+            pages=[
+                PageManifest(
+                    slug="/",
+                    title_template="Тестовая услуга",
+                    h1_template="Тестовая услуга",
+                    service="Тестовая услуга",
+                    blocks=[BlockDef.model_validate(instances[0])],
+                )
+            ],
+        )
+        result = SiteBuilder(tmp_path).build(
+            manifest,
+            {
+                "service": "Тестовая услуга",
+                "phone": "+79990000000",
+                "lead_token": token,
+                "lead_api_url": "/api/v1/leads/public",
+            },
+            activate=False,
+        )
+        release = Path(result["release_path"])
+        html = (release / "index.html").read_text(encoding="utf-8")
+        assert (release / "site-panel-leads.js").is_file()
+        assert "fetch(form.dataset.endpoint" in (release / "site-panel-leads.js").read_text(
+            encoding="utf-8"
+        )
+        assert not (tmp_path / str(site_id) / "current").exists()
+        parser = LeadFormParser()
+        parser.feed(html)
+        return parser.attributes
+
     async def run() -> None:
         from redis.asyncio import from_url
 
@@ -157,6 +218,20 @@ def test_worker_delivery_uses_postgres_redis_and_no_external_webhook(monkeypatch
         secret = "integration-webhook-secret"
         calls: list[tuple[str, dict, str]] = []
         dispatch_response = {"ok": True, "status": 202}
+
+        async def run_queued_job() -> None:
+            worker = Worker(
+                functions=WorkerSettings.functions,
+                redis_settings=WorkerSettings.redis_settings,
+                burst=True,
+                max_burst_jobs=1,
+                poll_delay=0.05,
+                handle_signals=False,
+            )
+            try:
+                assert await asyncio.wait_for(worker.run_check(), timeout=15) == 1
+            finally:
+                await worker.close()
 
         async def fake_dispatch(url: str, payload: dict, dispatch_secret: str) -> dict:
             calls.append((url, payload, dispatch_secret))
@@ -185,35 +260,73 @@ def test_worker_delivery_uses_postgres_redis_and_no_external_webhook(monkeypatch
                         }
                     },
                 )
-                lead = Lead(
-                    id=uuid4(),
-                    tenant_id=tenant_id,
-                    site_id=site.id,
-                    page_slug="/",
-                    qualification="qualified",
-                    idempotency_key=f"lead-{tenant_id.hex}",
-                )
                 db.add(tenant)
                 await db.flush()
                 db.add(site)
-                await db.flush()
-                db.add(lead)
-                await db.flush()
-                delivery = await create_lead_delivery(db, lead=lead, site=site)
-                assert delivery is not None
-                await db.flush()
+                await db.commit()
+
+            form = await asyncio.to_thread(
+                build_form, site.id, tenant_id, site.domain, site.lead_token
+            )
+            assert form["data-endpoint"] == "/api/v1/leads/public"
+            assert form["data-site-id"] == str(site.id)
+            assert form["data-lead-token"] == site.lead_token
+
+            phone = "+79991234567"
+            email = "visitor@example.test"
+            name = "Тестовый клиент"
+            message = "Нужна консультация по услуге"
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://127.0.0.1"
+            ) as client:
+                response = await client.post(
+                    form["data-endpoint"],
+                    json={
+                        "site_id": form["data-site-id"],
+                        "lead_token": form["data-lead-token"],
+                        "phone": phone,
+                        "email": email,
+                        "name": name,
+                        "message": message,
+                        "page_slug": "/",
+                        "form_ts": time.time() - 5,
+                        "idempotency_key": f"lead-{tenant_id.hex}",
+                        "consent": True,
+                    },
+                )
+            assert response.status_code == 201, response.text
+            public_result = response.json()
+            assert public_result["delivery_status"] == "queued"
+            lead_id = UUID(public_result["id"])
+
+            async with open_db_session() as db:
+                lead = await db.get(Lead, lead_id)
+                delivery = (
+                    await db.execute(
+                        select(WebhookDelivery).where(WebhookDelivery.lead_id == lead_id)
+                    )
+                ).scalar_one()
+                consent = (
+                    await db.execute(select(Consent).where(Consent.site_id == site.id))
+                ).scalar_one()
+                assert lead is not None
+                assert consent.purposes == {"lead": True}
+                assert lead.phone_enc != phone and get_encryptor().decrypt(lead.phone_enc) == phone
+                assert lead.email_enc != email and get_encryptor().decrypt(lead.email_enc) == email
+                assert lead.name_enc != name and get_encryptor().decrypt(lead.name_enc) == name
+                assert lead.message_enc != message
+                assert get_encryptor().decrypt(lead.message_enc) == message
                 delivery_id = delivery.id
                 expected_payload = wire_payload(delivery, lead)
                 assert not {"phone", "email", "name", "message"}.intersection(delivery.payload)
-                await db.commit()
 
-            assert await enqueue_delivery(delivery_id)
-            result = await webhook_delivery_task({}, str(delivery_id))
-            assert result.get("status") == "delivered", result
+            assert await redis.zcard(default_queue_name) == 1
+            await run_queued_job()
+            assert await redis.zcard(default_queue_name) == 0
 
             async with open_db_session() as db:
                 delivery = await db.get(WebhookDelivery, delivery_id)
-                refreshed_lead = await db.get(Lead, lead.id)
+                refreshed_lead = await db.get(Lead, lead_id)
                 attempts = list(
                     (
                         await db.execute(
@@ -296,6 +409,53 @@ def test_worker_delivery_uses_postgres_redis_and_no_external_webhook(monkeypatch
                 assert retry_attempts[0].trigger == "automatic"
                 assert all(attempt.status == "retrying" for attempt in retry_attempts[:-1])
                 assert retry_attempts[-1].status == "dead_letter"
+                await resend_delivery(db, retry_delivery)
+                await db.commit()
+                assert retry_delivery.status == "queued"
+                assert retry_delivery.attempt_count == 0
+                assert retry_delivery.dead_lettered_at is None
+                assert retry_delivery.next_attempt_at is not None
+                assert retry_lead.crm_status == "queued"
+
+            dispatch_response.clear()
+            dispatch_response.update({"ok": True, "status": 202})
+            assert await enqueue_delivery(retry_delivery_id, trigger="manual")
+            assert await redis.zcard(default_queue_name) == 1
+            await run_queued_job()
+            assert await redis.zcard(default_queue_name) == 0
+
+            async with open_db_session() as db:
+                recovered_delivery = await db.get(WebhookDelivery, retry_delivery_id)
+                recovered_lead = await db.get(Lead, retry_lead.id)
+                recovered_attempts = list(
+                    (
+                        await db.execute(
+                            select(WebhookDeliveryAttempt)
+                            .where(WebhookDeliveryAttempt.delivery_id == retry_delivery_id)
+                            .order_by(WebhookDeliveryAttempt.sequence)
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                assert recovered_delivery is not None
+                assert recovered_lead is not None
+                assert recovered_delivery.status == "delivered"
+                assert recovered_delivery.attempt_count == 1
+                assert recovered_delivery.dead_lettered_at is None
+                assert recovered_delivery.delivered_at is not None
+                assert recovered_delivery.next_attempt_at is None
+                assert recovered_delivery.last_http_status == 202
+                assert recovered_lead.crm_status == "sent"
+                assert len(recovered_attempts) == retry_delivery.max_attempts + 1
+                assert recovered_attempts[-1].sequence == retry_delivery.max_attempts + 1
+                assert recovered_attempts[-1].trigger == "manual"
+                assert recovered_attempts[-1].status == "delivered"
+                assert calls[-1] == (
+                    "https://receiver.example.test/leads",
+                    wire_payload(recovered_delivery, recovered_lead),
+                    secret,
+                )
         finally:
             try:
                 async with open_db_session() as db:
