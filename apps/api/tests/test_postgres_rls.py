@@ -157,36 +157,38 @@ def test_workflow_update_timestamps_can_be_serialized_after_commit() -> None:
         draft_id = uuid4()
         try:
             async with open_db_session() as db:
-                db.add_all(
-                    [
-                        Tenant(
-                            id=tenant_id,
-                            name="Workflow timestamps",
-                            slug=f"workflow-{tenant_id.hex}",
-                        ),
-                        Project(
-                            id=project_id,
-                            tenant_id=tenant_id,
-                            name="Workflow",
-                            slug="workflow",
-                        ),
-                        PagePlan(
-                            id=plan_id,
-                            project_id=project_id,
-                            tenant_id=tenant_id,
-                            slug="/",
-                            objective="Workflow timestamps",
-                            kit_key="service-local-v1",
-                        ),
-                        PageDraft(
-                            id=draft_id,
-                            page_plan_id=plan_id,
-                            project_id=project_id,
-                            tenant_id=tenant_id,
-                            revision=1,
-                            state="draft",
-                        ),
-                    ]
+                db.add(
+                    Tenant(
+                        id=tenant_id,
+                        name="Workflow timestamps",
+                        slug=f"workflow-{tenant_id.hex}",
+                    )
+                )
+                await db.flush()
+                db.add(
+                    Project(id=project_id, tenant_id=tenant_id, name="Workflow", slug="workflow")
+                )
+                await db.flush()
+                db.add(
+                    PagePlan(
+                        id=plan_id,
+                        project_id=project_id,
+                        tenant_id=tenant_id,
+                        slug="/",
+                        objective="Workflow timestamps",
+                        kit_key="service-local-v1",
+                    )
+                )
+                await db.flush()
+                db.add(
+                    PageDraft(
+                        id=draft_id,
+                        page_plan_id=plan_id,
+                        project_id=project_id,
+                        tenant_id=tenant_id,
+                        revision=1,
+                        state="draft",
+                    )
                 )
                 await db.commit()
                 plan = await db.get(PagePlan, plan_id)

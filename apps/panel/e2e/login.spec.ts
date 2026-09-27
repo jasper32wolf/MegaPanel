@@ -175,23 +175,28 @@ test("оператор создаёт и готовит candidate без пуб�
   expect((await reviewResponse.json()).state).toBe("review");
   await expect(page.locator("main [aria-busy]")).toHaveAttribute("aria-busy", "false");
   expect(await page.getByRole("alert").allTextContents()).toEqual([]);
-  const approvePlan = page.getByRole("button", { name: "Одобрить" }).first();
+  const approvePlan = page.getByRole("button", { name: "Одобрить", exact: true });
   await expect(approvePlan).toBeVisible();
   await approvePlan.click();
   await expect(page.getByRole("dialog")).toBeVisible();
   await page.getByRole("dialog").getByRole("button", { name: "Одобрить" }).click();
-  const createDraft = page.getByRole("button", { name: "Создать черновик" });
-  await expect(createDraft).toBeVisible();
+  const createDraft = page.getByRole("button", { name: "Создать черновик", exact: true });
+  await expect(createDraft).toBeEnabled();
   await createDraft.click();
 
-  const checkDraft = page.getByRole("button", { name: "Проверить" });
-  await expect(checkDraft).toBeVisible();
+  const draftSection = page.locator("section.surface").filter({
+    has: page.getByRole("heading", { name: "5. Черновики и проверка качества", exact: true }),
+  });
+  const draftRow = draftSection.locator("tbody tr");
+  await expect(draftRow).toHaveCount(1);
+  const checkDraft = draftRow.getByRole("button", { name: "Проверить", exact: true });
+  await expect(checkDraft).toBeEnabled();
   await checkDraft.click();
-  await expect(page.getByText(/warn|pass/)).toBeVisible();
-  const manualReview = page.getByRole("button", { name: "На ручную проверку" });
+  await expect(draftRow.getByText(/^(warn|pass)$/)).toBeVisible();
+  const manualReview = draftRow.getByRole("button", { name: "На ручную проверку" });
   await expect(manualReview).toBeVisible();
   await manualReview.click();
-  const applyDraft = page.getByRole("button", { name: "Применить" });
+  const applyDraft = draftRow.getByRole("button", { name: "Применить", exact: true });
   await expect(applyDraft).toBeVisible();
   await applyDraft.click();
   await expect(page.getByRole("dialog")).toBeVisible();
