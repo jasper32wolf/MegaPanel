@@ -113,6 +113,7 @@ class PagePlan(Base):
     __table_args__ = (
         UniqueConstraint("project_id", "slug", "version", name="uq_page_plan_project_slug_version"),
     )
+    __mapper_args__ = {"eager_defaults": True}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id: Mapped[uuid.UUID] = mapped_column(
@@ -155,6 +156,7 @@ class PageDraft(Base):
     __table_args__ = (
         UniqueConstraint("page_plan_id", "revision", name="uq_page_draft_plan_revision"),
     )
+    __mapper_args__ = {"eager_defaults": True}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     page_plan_id: Mapped[uuid.UUID] = mapped_column(

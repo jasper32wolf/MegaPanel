@@ -5,11 +5,12 @@ import os
 from uuid import uuid4
 
 import pytest
+from app.api.v1.projects import _serialize_draft, _serialize_plan
 from app.core.config import get_settings
 from app.db.rls import set_tenant_rls
 from app.db.session import engine as app_engine
 from app.db.session import open_db_session
-from app.models import Site, Tenant
+from app.models import PageDraft, PagePlan, Project, Site, Tenant
 from sqlalchemy import delete, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -140,5 +141,66 @@ def test_rls_scopes_sites_after_maintenance_session() -> None:
                     await db.commit()
             finally:
                 await app_engine.dispose()
+
+    asyncio.run(run())
+
+
+@pytest.mark.skipif(
+    not RUN_POSTGRES_RLS_INTEGRATION,
+    reason="requires a PostgreSQL service container with migrations applied",
+)
+def test_workflow_update_timestamps_can_be_serialized_after_commit() -> None:
+    async def run() -> None:
+        tenant_id = uuid4()
+        project_id = uuid4()
+        plan_id = uuid4()
+        draft_id = uuid4()
+        try:
+            async with open_db_session() as db:
+                db.add_all(
+                    [
+                        Tenant(
+                            id=tenant_id,
+                            name="Workflow timestamps",
+                            slug=f"workflow-{tenant_id.hex}",
+                        ),
+                        Project(
+                            id=project_id,
+                            tenant_id=tenant_id,
+                            name="Workflow",
+                            slug="workflow",
+                        ),
+                        PagePlan(
+                            id=plan_id,
+                            project_id=project_id,
+                            tenant_id=tenant_id,
+                            slug="/",
+                            objective="Workflow timestamps",
+                            kit_key="service-local-v1",
+                        ),
+                        PageDraft(
+                            id=draft_id,
+                            page_plan_id=plan_id,
+                            project_id=project_id,
+                            tenant_id=tenant_id,
+                            revision=1,
+                            state="draft",
+                        ),
+                    ]
+                )
+                await db.commit()
+                plan = await db.get(PagePlan, plan_id)
+                draft = await db.get(PageDraft, draft_id)
+                assert plan is not None and draft is not None
+                plan.state = "review"
+                draft.state = "qa_done"
+                await db.commit()
+                assert _serialize_plan(plan)["updated_at"]
+                assert _serialize_draft(draft)["updated_at"]
+        finally:
+            async with open_db_session() as db:
+                await db.execute(delete(Tenant).where(Tenant.id == tenant_id))
+                await db.commit()
+            await app_engine.dispose()
 
     asyncio.run(run())
