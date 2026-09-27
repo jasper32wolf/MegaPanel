@@ -242,6 +242,8 @@ test("оператор создаёт и готовит candidate без пуб�
   await expect(submitLead).toBeEnabled();
   await submitLead.click();
   const leadResponse = await leadResponsePromise;
+  const leadPayload = leadResponse.request().postDataJSON() as { message: string | null };
+  expect(leadPayload.message).toBe(leadMessage);
   const leadResponseBody = await leadResponse.text();
   expect(leadResponse.status(), `lead submit ${leadResponse.status()}: ${leadResponseBody}`).toBe(201);
   const submittedLead = JSON.parse(leadResponseBody) as { id: string };

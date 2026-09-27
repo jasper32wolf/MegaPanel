@@ -77,6 +77,7 @@ _ALLOWED_ATTRIBUTES = {
         "data-endpoint",
     },
     "button": {"type", "name", "value"},
+    "textarea": {"name", "rows", "placeholder", "required", "autocomplete", "maxlength"},
     "label": {"for"},
     "*": {
         "class",

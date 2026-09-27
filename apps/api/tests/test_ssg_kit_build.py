@@ -77,6 +77,7 @@ def test_ssg_kit_build_contains_core_blocks(tmp_path: Path):
     assert f'data-site-id="{site_id}"' in html
     assert 'data-lead-token="tttttttttttttttttttttttttttttttt"' in html
     assert 'data-endpoint="/api/v1/leads/public"' in html
+    assert '<textarea name="message" rows="3"></textarea>' in html
     assert 'href="/cookie-policy/"' in html
     assert 'src="site-panel-leads.js"' in html
     assert 'src="cookie-banner.js"' in html
