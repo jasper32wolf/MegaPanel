@@ -85,6 +85,12 @@ test("оператор видит и отзывает другую сессию"
 });
 
 test("оператор создаёт и готовит candidate без публикации", async ({ page }) => {
+  const publishRequests: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST" && /\/builds\/[^/]+\/publish$/.test(new URL(request.url()).pathname)) {
+      publishRequests.push(request.url());
+    }
+  });
   const suffix = `${Date.now()}-${test.info().retry}`;
   const keyword = `E2E услуга ${suffix}`;
   const city = `E2E город ${suffix}`;
@@ -212,6 +218,9 @@ test("оператор создаёт и готовит candidate без пуб�
   await expect(preview).toBeVisible();
   const [previewPage] = await Promise.all([page.waitForEvent("popup"), preview.click()]);
   await expect(previewPage).toHaveURL(/\/preview\/$/);
-  await expect(previewPage.getByText("E2E услуга")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Опубликовать" })).not.toBeVisible();
+  await expect(previewPage.getByRole("heading", { name: "E2E услуга", exact: true })).toBeVisible();
+  const candidateRow = page.getByRole("row").filter({ has: preview });
+  await expect(candidateRow.getByRole("cell", { name: "ready", exact: true })).toBeVisible();
+  await expect(candidateRow.getByRole("button", { name: "Опубликовать" })).toBeVisible();
+  expect(publishRequests).toEqual([]);
 });
