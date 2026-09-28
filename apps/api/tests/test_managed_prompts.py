@@ -107,6 +107,18 @@ def test_activation_and_baseline_rollback_only_supersede_active_revision(monkeyp
         assert "prompt_registry.is_active IS true" in compiled
 
 
+def test_finalized_prompt_revision_migration_freezes_content_only():
+    source = (
+        Path(__file__).parents[1] / "alembic" / "versions" / "0030_prompt_revision_immutability.py"
+    ).read_text(encoding="utf-8")
+
+    assert 'down_revision: str | None = "0029_worker_heartbeat"' in source
+    assert "NEW.template IS DISTINCT FROM OLD.template" in source
+    assert "NEW.schema_json IS DISTINCT FROM OLD.schema_json" in source
+    assert "NEW.state IS DISTINCT FROM OLD.state" not in source
+    assert "NEW.is_active IS DISTINCT FROM OLD.is_active" not in source
+
+
 def test_prompt_revision_text_rejects_secret_pii_and_workflow_override():
     from app.schemas.prompts import PromptRevisionCreate
     from pydantic import ValidationError
