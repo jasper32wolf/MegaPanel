@@ -205,7 +205,11 @@ async def activate_prompt_revision(
         )
     await db.execute(
         update(PromptEntry)
-        .where(PromptEntry.tenant_id == auth.tenant_id, PromptEntry.key == prompt_id)
+        .where(
+            PromptEntry.tenant_id == auth.tenant_id,
+            PromptEntry.key == prompt_id,
+            PromptEntry.is_active.is_(True),
+        )
         .values(is_active=False, state="superseded")
     )
     entry.is_active = True
@@ -231,7 +235,11 @@ async def rollback_prompt_baseline(
         raise HTTPException(status_code=404, detail="Built-in prompt not found")
     await db.execute(
         update(PromptEntry)
-        .where(PromptEntry.tenant_id == auth.tenant_id, PromptEntry.key == prompt_id)
+        .where(
+            PromptEntry.tenant_id == auth.tenant_id,
+            PromptEntry.key == prompt_id,
+            PromptEntry.is_active.is_(True),
+        )
         .values(is_active=False, state="superseded")
     )
     await append_audit(
