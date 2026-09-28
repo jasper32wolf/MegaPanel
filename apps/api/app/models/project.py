@@ -109,6 +109,94 @@ class ProjectGeoPlace(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class ProjectSemanticCollection(Base):
+    __tablename__ = "project_semantic_collections"
+    __table_args__ = (
+        UniqueConstraint("project_id", "name", "version", name="uq_project_semantic_collection"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    state: Mapped[str] = mapped_column(String(16), default="draft", index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    source_refs: Mapped[dict] = mapped_column(JSONB, default=dict)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    decision_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ProjectSemanticCollectionKeyword(Base):
+    __tablename__ = "project_semantic_collection_keywords"
+    __table_args__ = (
+        UniqueConstraint(
+            "collection_id", "project_keyword_id", name="uq_collection_project_keyword"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    collection_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("project_semantic_collections.id", ondelete="CASCADE"),
+        index=True,
+    )
+    project_keyword_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("project_keywords.id", ondelete="RESTRICT"), index=True
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    )
+    cluster: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    intent: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    priority: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ProjectSemanticKeywordGeoBinding(Base):
+    __tablename__ = "project_semantic_keyword_geo_bindings"
+    __table_args__ = (
+        UniqueConstraint(
+            "collection_keyword_id",
+            "project_geo_place_id",
+            name="uq_collection_keyword_project_geo",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    collection_keyword_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("project_semantic_collection_keywords.id", ondelete="CASCADE"),
+        index=True,
+    )
+    project_geo_place_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("project_geo_places.id", ondelete="RESTRICT"), index=True
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    )
+    scope: Mapped[str] = mapped_column(String(32), default="service_area")
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class PagePlan(Base):
     __tablename__ = "page_plans"
     __table_args__ = (
@@ -140,6 +228,7 @@ class PagePlan(Base):
     keyword_snapshot: Mapped[dict] = mapped_column(JSONB, default=dict)
     geo_snapshot: Mapped[dict] = mapped_column(JSONB, default=dict)
     source_refs: Mapped[dict] = mapped_column(JSONB, default=dict)
+    semantic_target_snapshot: Mapped[dict] = mapped_column(JSONB, default=dict)
     state: Mapped[str] = mapped_column(String(16), default="draft", index=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

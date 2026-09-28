@@ -6,9 +6,11 @@ import { ConfirmDialog, DataTable, EmptyState, PageHeader, StatusPill, Surface }
 type Project = { id: string; name: string; domain: string | null; niche: string | null; site_id: string | null; current_fact_revision_id: string | null; domain_check_meta: { dns_status?: string; ssl_status?: string; checked_at?: string } };
 type FactRevision = { id: string; version: number; state: string; facts: Record<string, unknown>; has_private_lead_email: boolean; source_notes: string | null };
 type Keyword = { id: string; phrase: string; meta: Record<string, string> };
-type ProjectKeyword = { keyword_id: string; phrase: string; cluster: string | null; intent: string | null; priority: number | null };
+type ProjectKeyword = { id: string; keyword_id: string; phrase: string; cluster: string | null; intent: string | null; priority: number | null };
+type SemanticCollection = { id: string; name: string; state: string; version: number; members: { project_keyword_id: string; geo_bindings: { project_geo_place_id: string }[] }[] };
+type SemanticSignals = { totals: { members: number; bindings: number; covered: number; uncovered: number; unbound: number }; cannibalization: { plans: { slug: string }[]; reason: string }[]; unmapped_plans: { slug: string; state: string }[] };
 type GeoPlace = { id: string; name: string; kind: string; is_validated?: boolean };
-type ProjectGeo = { geo_id: string; name: string; kind: string; validated: boolean; role: "primary" | "service_area" | "reference"; position: number };
+type ProjectGeo = { id: string; geo_id: string; name: string; kind: string; validated: boolean; role: "primary" | "service_area" | "reference"; position: number };
 type Plan = { id: string; slug: string; objective: string; intent: string | null; kit_key: string; block_selection: { blocks?: string[] }; state: string; version: number; decision_reason: string | null };
 type Draft = { id: string; page_plan_id: string; revision: number; state: string; content_hash: string | null; last_qa_verdict: string | null; qa_runs: { verdict: string; findings: { verdict: string; rule: string; evidence: string }[] }[]; page_manifest: Record<string, unknown>; failure_message: string | null };
 type Coverage = { selected: number; covered: number; uncovered: { keyword_id: string; phrase: string }[]; plans: number };
@@ -42,10 +44,14 @@ export function ProjectWorkspacePage() {
   const [project, setProject] = useState<Project | null>(null);
   const [facts, setFacts] = useState<FactRevision[]>([]);
   const [keywords, setKeywords] = useState<Keyword[]>([]);
+  const [projectKeywords, setProjectKeywords] = useState<ProjectKeyword[]>([]);
   const [places, setPlaces] = useState<GeoPlace[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [coverage, setCoverage] = useState<Coverage | null>(null);
+  const [semanticCollections, setSemanticCollections] = useState<SemanticCollection[]>([]);
+  const [semanticSignals, setSemanticSignals] = useState<SemanticSignals | null>(null);
+  const [semanticName, setSemanticName] = useState("Основная семантика");
   const [builds, setBuilds] = useState<Build[]>([]);
   const [aiProviders, setAiProviders] = useState<AIProvider[]>([]);
   const [aiProviderId, setAiProviderId] = useState("");
@@ -89,6 +95,7 @@ export function ProjectWorkspacePage() {
   const [sourceNotes, setSourceNotes] = useState("");
   const [selectedKeywordIds, setSelectedKeywordIds] = useState<string[]>([]);
   const [selectedGeoIds, setSelectedGeoIds] = useState<string[]>([]);
+  const [projectGeoBindings, setProjectGeoBindings] = useState<ProjectGeo[]>([]);
   const [primaryGeoId, setPrimaryGeoId] = useState("");
   const [planSlug, setPlanSlug] = useState("/");
   const [planObjective, setPlanObjective] = useState("");
@@ -104,7 +111,7 @@ export function ProjectWorkspacePage() {
   const selectedGeoSet = useMemo(() => new Set(selectedGeoIds), [selectedGeoIds]);
 
   async function load() {
-    const [nextProject, nextFacts, nextKeywords, nextProjectKeywords, nextPlaces, nextProjectGeo, nextPlans, nextDrafts, nextCoverage, nextBuilds, nextSeoRuns, nextSlotRuns] = await Promise.all([
+    const [nextProject, nextFacts, nextKeywords, nextProjectKeywords, nextPlaces, nextProjectGeo, nextPlans, nextDrafts, nextCoverage, nextBuilds, nextSeoRuns, nextSlotRuns, nextCollections, nextSignals] = await Promise.all([
       api<Project>(`/api/v1/projects/${projectId}`, {}, token),
       api<FactRevision[]>(`/api/v1/projects/${projectId}/facts`, {}, token),
       api<{ items: Keyword[] }>("/api/v1/keywords?limit=100", {}, token),
@@ -117,12 +124,16 @@ export function ProjectWorkspacePage() {
       api<Build[]>(`/api/v1/projects/${projectId}/builds`, {}, token),
       api<AIRunBrief[]>(`/api/v1/projects/${projectId}/seo-briefs`, {}, token),
       api<AIRunBrief[]>(`/api/v1/projects/${projectId}/block-slot-proposals`, {}, token),
+      api<SemanticCollection[]>(`/api/v1/projects/${projectId}/semantic-collections`, {}, token),
+      api<SemanticSignals>(`/api/v1/projects/${projectId}/semantic-signals`, {}, token),
     ]);
     setProject(nextProject);
     setFacts(nextFacts);
     setKeywords(nextKeywords.items);
+    setProjectKeywords(nextProjectKeywords);
     setSelectedKeywordIds(nextProjectKeywords.map((item) => item.keyword_id));
     setPlaces(nextPlaces);
+    setProjectGeoBindings(nextProjectGeo);
     setSelectedGeoIds(nextProjectGeo.map((item) => item.geo_id));
     setPrimaryGeoId(nextProjectGeo.find((item) => item.role === "primary")?.geo_id || "");
     setPlans(nextPlans);
@@ -133,6 +144,8 @@ export function ProjectWorkspacePage() {
     setSeoRun((current) => nextSeoRuns.find((item) => item.id === current?.id) || nextSeoRuns[0] || null);
     setSlotRuns(nextSlotRuns);
     setSlotRun((current) => nextSlotRuns.find((item) => item.id === current?.id) || nextSlotRuns[0] || null);
+    setSemanticCollections(nextCollections);
+    setSemanticSignals(nextSignals);
   }
 
   useEffect(() => {
@@ -231,6 +244,35 @@ export function ProjectWorkspacePage() {
 
   async function saveKeywords() {
     await run("keywords", () => api(`/api/v1/projects/${projectId}/keywords`, { method: "PUT", body: JSON.stringify({ items: selectedKeywordIds.map((keyword_id) => ({ keyword_id })) }) }, token), "Семантика проекта сохранена.");
+  }
+
+  async function createSemanticCollection() {
+    const selected = nextProjectKeywordIds();
+    if (!semanticName.trim() || !selected.length || !selectedGeoIds.length) {
+      setError("Для коллекции нужны название, выбранные ключи и география проекта.");
+      return;
+    }
+    await run(
+      "semantic-create",
+      () => api(`/api/v1/projects/${projectId}/semantic-collections`, {
+        method: "POST",
+        body: JSON.stringify({
+          name: semanticName.trim(),
+          members: selected.map((item) => ({
+            project_keyword_id: item.id,
+            cluster: item.cluster,
+            intent: item.intent,
+            priority: item.priority,
+            geo_bindings: projectGeoBindings.filter((binding) => selectedGeoIds.includes(binding.geo_id)).map((binding) => ({ project_geo_place_id: binding.id, scope: binding.geo_id === primaryGeoId ? "primary" : "service_area" })),
+          })),
+        }),
+      }, token),
+      "Semantic collection создана как draft. Отправьте её на review и одобрение.",
+    );
+  }
+
+  function nextProjectKeywordIds() {
+    return projectKeywords.filter((item) => selectedKeywordSet.has(item.keyword_id));
   }
 
   async function saveGeo() {
@@ -592,6 +634,17 @@ export function ProjectWorkspacePage() {
         <DataTable headers={["", "Основное", "Место", "Тип"]}>{places.map((place) => <tr key={place.id}><td><input aria-label={`Добавить ${place.name}`} type="checkbox" disabled={busy !== null} checked={selectedGeoSet.has(place.id)} onChange={() => toggleGeo(place.id)} /></td><td><input aria-label={`Основное место ${place.name}`} type="radio" name="primary-geo" disabled={busy !== null || !selectedGeoSet.has(place.id)} checked={primaryGeoId === place.id} onChange={() => setPrimaryGeoId(place.id)} /></td><td>{place.name}</td><td>{place.kind}</td></tr>)}</DataTable>
         {places.length === 0 && <EmptyState title="Справочник географии пуст" hint="Добавьте город или район в разделе «География»." />}
         <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={saveGeo}>Сохранить географию</button>
+      </Surface>
+      <Surface title="4. Семантические коллекции и сигналы">
+        <p className="muted">Коллекция группирует только выбранные ключи и выбранную географию проекта. Сначала создаётся draft, затем отдельные review/approve; это не создаёт PagePlan и не запускает генерацию.</p>
+        <div className="stack">
+          <label className="field">Название коллекции<input value={semanticName} onChange={(event) => setSemanticName(event.target.value)} placeholder="Например: Ремонт стиральных машин — Казань" /></label>
+          <button className="btn btn-ghost" type="button" disabled={busy !== null || !selectedKeywordIds.length || !selectedGeoIds.length} onClick={() => void createSemanticCollection()}>Создать draft collection из выбранных ключей и географии</button>
+        </div>
+        {semanticSignals && <div className="detail-grid"><div><strong>{semanticSignals.totals.covered}</strong><span className="muted"> covered targets</span></div><div><strong>{semanticSignals.totals.uncovered}</strong><span className="muted"> uncovered targets</span></div><div><strong>{semanticSignals.totals.unbound}</strong><span className="muted"> unbound keywords</span></div><div><strong>{semanticSignals.cannibalization.length}</strong><span className="muted"> collision warnings</span></div></div>}
+        {semanticCollections.length > 0 ? <DataTable headers={["Коллекция", "Состав", "Статус", "Действия"]}>{semanticCollections.map((collection) => <tr key={collection.id}><td>{collection.name}</td><td>{collection.members.length} keywords</td><td><StatusPill tone={tone(collection.state)}>{collection.state}</StatusPill></td><td className="row">{collection.state === "draft" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void run(`semantic-submit:${collection.id}`, () => api(`/api/v1/projects/${projectId}/semantic-collections/${collection.id}/submit-review`, { method: "POST" }, token), "Коллекция отправлена на review.")}>На review</button>}{collection.state === "review" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void run(`semantic-approve:${collection.id}`, () => api(`/api/v1/projects/${projectId}/semantic-collections/${collection.id}/approve`, { method: "POST", body: JSON.stringify({}) }, token), "Коллекция одобрена.")}>Одобрить</button>}</td></tr>)}</DataTable> : <EmptyState title="Коллекций пока нет" hint="Создайте draft из сохранённых project keyword и geo selections." />}
+        {semanticSignals?.cannibalization.map((collision, index) => <p className="muted" key={`${collision.reason}-${index}`}>Предупреждение: {collision.reason} — {collision.plans.map((plan) => plan.slug).join(", ")}</p>)}
+        {semanticSignals?.unmapped_plans.length ? <p className="muted">Legacy PagePlan без explicit semantic target: {semanticSignals.unmapped_plans.map((plan) => plan.slug).join(", ")}. Они не считаются покрытием.</p> : null}
       </Surface>
       <Surface title="4. План страниц">
         <p className="muted">Coverage: {coverage?.covered || 0} из {coverage?.selected || 0} выбранных ключей связаны с планами.</p>

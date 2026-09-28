@@ -24,6 +24,9 @@ from app.models import (
     ProjectFactRevision,
     ProjectGeoPlace,
     ProjectKeyword,
+    ProjectSemanticCollection,
+    ProjectSemanticCollectionKeyword,
+    ProjectSemanticKeywordGeoBinding,
     Site,
     SiteBuild,
     SitePage,
@@ -44,6 +47,7 @@ from app.schemas.workflow import (
     ProjectKeywordsUpdate,
     ProjectUpdate,
     QaOverrideIn,
+    SemanticPlanTargetIn,
 )
 from app.services.audit import append_audit
 from app.services.block_library import instantiate_kit_for_site
@@ -154,6 +158,86 @@ def _serialize_fact(revision: ProjectFactRevision) -> dict:
     }
 
 
+async def _semantic_target_snapshot(
+    db: AsyncSession,
+    project: Project,
+    target: SemanticPlanTargetIn,
+) -> dict:
+    collection = (
+        await db.execute(
+            select(ProjectSemanticCollection).where(
+                ProjectSemanticCollection.id == target.collection_id,
+                ProjectSemanticCollection.project_id == project.id,
+                ProjectSemanticCollection.tenant_id == project.tenant_id,
+                ProjectSemanticCollection.state == "approved",
+            )
+        )
+    ).scalar_one_or_none()
+    if not collection:
+        raise HTTPException(status_code=409, detail="Select an approved semantic collection")
+    member_ids = {item.collection_keyword_id for item in target.targets}
+    members = list(
+        (
+            await db.execute(
+                select(ProjectSemanticCollectionKeyword).where(
+                    ProjectSemanticCollectionKeyword.id.in_(member_ids),
+                    ProjectSemanticCollectionKeyword.collection_id == collection.id,
+                    ProjectSemanticCollectionKeyword.project_id == project.id,
+                    ProjectSemanticCollectionKeyword.tenant_id == project.tenant_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if len(members) != len(member_ids):
+        raise HTTPException(
+            status_code=409, detail="Semantic targets must belong to the approved collection"
+        )
+    binding_ids = {binding_id for item in target.targets for binding_id in item.geo_binding_ids}
+    bindings = list(
+        (
+            await db.execute(
+                select(ProjectSemanticKeywordGeoBinding).where(
+                    ProjectSemanticKeywordGeoBinding.id.in_(binding_ids),
+                    ProjectSemanticKeywordGeoBinding.project_id == project.id,
+                    ProjectSemanticKeywordGeoBinding.tenant_id == project.tenant_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    by_member = {binding.collection_keyword_id: [] for binding in bindings}
+    for binding in bindings:
+        by_member.setdefault(binding.collection_keyword_id, []).append(binding)
+    if len(bindings) != len(binding_ids):
+        raise HTTPException(status_code=409, detail="Semantic target geography is invalid")
+    member_by_id = {member.id: member for member in members}
+    snapshot_targets = []
+    for item in target.targets:
+        member = member_by_id[item.collection_keyword_id]
+        selected = {binding.id for binding in by_member.get(member.id, [])}
+        if selected != set(item.geo_binding_ids):
+            raise HTTPException(
+                status_code=409, detail="Geo bindings do not belong to the semantic keyword"
+            )
+        snapshot_targets.append(
+            {
+                "collection_keyword_id": str(member.id),
+                "project_keyword_id": str(member.project_keyword_id),
+                "geo_binding_ids": [str(binding_id) for binding_id in item.geo_binding_ids],
+                "cluster": member.cluster,
+                "intent": member.intent,
+            }
+        )
+    return {
+        "collection_id": str(collection.id),
+        "collection_version": collection.version,
+        "targets": snapshot_targets,
+    }
+
+
 def _serialize_plan(plan: PagePlan) -> dict:
     return {
         "id": str(plan.id),
@@ -168,6 +252,7 @@ def _serialize_plan(plan: PagePlan) -> dict:
         "keyword_snapshot": plan.keyword_snapshot or {},
         "geo_snapshot": plan.geo_snapshot or {},
         "source_refs": plan.source_refs or {},
+        "semantic_target_snapshot": plan.semantic_target_snapshot or {},
         "state": plan.state,
         "version": plan.version,
         "decision_reason": plan.decision_reason,
@@ -570,6 +655,7 @@ async def list_project_keywords(
     ).all()
     return [
         {
+            "id": str(binding.id),
             "keyword_id": str(keyword.id),
             "phrase": keyword.phrase,
             "cluster": binding.cluster,
@@ -600,6 +686,21 @@ async def replace_project_keywords(
             raise HTTPException(
                 status_code=400, detail="Keywords must belong to this project owner"
             )
+    semantic_keyword_ref = (
+        await db.execute(
+            select(ProjectSemanticCollectionKeyword.id)
+            .where(ProjectSemanticCollectionKeyword.project_id == project.id)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if semantic_keyword_ref:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Project keywords are referenced by a semantic collection; "
+                "edit the collection first"
+            ),
+        )
     await db.execute(delete(ProjectKeyword).where(ProjectKeyword.project_id == project.id))
     db.add_all(
         [
@@ -643,6 +744,7 @@ async def list_project_geo(
     ).all()
     return [
         {
+            "id": str(binding.id),
             "geo_id": str(place.id),
             "name": place.name,
             "kind": place.kind,
@@ -672,6 +774,21 @@ async def replace_project_geo(
             raise HTTPException(
                 status_code=400, detail="Use validated places from the local reference"
             )
+    semantic_geo_ref = (
+        await db.execute(
+            select(ProjectSemanticKeywordGeoBinding.id)
+            .where(ProjectSemanticKeywordGeoBinding.project_id == project.id)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if semantic_geo_ref:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Project geography is referenced by a semantic collection; "
+                "edit the collection first"
+            ),
+        )
     await db.execute(delete(ProjectGeoPlace).where(ProjectGeoPlace.project_id == project.id))
     db.add_all(
         [
@@ -817,7 +934,14 @@ async def create_page_plan(
         risk_notes=body.risk_notes.strip() if body.risk_notes else None,
         kit_key=body.kit_key,
         block_selection=body.block_selection,
-        source_refs=body.source_refs,
+        source_refs={
+            **body.source_refs,
+            **(
+                {"semantic_target": body.semantic_target.model_dump(mode="json")}
+                if body.semantic_target
+                else {}
+            ),
+        },
     )
     db.add(plan)
     await db.flush()
@@ -860,6 +984,12 @@ async def update_page_plan(
         if value is not None and getattr(plan, field) != value:
             setattr(plan, field, value)
             changed.append(field)
+    if body.semantic_target is not None:
+        plan.source_refs = {
+            **(plan.source_refs or {}),
+            "semantic_target": body.semantic_target.model_dump(mode="json"),
+        }
+        changed.append("semantic_target")
     plan.version += 1
     await append_audit(
         db,
@@ -896,6 +1026,17 @@ async def submit_page_plan_review(
     plan.fact_revision_id = facts.id
     plan.keyword_snapshot = keywords
     plan.geo_snapshot = geo
+    raw_target = (plan.source_refs or {}).get("semantic_target")
+    if raw_target:
+        try:
+            semantic_target = SemanticPlanTargetIn.model_validate(raw_target)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail="Semantic target is invalid") from exc
+        plan.semantic_target_snapshot = await _semantic_target_snapshot(
+            db, project, semantic_target
+        )
+    else:
+        plan.semantic_target_snapshot = {}
     plan.state = "review"
     plan.submitted_at = datetime.now(UTC)
     plan.version += 1
@@ -1003,21 +1144,29 @@ async def project_coverage(
         .scalars()
         .all()
     )
-    covered = {
-        item.get("keyword_id")
+    covered_project_keywords = {
+        item.get("project_keyword_id")
         for plan in plans
-        for item in (plan.keyword_snapshot or {}).get("items", [])
-        if item.get("keyword_id")
+        if plan.state != "rejected"
+        for item in (plan.semantic_target_snapshot or {}).get("targets", [])
+        if isinstance(item, dict) and item.get("project_keyword_id")
     }
+    unmapped_plans = [
+        {"plan_id": str(plan.id), "slug": plan.slug, "state": plan.state}
+        for plan in plans
+        if plan.state != "rejected" and not (plan.semantic_target_snapshot or {}).get("targets")
+    ]
     return {
         "selected": len(selected),
-        "covered": sum(str(keyword.id) in covered for _, keyword in selected),
+        "covered": sum(str(binding.id) in covered_project_keywords for binding, _ in selected),
         "uncovered": [
             {"keyword_id": str(keyword.id), "phrase": keyword.phrase}
-            for _, keyword in selected
-            if str(keyword.id) not in covered
+            for binding, keyword in selected
+            if str(binding.id) not in covered_project_keywords
         ],
         "plans": len(plans),
+        "unmapped_plans": unmapped_plans,
+        "coverage_basis": "explicit_semantic_target_snapshot_only",
     }
 
 

@@ -271,6 +271,9 @@ from app.models.project import (  # noqa: E402
     ProjectFactRevision,
     ProjectGeoPlace,
     ProjectKeyword,
+    ProjectSemanticCollection,
+    ProjectSemanticCollectionKeyword,
+    ProjectSemanticKeywordGeoBinding,
 )
 from app.models.publish import (  # noqa: E402
     BulkOperation,
@@ -316,6 +319,9 @@ __all__ = [
     "ProjectFactRevision",
     "ProjectGeoPlace",
     "ProjectKeyword",
+    "ProjectSemanticCollection",
+    "ProjectSemanticCollectionKeyword",
+    "ProjectSemanticKeywordGeoBinding",
     "PagePlan",
     "PageDraft",
     "LeadOutcome",

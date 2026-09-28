@@ -148,6 +148,87 @@ class ProjectGeoUpdate(BaseModel):
         return self
 
 
+class SemanticGeoBindingIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    project_geo_place_id: UUID
+    scope: Literal["primary", "service_area"] = "service_area"
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class SemanticCollectionKeywordIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    project_keyword_id: UUID
+    cluster: str | None = Field(default=None, max_length=255)
+    intent: str | None = Field(default=None, max_length=128)
+    priority: int | None = Field(default=None, ge=0, le=100)
+    notes: str | None = Field(default=None, max_length=2000)
+    geo_bindings: list[SemanticGeoBindingIn] = Field(default_factory=list, max_length=100)
+
+    @model_validator(mode="after")
+    def require_unique_geo_bindings(self) -> SemanticCollectionKeywordIn:
+        ids = [item.project_geo_place_id for item in self.geo_bindings]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Semantic keyword geography contains duplicates")
+        return self
+
+
+class SemanticCollectionCreate(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    name: str = Field(min_length=2, max_length=255)
+    description: str | None = Field(default=None, max_length=4000)
+    evidence_ids: list[UUID] = Field(default_factory=list, max_length=50)
+    members: list[SemanticCollectionKeywordIn] = Field(default_factory=list, max_length=1000)
+
+    @model_validator(mode="after")
+    def require_unique_members_and_evidence(self) -> SemanticCollectionCreate:
+        member_ids = [item.project_keyword_id for item in self.members]
+        if len(member_ids) != len(set(member_ids)):
+            raise ValueError("Semantic collection contains duplicate project keywords")
+        if len(self.evidence_ids) != len(set(self.evidence_ids)):
+            raise ValueError("Semantic collection contains duplicate evidence")
+        return self
+
+
+class SemanticCollectionUpdate(SemanticCollectionCreate):
+    version: int = Field(ge=1)
+
+
+class SemanticCollectionDecision(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    reason: str | None = Field(default=None, max_length=4000)
+
+
+class SemanticPlanTargetItem(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    collection_keyword_id: UUID
+    geo_binding_ids: list[UUID] = Field(min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def require_unique_geo_bindings(self) -> SemanticPlanTargetItem:
+        if len(self.geo_binding_ids) != len(set(self.geo_binding_ids)):
+            raise ValueError("Semantic plan target contains duplicate geo bindings")
+        return self
+
+
+class SemanticPlanTargetIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    collection_id: UUID
+    targets: list[SemanticPlanTargetItem] = Field(min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def require_unique_members(self) -> SemanticPlanTargetIn:
+        ids = [item.collection_keyword_id for item in self.targets]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Semantic plan target contains duplicate collection keywords")
+        return self
+
+
 class PagePlanCreate(BaseModel):
     slug: str = Field(min_length=1, max_length=512)
     objective: str = Field(min_length=3, max_length=512)
@@ -156,6 +237,7 @@ class PagePlanCreate(BaseModel):
     kit_key: str = Field(min_length=2, max_length=128)
     block_selection: dict = Field(default_factory=dict)
     source_refs: dict = Field(default_factory=dict)
+    semantic_target: SemanticPlanTargetIn | None = None
 
     @field_validator("slug")
     @classmethod
@@ -170,6 +252,7 @@ class PagePlanUpdate(BaseModel):
     kit_key: str | None = Field(default=None, min_length=2, max_length=128)
     block_selection: dict | None = None
     source_refs: dict | None = None
+    semantic_target: SemanticPlanTargetIn | None = None
     version: int = Field(ge=1)
 
 
