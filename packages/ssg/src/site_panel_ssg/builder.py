@@ -7,6 +7,7 @@ import os
 import shutil
 import tempfile
 from dataclasses import dataclass
+from html import escape
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -189,14 +190,12 @@ def _extract_faq(page: PageManifest, context: dict[str, Any]) -> list[dict[str, 
             "q": f"Сколько стоит {service} в {city}?" if city else f"Сколько стоит {service}?",
             "a": (
                 f"Стоимость {service} зависит от объёма работ. "
-                "Оставьте заявку — рассчитаем за 15 минут."
+                "Оставьте заявку, чтобы уточнить условия."
             ),
         },
         {
             "q": f"Как быстро выполнить {service}?",
-            "a": (
-                "Обычно выезд в день обращения. Точные сроки согласуем после короткой диагностики."
-            ),
+            "a": ("Сроки зависят от задачи. Точные условия согласуем после уточнения деталей."),
         },
     ]
 
@@ -214,7 +213,7 @@ def render_sitemap(domain: str, urls: list[str]) -> str:
     items = []
     for url in urls:
         loc = url if url.startswith("http") else page_url(domain, url)
-        items.append(f"  <url><loc>{loc}</loc></url>")
+        items.append(f"  <url><loc>{escape(loc)}</loc></url>")
     body = "\n".join(items)
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'

@@ -567,3 +567,8 @@ def test_generation_rejects_unknown_curated_block_selection() -> None:
 
     assert blocked["verdict"] == "block"
     assert warned["verdict"] == "warn"
+
+
+def test_fact_revision_rejects_top_level_private_lead_email():
+    with pytest.raises(ValidationError, match="dedicated field"):
+        FactRevisionCreate(facts={"service": "Ремонт", "private_lead_email": "leads@example.test"})

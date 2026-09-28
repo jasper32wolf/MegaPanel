@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from app.services.dedup import compare_texts
 from site_panel_shared.manifests import PageManifest
 
@@ -92,6 +94,14 @@ def run_page_qa(*, page_manifest: dict, input_snapshot: dict, existing_texts: li
             block_slot_text,
         ]
     )
+    if re.search(r"\b[^\s@]+@[^\s@]+\.[^\s@]+\b", rendered_text):
+        findings.append(
+            {
+                "verdict": "block",
+                "rule": "public_email_leak",
+                "evidence": "Public page fields must not contain an email address",
+            }
+        )
     if any(
         compare_texts(rendered_text, existing) > 0.85 for existing in existing_texts if existing
     ):

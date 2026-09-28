@@ -76,6 +76,8 @@ class BusinessProfile(BaseModel):
 
 def normalize_business_profile(value: dict) -> dict:
     facts = dict(value or {})
+    if "private_lead_email" in facts:
+        raise ValueError("Configure the private lead email through the dedicated field")
     contacts = dict(facts.get("contacts") or {})
     if PROTECTED_CONTACT_FIELDS.intersection(contacts):
         raise ValueError("Configure webhook credentials through site webhook settings")

@@ -90,3 +90,10 @@ def test_ssg_build_keeps_previous_release_for_rollback(tmp_path: Path):
     assert "Первая версия" in (previous / "index.html").read_text(encoding="utf-8")
     assert builder.rollback(str(site_id), first["build_hash"])
     assert "Первая версия" in (current / "index.html").read_text(encoding="utf-8")
+
+
+def test_sitemap_escapes_xml_locations():
+    sitemap = render_sitemap("example.test", ["/service?a=1&b=2"])
+
+    assert "&amp;" in sitemap
+    assert "a=1&b=2" not in sitemap

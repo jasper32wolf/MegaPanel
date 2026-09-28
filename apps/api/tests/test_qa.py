@@ -65,3 +65,27 @@ def test_ai_provenance_requires_noindex():
 def test_deterministic_draft_without_ai_provenance_is_not_rejected_by_ai_rules():
     result = run_page_qa(page_manifest=base_page(), input_snapshot=base_input(), existing_texts=[])
     assert not any(item["rule"].startswith("ai_") for item in result["findings"])
+
+
+def test_qa_blocks_email_in_public_page_fields():
+    from app.services.qa import run_page_qa
+
+    result = run_page_qa(
+        page_manifest={
+            "slug": "/",
+            "title_template": "Ремонт",
+            "h1_template": "Ремонт",
+            "meta_description_template": "Пишите leads@example.test",
+            "service": "Ремонт",
+        },
+        input_snapshot={
+            "facts": {"service": "Ремонт", "contacts": {"phone": "+79990000000"}},
+            "project_domain": "example.test",
+            "geo_snapshot": {"items": [{"geo_id": "x"}]},
+            "keyword_snapshot": {"items": [{"keyword_id": "x"}]},
+        },
+        existing_texts=[],
+    )
+
+    assert result["verdict"] == "block"
+    assert any(item["rule"] == "public_email_leak" for item in result["findings"])

@@ -33,3 +33,11 @@ def test_legal_pack_escapes_operator_fields(tmp_path: Path):
     assert "&lt;img src=x onerror=&quot;alert(1)&quot;&gt;" in privacy
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in privacy
     assert "&lt;b&gt;address&lt;/b&gt;" in privacy
+
+
+def test_legal_pack_does_not_invent_a_third_party_privacy_address(tmp_path: Path):
+    write_legal_pack(tmp_path, {"org": "ИП Тест", "jurisdiction": "RU"})
+
+    privacy = (tmp_path / "privacy" / "index.html").read_text(encoding="utf-8")
+    assert "privacy@example.com" not in privacy
+    assert "Юрисдикция: RU" in privacy

@@ -9,7 +9,7 @@ from typing import Any
 def render_privacy(org: dict[str, Any], jurisdiction: str = "152-FZ") -> str:
     name = escape(str(org.get("org") or org.get("name") or "Оператор"))
     inn = escape(str(org.get("inn") or "—"))
-    email = escape(str(org.get("email") or "privacy@example.com"))
+    email = escape(str(org.get("privacy_email") or org.get("email") or "не указан"))
     address = escape(str(org.get("address") or "—"))
     jurisdiction = escape(jurisdiction)
     return f"""<!DOCTYPE html>
@@ -69,7 +69,7 @@ def write_legal_pack(site_dir, org: dict[str, Any]) -> list[str]:
     site_dir = Path(site_dir)
     written = []
     for slug, html in (
-        ("privacy", render_privacy(org)),
+        ("privacy", render_privacy(org, str(org.get("jurisdiction") or "152-FZ"))),
         ("terms", render_terms(org)),
         ("cookie-policy", render_cookies(org)),
     ):
