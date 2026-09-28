@@ -77,16 +77,17 @@ HTML = {
   <p class="sp-muted" style="margin:0 0 .5rem; text-transform:uppercase; letter-spacing:.06em; font-size:.8rem;">Услуги в {city_prep}</p>
   <h2 style="font-size:clamp(1.6rem,3vw,2.4rem); margin:0 0 .75rem;">{service}</h2>
   <p class="offer">{unique_core}</p>
+  <p class="sp-muted">{hero_supporting_text}</p>
   <p style="margin:1rem 0"><a class="sp-btn" href="tel:{phone}">Позвонить {phone}</a></p>
-  <p class="sp-muted trust">Выезд · гарантия · расчёт за 15 минут</p>
+  <p class="sp-muted trust">Условия и сроки уточняются до начала работ</p>
 </div>
 """,
     "trust_bar": """
 <ul class="sp-trust" style="display:flex;flex-wrap:wrap;gap:1rem;list-style:none;padding:0;margin:0;">
-  <li>Лицензированные мастера</li>
-  <li>Фикс-смета до работ</li>
-  <li>Гарантия до 12 мес.</li>
-  <li>Оплата после приёмки</li>
+  <li>Условия работы уточняются заранее</li>
+  <li>Состав работ согласуется с оператором</li>
+  <li>Документы предоставляются при наличии</li>
+  <li>Способы оплаты уточняются до заказа</li>
 </ul>
 """,
     "services_grid": """
@@ -94,8 +95,8 @@ HTML = {
   <h2>Услуги</h2>
   <ul style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:var(--sp-gap);list-style:none;padding:0;">
     <li style="border:1px solid #ddd;border-radius:var(--sp-radius-sm);padding:1rem;"><strong>{service}</strong><p class="sp-muted">от {price}</p></li>
-    <li style="border:1px solid #ddd;border-radius:var(--sp-radius-sm);padding:1rem;"><strong>{modifier}</strong><p class="sp-muted">Срочный выезд</p></li>
-    <li style="border:1px solid #ddd;border-radius:var(--sp-radius-sm);padding:1rem;"><strong>Диагностика</strong><p class="sp-muted">от 0 при заказе</p></li>
+    <li style="border:1px solid #ddd;border-radius:var(--sp-radius-sm);padding:1rem;"><strong>{modifier}</strong><p class="sp-muted">Условия уточняются</p></li>
+    <li style="border:1px solid #ddd;border-radius:var(--sp-radius-sm);padding:1rem;"><strong>Диагностика</strong><p class="sp-muted">Стоимость уточняется</p></li>
   </ul>
 </div>
 """,
@@ -106,8 +107,8 @@ HTML = {
     <thead><tr><th style="text-align:left;padding:.5rem;border-bottom:1px solid #ddd;">Услуга</th><th style="text-align:left;padding:.5rem;border-bottom:1px solid #ddd;">От</th></tr></thead>
     <tbody>
       <tr><td style="padding:.5rem;border-bottom:1px solid #eee;">{service}</td><td style="padding:.5rem;border-bottom:1px solid #eee;">{price}</td></tr>
-      <tr><td style="padding:.5rem;border-bottom:1px solid #eee;">Выезд мастера</td><td style="padding:.5rem;border-bottom:1px solid #eee;">0</td></tr>
-      <tr><td style="padding:.5rem;">Срочный заказ</td><td style="padding:.5rem;">+20%</td></tr>
+      <tr><td style="padding:.5rem;border-bottom:1px solid #eee;">Дополнительные работы</td><td style="padding:.5rem;border-bottom:1px solid #eee;">Уточняется</td></tr>
+      <tr><td style="padding:.5rem;">Сроки выполнения</td><td style="padding:.5rem;">Согласуются</td></tr>
     </tbody>
   </table>
 </div>
@@ -125,9 +126,9 @@ HTML = {
   <h2>Как мы работаем</h2>
   <ol style="padding-left:1.2rem;line-height:1.7;">
     <li>Заявка или звонок</li>
-    <li>Выезд и диагностика в {city_prep}</li>
-    <li>Согласование сметы</li>
-    <li>Работы и гарантия</li>
+    <li>Уточнение задачи</li>
+    <li>Согласование условий</li>
+    <li>Выполнение согласованных работ</li>
   </ol>
 </div>
 """,
@@ -135,9 +136,9 @@ HTML = {
 <div>
   <h2>Команда</h2>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:var(--sp-gap);">
-    <div><strong>Алексей</strong><p class="sp-muted">Мастер, 9 лет</p></div>
-    <div><strong>Ирина</strong><p class="sp-muted">Диспетчер</p></div>
-    <div><strong>Павел</strong><p class="sp-muted">Инженер</p></div>
+    <div><strong>Специалист</strong><p class="sp-muted">Состав уточняется по задаче</p></div>
+    <div><strong>Консультация</strong><p class="sp-muted">Условия уточняются по телефону</p></div>
+    <div><strong>Работы</strong><p class="sp-muted">Согласуются до начала выполнения</p></div>
   </div>
 </div>
 """,
@@ -145,25 +146,24 @@ HTML = {
 <div>
   <h2>Примеры работ</h2>
   <ul style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:var(--sp-gap);list-style:none;padding:0;">
-    <li style="min-height:90px;border-radius:var(--sp-radius-sm);background:#eee;padding:1rem;">Кейс · {city_nom}</li>
-    <li style="min-height:90px;border-radius:var(--sp-radius-sm);background:#e8e8e8;padding:1rem;">До / после</li>
-    <li style="min-height:90px;border-radius:var(--sp-radius-sm);background:#f0f0f0;padding:1rem;">Объект недели</li>
+    <li style="min-height:90px;border-radius:var(--sp-radius-sm);background:#eee;padding:1rem;">Примеры публикуются после проверки</li>
+    <li style="min-height:90px;border-radius:var(--sp-radius-sm);background:#e8e8e8;padding:1rem;">Материалы согласуются оператором</li>
+    <li style="min-height:90px;border-radius:var(--sp-radius-sm);background:#f0f0f0;padding:1rem;">Детали доступны по запросу</li>
   </ul>
 </div>
 """,
     "reviews": """
 <div>
   <h2>Отзывы</h2>
-  <blockquote style="margin:0 0 1rem;padding:1rem;border-left:3px solid var(--sp-primary);">«Приехали в день обращения.» — клиент из {city_gen}</blockquote>
-  <blockquote style="margin:0;padding:1rem;border-left:3px solid var(--sp-primary);">«Смета совпала с итогом.»</blockquote>
+  <p class="sp-muted">Отзывы публикуются только после подтверждения их достоверности.</p>
 </div>
 """,
     "guarantee": """
 <div>
-  <h2>Гарантии</h2>
+  <h2>Условия выполнения</h2>
   <ul>
-    <li>Письменная гарантия на работы</li>
-    <li>Повторный выезд при гарантийном случае — бесплатно</li>
+    <li>Условия согласуются до начала работ</li>
+    <li>Порядок обращения уточняется у оператора</li>
   </ul>
 </div>
 """,
@@ -171,8 +171,8 @@ HTML = {
 <div>
   <h2>Частые вопросы</h2>
   <details><summary>Сколько стоит {service} в {city_prep}?</summary><p>Стоимость зависит от объёма. Тел. {phone}.</p></details>
-  <details><summary>Как быстро приедете?</summary><p>Обычно в день обращения.</p></details>
-  <details><summary>Нужна ли предоплата?</summary><p>Оплата после приёмки работ.</p></details>
+  <details><summary>Как определяются сроки?</summary><p>Сроки согласуются после уточнения задачи.</p></details>
+  <details><summary>Как определяется порядок оплаты?</summary><p>Условия оплаты уточняются до начала работ.</p></details>
 </div>
 """,
     "cta_banner": """
@@ -209,13 +209,13 @@ HTML = {
   <strong>Контакты</strong><br>
   Тел: <a href="tel:{phone}">{phone}</a><br>
   Город: {city_nom}<br>
-  Режим: ежедневно 8:00–22:00
+  Режим: уточняйте по телефону
 </address>
 """,
     "footer": """
 <footer style="font-size:.85rem;" class="sp-muted">
   <p>© {city_nom} · {service}</p>
-  <p><a href="/privacy/">Конфиденциальность</a> · <a href="/terms/">Оферта</a> · <a href="/cookie-policy/">Cookies</a></p>
+  <p><a href="/privacy/">Конфиденциальность</a> · <a href="/terms/">Соглашение</a> · <a href="/cookie-policy/">Cookies</a></p>
 </footer>
 """,
 }
@@ -225,14 +225,14 @@ HTML2["hero"] = """
 <div class="sp-hero" style="display:grid;gap:1rem;background:var(--sp-surface);border:2px solid var(--sp-primary);border-radius:var(--sp-radius);padding:1.5rem;">
   <h2 style="margin:0;font-size:clamp(1.5rem,2.8vw,2.2rem);">{service} — {city_nom}</h2>
   <p class="offer">{unique_core}</p>
-  <p><a class="sp-btn" href="#lead-form">Вызвать мастера</a> <a href="tel:{phone}" class="sp-muted">{phone}</a></p>
+  <p class="sp-muted">{hero_supporting_text}</p>
+  <p><a class="sp-btn" href="#lead-form">Оставить заявку</a> <a href="tel:{phone}" class="sp-muted">{phone}</a></p>
 </div>
 """
 HTML2["team"] = """
 <div>
   <h2>Мастера на объекте</h2>
-  <p class="sp-muted">Бригады с допусками и своим инструментом.</p>
-  <ul><li>Сантехника / электрика</li><li>Отделка</li><li>Сборка мебели</li></ul>
+  <p class="sp-muted">Состав исполнителей определяется после уточнения задачи.</p>
 </div>
 """
 
@@ -256,13 +256,28 @@ def write_kit(key: str, name: str, desc: str, niches: list[str], html_map: dict,
                 "niches": niches,
                 "blocks": BLOCKS_ORDER,
                 "block_meta": [
-                    {"type": t, "name": t.replace("_", " ").title(), "cro": CRO.get(t, [])}
+                    {
+                        "type": t,
+                        "name": t.replace("_", " ").title(),
+                        "cro": CRO.get(t, []),
+                        **(
+                            {
+                                "editable_slots": {
+                                    "unique_core": {"type": "string", "max_length": 8000},
+                                    "hero_supporting_text": {"type": "string", "max_length": 280},
+                                }
+                            }
+                            if t == "hero"
+                            else {}
+                        ),
+                    }
                     for t in BLOCKS_ORDER
                 ],
             },
             ensure_ascii=False,
             indent=2,
-        ),
+        )
+        + chr(10),
         encoding="utf-8",
     )
     (d / "theme.json").write_text(json.dumps(theme, ensure_ascii=False, indent=2), encoding="utf-8")
