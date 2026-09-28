@@ -21,6 +21,12 @@ type Prompt = {
   revisions: Revision[];
 };
 
+function revisionTone(revision: Revision) {
+  if (revision.active || revision.state === "active") return "ok" as const;
+  if (revision.state === "review") return "warn" as const;
+  return "default" as const;
+}
+
 export function PromptsPage() {
   const { token } = useAuth();
   const [prompts, setPrompts] = useState<Prompt[]>([]);
@@ -128,7 +134,7 @@ export function PromptsPage() {
         <Surface title="Revision history">
           <p className="muted">Lifecycle: draft → review → approved → active. Возврат к packaged baseline не публикует сайт и не меняет PagePlan.</p>
           <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void rollbackBaseline()}>{busy === "rollback" ? "Возврат…" : "Вернуть packaged baseline"}</button>
-          {selected.revisions.length === 0 ? <p className="muted">Operator revisions пока нет. Используется packaged baseline.</p> : <div className="table-wrap"><table className="table"><thead><tr><th>Версия</th><th>Статус</th><th>Создана</th><th></th></tr></thead><tbody>{selected.revisions.map((revision) => <tr key={revision.id}><td>{revision.version}</td><td><StatusPill tone={revision.active ? "ok" : "default"}>{revision.active ? "активна" : "draft"}</StatusPill></td><td className="muted">{revision.created_at?.slice(0, 19) || "—"}</td><td className="row">{revision.state === "draft" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void transition(revision, "submit-review")}>{busy === `submit-review:${revision.id}` ? "Отправка…" : "На review"}</button>}{revision.state === "review" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void transition(revision, "approve")}>{busy === `approve:${revision.id}` ? "Одобрение…" : "Одобрить"}</button>}{revision.state === "approved" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void activate(revision)}>{busy === `activate:${revision.id}` ? "Активация…" : "Активировать"}</button>}</td></tr>)}</tbody></table></div>}
+          {selected.revisions.length === 0 ? <p className="muted">Operator revisions пока нет. Используется packaged baseline.</p> : <div className="table-wrap"><table className="table"><thead><tr><th>Версия</th><th>Статус</th><th>Инструкции</th><th>Создана</th><th></th></tr></thead><tbody>{selected.revisions.map((revision) => <tr key={revision.id}><td>{revision.version}</td><td><StatusPill tone={revisionTone(revision)}>{revision.active ? "активна" : revision.state}</StatusPill></td><td><details><summary>Показать</summary><pre className="code-block">{revision.instructions}</pre></details></td><td className="muted">{revision.created_at?.slice(0, 19) || "—"}</td><td className="row">{revision.state === "draft" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void transition(revision, "submit-review")}>{busy === `submit-review:${revision.id}` ? "Отправка…" : "На review"}</button>}{revision.state === "review" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void transition(revision, "approve")}>{busy === `approve:${revision.id}` ? "Одобрение…" : "Одобрить"}</button>}{revision.state === "approved" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void activate(revision)}>{busy === `activate:${revision.id}` ? "Активация…" : "Активировать"}</button>}</td></tr>)}</tbody></table></div>}
         </Surface>
       </> : null}
     </div>
