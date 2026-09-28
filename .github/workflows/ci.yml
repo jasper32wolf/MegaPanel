@@ -192,8 +192,8 @@ jobs:
             status=$?
             if [ "$status" -ne 0 ]; then
               echo "Production Compose smoke failed; service state follows" >&2
-              "${compose[@]}" ps -a || true
-              "${compose[@]}" logs --tail=200 --no-color || true
+              "${compose[@]}" ps -a | tee "$RUNNER_TEMP/site-panel-compose-ps.log" || true
+              "${compose[@]}" logs --tail=200 --no-color | tee "$RUNNER_TEMP/site-panel-compose-services.log" || true
             fi
             "${compose[@]}" down --volumes --remove-orphans || true
             exit "$status"
@@ -216,7 +216,12 @@ jobs:
           CORS_ORIGINS=https://localhost
           CADDY_EMAIL=ci-operator@example.test
           EOF
-          "${compose[@]}" up --build --detach
+          compose_build_log="$RUNNER_TEMP/site-panel-compose-build.log"
+          if ! "${compose[@]}" up --build --detach >"$compose_build_log" 2>&1; then
+            echo "Compose build/start failed; last 200 build lines follow" >&2
+            tail -n 200 "$compose_build_log" >&2 || true
+            exit 1
+          fi
           for attempt in $(seq 1 90); do
             if curl --insecure --fail --silent https://localhost/ >/tmp/site-panel-compose-index.html \
               && curl --insecure --fail --silent https://localhost/api/v1/health/ready >/dev/null; then
@@ -385,6 +390,17 @@ jobs:
           )
           docker compose -f infra/docker/docker-compose.production.yml --env-file .env exec -T worker arq --check app.worker.WorkerSettings
           docker compose -f infra/docker/docker-compose.production.yml --env-file .env exec -T caddy wget -q -O - http://127.0.0.1:2019/config/ >/dev/null
+      - name: Upload Compose diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-compose-diagnostics
+          path: |
+            ${{ runner.temp }}/site-panel-compose-build.log
+            ${{ runner.temp }}/site-panel-compose-ps.log
+            ${{ runner.temp }}/site-panel-compose-services.log
+          if-no-files-found: ignore
+          retention-days: 14
 
 
   panel-e2e:
