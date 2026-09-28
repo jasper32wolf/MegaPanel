@@ -97,3 +97,51 @@ def test_sitemap_escapes_xml_locations():
 
     assert "&amp;" in sitemap
     assert "a=1&b=2" not in sitemap
+
+
+def test_ssg_artifacts_match_index_policy_and_legal_pages_are_noindex(tmp_path: Path):
+    site = SiteManifest(
+        site_id=uuid4(),
+        tenant_id=uuid4(),
+        domain="example.test",
+        pages=[
+            PageManifest(
+                slug="/",
+                title_template="Главная",
+                h1_template="Главная",
+                service="Услуги",
+                index_state="indexed",
+                blocks=[
+                    BlockDef(
+                        type="hero", hash_class="blk-root", html="<p>" + "текст " * 90 + "</p>"
+                    )
+                ],
+            ),
+            PageManifest(
+                slug="/draft",
+                title_template="Черновик",
+                h1_template="Черновик",
+                service="Услуги",
+                blocks=[
+                    BlockDef(
+                        type="hero", hash_class="blk-draft", html="<p>" + "текст " * 90 + "</p>"
+                    )
+                ],
+            ),
+        ],
+        legal={"org": "ООО Тест", "privacy_email": "privacy@example.com"},
+    )
+
+    SiteBuilder(tmp_path).build(site)
+    current = tmp_path / str(site.site_id) / "current"
+    sitemap = (current / "sitemap.xml").read_text(encoding="utf-8")
+    root = (current / "index.html").read_text(encoding="utf-8")
+    draft = (current / "draft" / "index.html").read_text(encoding="utf-8")
+    privacy = (current / "privacy" / "index.html").read_text(encoding="utf-8")
+
+    assert "https://example.test/" in sitemap
+    assert "https://example.test/draft/" not in sitemap
+    assert '<link rel="canonical" href="https://example.test/">' in root
+    assert '<link rel="canonical" href="https://example.test/draft/">' in draft
+    assert '<meta name="robots" content="noindex, follow">' in draft
+    assert '<meta name="robots" content="noindex, follow">' in privacy

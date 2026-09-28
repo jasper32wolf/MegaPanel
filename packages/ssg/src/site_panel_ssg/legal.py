@@ -13,7 +13,9 @@ def render_privacy(org: dict[str, Any], jurisdiction: str = "152-FZ") -> str:
     address = escape(str(org.get("address") or "—"))
     jurisdiction = escape(jurisdiction)
     return f"""<!DOCTYPE html>
-<html lang="ru"><head><meta charset="utf-8"><title>Политика конфиденциальности</title></head>
+<html lang="ru"><head>
+<meta charset="utf-8"><meta name="robots" content="noindex, follow">
+<title>Политика конфиденциальности</title></head>
 <body>
 <h1>Политика конфиденциальности</h1>
 <p>Оператор: {name}, ИНН {inn}, адрес {address}.</p>
@@ -28,7 +30,9 @@ def render_privacy(org: dict[str, Any], jurisdiction: str = "152-FZ") -> str:
 def render_terms(org: dict[str, Any]) -> str:
     name = escape(str(org.get("org") or "Исполнитель"))
     return f"""<!DOCTYPE html>
-<html lang="ru"><head><meta charset="utf-8"><title>Пользовательское соглашение</title></head>
+<html lang="ru"><head>
+<meta charset="utf-8"><meta name="robots" content="noindex, follow">
+<title>Пользовательское соглашение</title></head>
 <body>
 <h1>Пользовательское соглашение</h1>
 <p>Услуги оказывает {name}. Используя сайт, вы соглашаетесь с условиями оказания услуг.</p>
@@ -39,7 +43,9 @@ def render_terms(org: dict[str, Any]) -> str:
 
 def render_cookies(org: dict[str, Any]) -> str:
     return """<!DOCTYPE html>
-<html lang="ru"><head><meta charset="utf-8"><title>Cookie Policy</title></head>
+<html lang="ru"><head>
+<meta charset="utf-8"><meta name="robots" content="noindex, follow">
+<title>Cookie Policy</title></head>
 <body>
 <h1>Политика cookie</h1>
 <p>Мы используем необходимые cookie для работы сайта. Аналитика — только после согласия.</p>

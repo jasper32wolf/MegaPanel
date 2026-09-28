@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import tempfile
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from html import escape
 from pathlib import Path
@@ -222,6 +223,35 @@ def render_sitemap(domain: str, urls: list[str]) -> str:
     )
 
 
+def _validate_release_artifacts(staging: Path, site: SiteManifest, page_meta: list[dict]) -> None:
+    expected_indexed_urls = {
+        page_url(site.domain, item["path"])
+        for item in page_meta
+        if item["index_state"] == IndexState.INDEXED.value
+    }
+    sitemap = ET.fromstring((staging / "sitemap.xml").read_text(encoding="utf-8"))
+    sitemap_urls = {
+        item.text or ""
+        for item in sitemap.findall(
+            "{http://www.sitemaps.org/schemas/sitemap/0.9}url/{http://www.sitemaps.org/schemas/sitemap/0.9}loc"
+        )
+    }
+    if sitemap_urls != expected_indexed_urls or len(sitemap_urls) != len(expected_indexed_urls):
+        raise ValueError("Sitemap URLs do not match indexed page artifacts")
+    for item in page_meta:
+        slug = item["slug"].strip("/")
+        output = staging / "index.html" if not slug else staging / slug / "index.html"
+        html = output.read_text(encoding="utf-8")
+        canonical = page_url(site.domain, item["slug"])
+        if f'<link rel="canonical" href="{canonical}">' not in html:
+            raise ValueError("Page canonical does not match its release path")
+        has_noindex = '<meta name="robots" content="noindex, follow">' in html
+        if item["index_state"] == IndexState.INDEXED.value and has_noindex:
+            raise ValueError("Indexed page artifact contains noindex")
+        if item["index_state"] != IndexState.INDEXED.value and not has_noindex:
+            raise ValueError("Noindex page artifact is missing robots policy")
+
+
 def write_precompressed(path: Path) -> None:
     data = path.read_bytes()
     with gzip.open(path.with_suffix(path.suffix + ".gz"), "wb", compresslevel=6) as file:
@@ -416,6 +446,7 @@ class SiteBuilder:
             (staging / "sitemap.xml").write_text(
                 render_sitemap(site.domain, indexed_urls), encoding="utf-8"
             )
+            _validate_release_artifacts(staging, site, page_meta)
             write_legal_pack(staging, site.legal or {})
             assets_hash = hashlib.sha256(
                 json.dumps(
