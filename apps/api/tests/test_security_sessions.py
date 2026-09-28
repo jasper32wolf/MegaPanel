@@ -17,6 +17,12 @@ class QueryResult:
     def scalar_one_or_none(self) -> object:
         return self.value
 
+    def scalars(self) -> QueryResult:
+        return self
+
+    def all(self) -> list[object]:
+        return self.value if isinstance(self.value, list) else [self.value]
+
 
 class SessionRows:
     def __init__(self, items: list[object]) -> None:
@@ -30,15 +36,11 @@ class SessionRows:
 
 
 class SessionListDatabase:
-    def __init__(self, active: list[object], recent: list[object], total: int) -> None:
-        self.rows = [SessionRows(active), SessionRows(recent)]
-        self.total = total
+    def __init__(self, sessions: list[object]) -> None:
+        self.sessions = sessions
 
     async def execute(self, _statement: object) -> SessionRows:
-        return self.rows.pop(0)
-
-    async def scalar(self, _statement: object) -> int:
-        return self.total
+        return SessionRows(self.sessions)
 
 
 class SecurityDatabase:
@@ -47,7 +49,7 @@ class SecurityDatabase:
         self.commits = 0
 
     async def execute(self, _statement: object) -> QueryResult:
-        return QueryResult(self.result)
+        return QueryResult(self.result if isinstance(self.result, list) else [self.result])
 
     async def commit(self) -> None:
         self.commits += 1
@@ -126,24 +128,29 @@ def test_session_summary_keeps_all_active_and_limits_recent_rows():
         created_at=now,
         expires_at=now + timedelta(days=1),
         revoked_at=None,
+        family_id=uuid4(),
+        device_label="Chrome on Windows",
     )
     active = SimpleNamespace(
         id=uuid4(),
         created_at=now - timedelta(hours=1),
         expires_at=now + timedelta(days=1),
         revoked_at=None,
+        family_id=uuid4(),
+        device_label="Firefox on macOS",
     )
     recent = SimpleNamespace(
         id=uuid4(),
         created_at=now - timedelta(days=1),
         expires_at=now - timedelta(hours=1),
         revoked_at=now - timedelta(hours=2),
+        family_id=uuid4(),
+        device_label=None,
     )
 
     payload = asyncio.run(
         security_ops.list_sessions(
-            auth_context(user, current.id),
-            SessionListDatabase([current, active], [recent], 12),
+            auth_context(user, current.id), SessionListDatabase([current, active, recent])
         )
     )
 
@@ -152,19 +159,28 @@ def test_session_summary_keeps_all_active_and_limits_recent_rows():
     assert payload["recent"] == [
         {
             "id": str(recent.id),
+            "family_id": str(recent.family_id),
+            "device_label": None,
             "current": False,
             "created_at": recent.created_at.isoformat(),
             "expires_at": recent.expires_at.isoformat(),
             "revoked_at": recent.revoked_at.isoformat(),
         }
     ]
-    assert payload["history_total"] == 12
+    assert payload["history_total"] == 1
 
 
 def test_session_revoke_marks_only_a_noncurrent_session(monkeypatch):
     user = SimpleNamespace(id=uuid4(), tenant_id=uuid4())
-    target = SimpleNamespace(id=uuid4(), revoked_at=None)
-    database = SecurityDatabase(target)
+    target = SimpleNamespace(
+        id=uuid4(),
+        revoked_at=None,
+        family_id=uuid4(),
+        created_at=datetime.now(UTC),
+        expires_at=datetime.now(UTC) + timedelta(days=1),
+        device_label=None,
+    )
+    database = SecurityDatabase([target])
 
     async def append_audit(*_args, **_kwargs) -> None:
         return None
@@ -192,3 +208,36 @@ def test_session_revoke_rejects_the_current_session():
                 SecurityDatabase(),
             )
         )
+
+
+def test_rotated_rows_are_one_visible_active_family():
+    now = datetime.now(UTC)
+    user = SimpleNamespace(id=uuid4(), tenant_id=uuid4())
+    family_id = uuid4()
+    old = SimpleNamespace(
+        id=uuid4(),
+        family_id=family_id,
+        device_label="Chrome on Windows",
+        created_at=now - timedelta(hours=1),
+        expires_at=now + timedelta(days=1),
+        revoked_at=now,
+    )
+    current = SimpleNamespace(
+        id=uuid4(),
+        family_id=family_id,
+        device_label="Chrome on Windows",
+        created_at=now,
+        expires_at=now + timedelta(days=1),
+        revoked_at=None,
+    )
+
+    payload = asyncio.run(
+        security_ops.list_sessions(
+            auth_context(user, current.id), SessionListDatabase([current, old])
+        )
+    )
+
+    assert len(payload["active"]) == 1
+    assert payload["active"][0]["id"] == str(current.id)
+    assert payload["active"][0]["current"] is True
+    assert payload["recent"] == []

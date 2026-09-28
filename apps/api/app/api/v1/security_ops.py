@@ -10,7 +10,7 @@ from app.services.audit import append_audit
 from app.services.mfa import generate_totp_secret, provisioning_uri, verify_totp
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import and_, func, select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
@@ -93,18 +93,54 @@ async def totp_disable(
     return {"ok": True, "mfa_enabled": False}
 
 
-def _serialize_session(session: AuthSession, current_session_id: UUID | None) -> dict:
+def _serialize_session(session: AuthSession, current_family_id: UUID | None) -> dict:
     return {
         "id": str(session.id),
-        "current": session.id == current_session_id,
+        "family_id": str(session.family_id),
+        "device_label": session.device_label,
+        "current": session.family_id == current_family_id,
         "created_at": session.created_at.isoformat() if session.created_at else None,
         "expires_at": session.expires_at.isoformat(),
         "revoked_at": session.revoked_at.isoformat() if session.revoked_at else None,
     }
 
 
-def _active_session_filter(now: datetime):
-    return and_(AuthSession.revoked_at.is_(None), AuthSession.expires_at > now)
+def _family_representatives(
+    sessions: list[AuthSession], now: datetime
+) -> tuple[list[AuthSession], list[AuthSession]]:
+    by_family: dict[UUID, list[AuthSession]] = {}
+    for session in sessions:
+        by_family.setdefault(session.family_id, []).append(session)
+    active: list[AuthSession] = []
+    recent: list[AuthSession] = []
+    for family_sessions in by_family.values():
+        ordered = sorted(
+            family_sessions,
+            key=lambda item: item.created_at or datetime.min.replace(tzinfo=UTC),
+            reverse=True,
+        )
+        representative = ordered[0]
+        if any(item.revoked_at is None and item.expires_at > now for item in family_sessions):
+            active.append(representative)
+        else:
+            recent.append(representative)
+    active.sort(key=lambda item: item.created_at or datetime.min.replace(tzinfo=UTC), reverse=True)
+    recent.sort(key=lambda item: item.created_at or datetime.min.replace(tzinfo=UTC), reverse=True)
+    return active, recent
+
+
+async def _user_sessions(db: AsyncSession, user_id: UUID) -> list[AuthSession]:
+    return list(
+        (
+            await db.execute(
+                select(AuthSession)
+                .where(AuthSession.user_id == user_id)
+                .order_by(AuthSession.created_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
 
 
 @router.get("/sessions")
@@ -115,42 +151,14 @@ async def list_sessions(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     now = datetime.now(UTC)
-    active_filter = _active_session_filter(now)
-    active = list(
-        (
-            await db.execute(
-                select(AuthSession)
-                .where(AuthSession.user_id == auth.user.id, active_filter)
-                .order_by(AuthSession.created_at.desc())
-            )
-        )
-        .scalars()
-        .all()
-    )
-    recent = list(
-        (
-            await db.execute(
-                select(AuthSession)
-                .where(AuthSession.user_id == auth.user.id, ~active_filter)
-                .order_by(AuthSession.created_at.desc())
-                .limit(10)
-            )
-        )
-        .scalars()
-        .all()
-    )
-    history_total = await db.scalar(
-        select(func.count())
-        .select_from(AuthSession)
-        .where(
-            AuthSession.user_id == auth.user.id,
-            ~active_filter,
-        )
-    )
+    sessions = await _user_sessions(db, auth.user.id)
+    current = next((item for item in sessions if item.id == auth.session_id), None)
+    current_family_id = current.family_id if current else None
+    active, recent = _family_representatives(sessions, now)
     return {
-        "active": [_serialize_session(session, auth.session_id) for session in active],
-        "recent": [_serialize_session(session, auth.session_id) for session in recent],
-        "history_total": int(history_total or 0),
+        "active": [_serialize_session(session, current_family_id) for session in active],
+        "recent": [_serialize_session(session, current_family_id) for session in recent[:10]],
+        "history_total": len(recent),
     }
 
 
@@ -165,25 +173,15 @@ async def list_session_history(
 ) -> dict:
     safe_offset = max(offset, 0)
     safe_limit = min(max(limit, 1), 100)
-    now = datetime.now(UTC)
-    active_filter = _active_session_filter(now)
-    query = (
-        select(AuthSession)
-        .where(AuthSession.user_id == auth.user.id, ~active_filter)
-        .order_by(AuthSession.created_at.desc())
-    )
-    sessions = list((await db.execute(query.offset(safe_offset).limit(safe_limit))).scalars().all())
-    total = await db.scalar(
-        select(func.count())
-        .select_from(AuthSession)
-        .where(
-            AuthSession.user_id == auth.user.id,
-            ~active_filter,
-        )
-    )
+    sessions = await _user_sessions(db, auth.user.id)
+    current = next((item for item in sessions if item.id == auth.session_id), None)
+    _, recent = _family_representatives(sessions, datetime.now(UTC))
     return {
-        "items": [_serialize_session(session, auth.session_id) for session in sessions],
-        "total": int(total or 0),
+        "items": [
+            _serialize_session(session, current.family_id if current else None)
+            for session in recent[safe_offset : safe_offset + safe_limit]
+        ],
+        "total": len(recent),
         "offset": safe_offset,
         "limit": safe_limit,
     }
@@ -199,26 +197,42 @@ async def revoke_session(
 ) -> dict:
     if session_id == auth.session_id:
         raise HTTPException(status_code=409, detail="Use logout to revoke the current session")
-    session = (
-        await db.execute(
-            select(AuthSession).where(
-                AuthSession.id == session_id, AuthSession.user_id == auth.user.id
-            )
-        )
-    ).scalar_one_or_none()
-    if not session:
+    sessions = await _user_sessions(db, auth.user.id)
+    target = next((item for item in sessions if item.id == session_id), None)
+    if not target:
         raise HTTPException(status_code=404, detail="Session not found")
-    if session.revoked_at is None:
-        session.revoked_at = datetime.now(UTC)
+    current = next((item for item in sessions if item.id == auth.session_id), None)
+    if current and target.family_id == current.family_id:
+        raise HTTPException(status_code=409, detail="Use logout to revoke the current session")
+    active_members = [
+        item for item in sessions if item.family_id == target.family_id and item.revoked_at is None
+    ]
+    if active_members:
+        now = datetime.now(UTC)
+        await db.execute(
+            update(AuthSession)
+            .where(
+                AuthSession.user_id == auth.user.id,
+                AuthSession.family_id == target.family_id,
+                AuthSession.revoked_at.is_(None),
+            )
+            .values(revoked_at=now)
+        )
+        for item in active_members:
+            item.revoked_at = now
         await append_audit(
             db,
-            action="user.session_revoke",
-            payload={"session_id": str(session.id)},
+            action="user.session_family_revoke",
+            payload={
+                "session_id": str(target.id),
+                "family_id": str(target.family_id),
+                "count": len(active_members),
+            },
             tenant_id=auth.tenant_id,
             actor_id=auth.user.id,
         )
         await db.commit()
-    return {"id": str(session.id), "revoked": True}
+    return {"id": str(target.id), "revoked": True}
 
 
 @router.get("/me")

@@ -142,3 +142,20 @@ def test_production_session_cookies_are_secure_and_scoped(monkeypatch):
     assert "Path=/" in set_cookies[auth.CSRF_COOKIE_NAME]
     assert "SameSite=strict" in set_cookies[auth.CSRF_COOKIE_NAME]
     assert "Secure" in set_cookies[auth.CSRF_COOKIE_NAME]
+
+
+def test_refresh_rotation_preserves_family_and_safe_device_label(monkeypatch):
+    user = SimpleNamespace(id=uuid4(), tenant_id=uuid4(), role="superadmin", is_active=True)
+    monkeypatch.setattr(auth.settings, "app_secret_key", "test-session-key-" + "x" * 32)
+    refresh = create_refresh_token(user.id)
+    session = auth._new_session(user, refresh, device_label="Chrome on Windows")
+    replacement = auth._new_session(
+        user,
+        create_refresh_token(user.id),
+        family_id=session.family_id,
+        device_label=session.device_label,
+    )
+
+    assert session.family_id == session.id
+    assert replacement.family_id == session.family_id
+    assert replacement.device_label == "Chrome on Windows"

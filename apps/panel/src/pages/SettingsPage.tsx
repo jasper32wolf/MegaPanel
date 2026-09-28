@@ -12,7 +12,7 @@ type Operator = {
 type Health = { status: string; version: string; env: string };
 type Readiness = { status: string };
 type TotpSetup = { secret: string; otpauth_url: string; pending: boolean };
-type Session = { id: string; current: boolean; created_at: string | null; expires_at: string; revoked_at: string | null };
+type Session = { id: string; family_id: string; device_label: string | null; current: boolean; created_at: string | null; expires_at: string; revoked_at: string | null };
 type SessionSummary = { active: Session[]; recent: Session[]; history_total: number };
 type SessionHistory = { items: Session[]; total: number; offset: number; limit: number };
 
@@ -134,20 +134,21 @@ export function SettingsPage() {
         {operator?.mfa_enabled && <form onSubmit={disableTotp} className="stack"><p className="muted" style={{ margin: 0 }}>Чтобы отключить TOTP, подтвердите текущий одноразовый код. Это действие записывается в audit log.</p><label className="field">Текущий код<input value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 8))} inputMode="numeric" autoComplete="one-time-code" required /></label><button className="btn btn-ghost" type="submit" disabled={busy !== null || code.length < 6}>{busy === "disable" ? "Отключение…" : "Отключить TOTP"}</button></form>}
       </Surface>
       <Surface title="Сессии">
-        <p className="muted">Показываются все активные сессии и максимум десять последних завершённых. Отзыв другой сессии прекращает обновление токена на том устройстве; уже выданный access token может действовать до 15 минут.</p>
+        <p className="muted">Показываются все активные device sessions и максимум десять завершённых device families. Refresh rotations не создают отдельные видимые сессии. Отзыв другой family прекращает обновление токена на этом устройстве; уже выданный access token может действовать до 15 минут.</p>
         <div className="table-wrap">
           <table className="table">
-            <thead><tr><th>Создана</th><th>Истекает</th><th>Состояние</th><th></th></tr></thead>
+            <thead><tr><th>Устройство</th><th>Создана</th><th>Истекает</th><th>Состояние</th><th></th></tr></thead>
             <tbody>
               {sessions.map((session) => (
                 <tr key={session.id}>
+                  <td>{session.device_label || "Неизвестное / прежняя сессия"}</td>
                   <td className="muted">{session.created_at?.slice(0, 19) || "—"}</td>
                   <td className="muted">{session.expires_at.slice(0, 19)}</td>
                   <td><StatusPill tone={session.revoked_at ? "danger" : session.current ? "ok" : "accent"}>{session.revoked_at ? "отозвана" : session.current ? "текущая" : "активна"}</StatusPill></td>
                   <td>{!session.current && !session.revoked_at ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => setSessionToRevoke(session)}>{busy === `session:${session.id}` ? "Отзыв…" : "Отозвать"}</button> : null}</td>
                 </tr>
               ))}
-              {sessions.length === 0 ? <tr><td colSpan={4} className="muted">Активных или недавних сессий нет</td></tr> : null}
+              {sessions.length === 0 ? <tr><td colSpan={5} className="muted">Активных или недавних device sessions нет</td></tr> : null}
             </tbody>
           </table>
         </div>
@@ -158,7 +159,7 @@ export function SettingsPage() {
       <ConfirmDialog
         open={sessionToRevoke !== null}
         title="Отозвать сессию?"
-        description="Сессия больше не сможет обновить access token. Уже выданный access token может действовать до 15 минут."
+        description="Эта device family больше не сможет обновить access token. Уже выданный access token может действовать до 15 минут."
         confirmLabel="Отозвать"
         dangerous
         onCancel={() => setSessionToRevoke(null)}

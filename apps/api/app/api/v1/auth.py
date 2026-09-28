@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import secrets
 from datetime import UTC, datetime
+from uuid import UUID, uuid4
 
 from app.api.deps import AuthContext, get_current_user, require_single_operator
 from app.core.config import get_settings
@@ -82,15 +83,56 @@ def _clear_session_cookies(response: Response) -> None:
     response.delete_cookie(CSRF_COOKIE_NAME, path="/")
 
 
-def _new_session(user: User, refresh: str) -> AuthSession:
+def _device_label(request: Request) -> str | None:
+    user_agent = request.headers.get("User-Agent", "")
+    if not user_agent:
+        return None
+    browser = (
+        "Edge"
+        if "Edg/" in user_agent
+        else "Firefox"
+        if "Firefox/" in user_agent
+        else "Chrome"
+        if "Chrome/" in user_agent
+        else "Safari"
+        if "Safari/" in user_agent
+        else "Browser"
+    )
+    platform = (
+        "Windows"
+        if "Windows" in user_agent
+        else "macOS"
+        if "Mac OS" in user_agent
+        else "Android"
+        if "Android" in user_agent
+        else "iOS"
+        if "iPhone" in user_agent or "iPad" in user_agent
+        else "device"
+    )
+    return f"{browser} on {platform}"[:128]
+
+
+def _new_session(
+    user: User,
+    refresh: str,
+    *,
+    family_id: UUID | None = None,
+    device_label: str | None = None,
+) -> AuthSession:
     payload = decode_token(refresh)
     if payload.get("type") != "refresh":
         raise HTTPException(status_code=401, detail="Invalid refresh token")
-    return AuthSession(
+    session = AuthSession(
+        id=uuid4(),
         user_id=user.id,
         refresh_jti_hash=sha256_hex(_refresh_jti(payload)),
+        family_id=family_id or uuid4(),
+        device_label=device_label,
         expires_at=_expires_at(payload),
     )
+    if family_id is None:
+        session.family_id = session.id
+    return session
 
 
 @router.post("/login")
@@ -111,7 +153,7 @@ async def login(
             raise HTTPException(status_code=401, detail="TOTP required or invalid")
 
     refresh = create_refresh_token(user.id)
-    session = _new_session(user, refresh)
+    session = _new_session(user, refresh, device_label=_device_label(request))
     db.add(session)
     await db.flush()
     access = create_access_token(user.id, user.tenant_id, user.role, session.id)
@@ -156,7 +198,11 @@ async def refresh(
         if session is not None:
             await db.execute(
                 update(AuthSession)
-                .where(AuthSession.user_id == session.user_id, AuthSession.revoked_at.is_(None))
+                .where(
+                    AuthSession.user_id == session.user_id,
+                    AuthSession.family_id == session.family_id,
+                    AuthSession.revoked_at.is_(None),
+                )
                 .values(revoked_at=datetime.now(UTC))
             )
             await db.commit()
@@ -178,7 +224,12 @@ async def refresh(
         raise HTTPException(status_code=401, detail="Single operator access required") from exc
 
     new_refresh = create_refresh_token(user.id)
-    replacement = _new_session(user, new_refresh)
+    replacement = _new_session(
+        user,
+        new_refresh,
+        family_id=session.family_id,
+        device_label=session.device_label,
+    )
     db.add(replacement)
     await db.flush()
     access = create_access_token(user.id, user.tenant_id, user.role, replacement.id)
@@ -215,7 +266,15 @@ async def revoke(
                 )
             ).scalar_one_or_none()
             if session is not None:
-                session.revoked_at = datetime.now(UTC)
+                await db.execute(
+                    update(AuthSession)
+                    .where(
+                        AuthSession.user_id == session.user_id,
+                        AuthSession.family_id == session.family_id,
+                        AuthSession.revoked_at.is_(None),
+                    )
+                    .values(revoked_at=datetime.now(UTC))
+                )
         except Exception:  # noqa: BLE001
             pass
 
