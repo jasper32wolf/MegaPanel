@@ -9,7 +9,7 @@ from typing import Any
 def render_privacy(org: dict[str, Any], jurisdiction: str = "152-FZ") -> str:
     name = escape(str(org.get("org") or org.get("name") or "Оператор"))
     inn = escape(str(org.get("inn") or "—"))
-    email = escape(str(org.get("privacy_email") or org.get("email") or "не указан"))
+    email = escape(str(org.get("privacy_email") or "не указан"))
     address = escape(str(org.get("address") or "—"))
     jurisdiction = escape(jurisdiction)
     return f"""<!DOCTYPE html>

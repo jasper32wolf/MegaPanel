@@ -86,6 +86,7 @@ export function ProjectWorkspacePage() {
   const [address, setAddress] = useState("");
   const [workHours, setWorkHours] = useState("");
   const [privateLeadEmail, setPrivateLeadEmail] = useState("");
+  const [privacyEmail, setPrivacyEmail] = useState("");
   const [legal, setLegal] = useState("");
   const [inn, setInn] = useState("");
   const [companyHistory, setCompanyHistory] = useState("");
@@ -207,6 +208,7 @@ export function ProjectWorkspacePage() {
                 legal: {
                   org: legal || organization,
                   inn: inn || undefined,
+                  privacy_email: privacyEmail || undefined,
                   address: address || undefined,
                 },
                 company_history: companyHistory || undefined,
@@ -612,6 +614,7 @@ export function ProjectWorkspacePage() {
           <label className="field">Публичный адрес<input value={address} onChange={(event) => setAddress(event.target.value)} placeholder="Город, улица, дом" /><span className="muted">Отображается только в блоках, где адрес включён шаблоном.</span></label>
           <label className="field">Часы работы<input value={workHours} onChange={(event) => setWorkHours(event.target.value)} placeholder="Пн–Вс, 09:00–20:00" /></label>
           <label className="field">Email для заявок<input type="email" value={privateLeadEmail} onChange={(event) => setPrivateLeadEmail(event.target.value)} placeholder="leads@example.com" /><span className="muted">Приватный маршрут доставки. Не публикуется на сайте и не отправляется AI-провайдерам.</span></label>
+          <label className="field">Публичный email для privacy/DSAR<input type="email" value={privacyEmail} onChange={(event) => setPrivacyEmail(event.target.value)} placeholder="privacy@example.ru" /><span className="muted">Публичный юридический контакт для legal pages. Не используйте адрес для заявок, если он должен оставаться private.</span></label>
           <label className="field">Юридическое наименование<input value={legal} onChange={(event) => setLegal(event.target.value)} placeholder="ООО «Организация»" /></label>
           <label className="field">ИНН<input value={inn} onChange={(event) => setInn(event.target.value)} placeholder="1234567890" inputMode="numeric" /></label>
           <label className="field">История компании<textarea value={companyHistory} onChange={(event) => setCompanyHistory(event.target.value)} placeholder="Проверенные факты для страницы «История компании»" /></label>

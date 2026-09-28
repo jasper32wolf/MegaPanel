@@ -19,7 +19,7 @@ def test_legal_pack_escapes_operator_fields(tmp_path: Path):
         {
             "org": '<img src=x onerror="alert(1)">',
             "inn": "<script>alert(1)</script>",
-            "email": "privacy@example.test<script>",
+            "email": "privacy@example.com<script>",
             "address": "<b>address</b>",
         },
     )
@@ -41,3 +41,18 @@ def test_legal_pack_does_not_invent_a_third_party_privacy_address(tmp_path: Path
     privacy = (tmp_path / "privacy" / "index.html").read_text(encoding="utf-8")
     assert "privacy@example.com" not in privacy
     assert "Юрисдикция: RU" in privacy
+
+
+def test_legal_pack_uses_explicit_public_privacy_contact_only(tmp_path: Path):
+    write_legal_pack(
+        tmp_path,
+        {
+            "org": "ИП Тест",
+            "privacy_email": "privacy@example.com",
+            "email": "private@example.com",
+        },
+    )
+
+    privacy = (tmp_path / "privacy" / "index.html").read_text(encoding="utf-8")
+    assert "privacy@example.com" in privacy
+    assert "private@example.com" not in privacy

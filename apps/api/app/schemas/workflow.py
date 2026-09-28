@@ -48,6 +48,7 @@ class PublicContacts(BaseModel):
 
 class LegalProfile(BaseModel):
     org: str | None = Field(default=None, max_length=255)
+    privacy_email: EmailStr | None = None
     inn: str | None = Field(default=None, max_length=32)
     ogrn: str | None = Field(default=None, max_length=32)
     address: str | None = Field(default=None, max_length=500)

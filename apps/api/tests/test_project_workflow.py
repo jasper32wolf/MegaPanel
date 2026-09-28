@@ -571,4 +571,17 @@ def test_generation_rejects_unknown_curated_block_selection() -> None:
 
 def test_fact_revision_rejects_top_level_private_lead_email():
     with pytest.raises(ValidationError, match="dedicated field"):
-        FactRevisionCreate(facts={"service": "Ремонт", "private_lead_email": "leads@example.test"})
+        FactRevisionCreate(facts={"service": "Ремонт", "private_lead_email": "leads@example.com"})
+
+
+def test_fact_revision_keeps_public_privacy_contact_separate_from_private_lead_email():
+    revision = FactRevisionCreate(
+        facts={
+            "service": "Ремонт",
+            "legal": {"org": "ООО Тест", "privacy_email": "privacy@example.com"},
+        },
+        private_lead_email="leads@example.com",
+    )
+
+    assert revision.facts["legal"]["privacy_email"] == "privacy@example.com"
+    assert str(revision.private_lead_email) == "leads@example.com"
