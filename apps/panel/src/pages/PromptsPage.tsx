@@ -8,7 +8,10 @@ type Revision = {
   version: number;
   instructions: string;
   active: boolean;
+  state: string;
   created_at: string | null;
+  submitted_at: string | null;
+  reviewed_at: string | null;
 };
 type Prompt = {
   id: string;
@@ -60,19 +63,41 @@ export function PromptsPage() {
     }
   }
 
-  async function activate(revision: Revision) {
+  async function transition(revision: Revision, action: "submit-review" | "approve" | "activate") {
     if (!selected) return;
-    setBusy(`activate:${revision.id}`);
+    setBusy(`${action}:${revision.id}`);
     setError(null);
     try {
-      await api(`/api/v1/ai/prompts/${encodeURIComponent(selected.id)}/revisions/${revision.id}/activate`, { method: "POST" }, token);
+      await api(`/api/v1/ai/prompts/${encodeURIComponent(selected.id)}/revisions/${revision.id}/${action}`, {
+        method: "POST",
+        body: action === "approve" ? JSON.stringify({}) : undefined,
+      }, token);
       await load();
-      setMessage(`Активирована revision ${revision.version}. Следующий AI run сохранит её hash в provenance.`);
+      setMessage(action === "submit-review" ? "Revision отправлена на review." : action === "approve" ? "Revision одобрена; теперь её можно активировать." : `Активирована revision ${revision.version}.`);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Не удалось активировать revision");
+      setError(cause instanceof Error ? cause.message : "Операция с revision не выполнена");
     } finally {
       setBusy(null);
     }
+  }
+
+  async function rollbackBaseline() {
+    if (!selected) return;
+    setBusy("rollback");
+    setError(null);
+    try {
+      await api(`/api/v1/ai/prompts/${encodeURIComponent(selected.id)}/rollback-baseline`, { method: "POST" }, token);
+      await load();
+      setMessage("Возвращён packaged baseline. Сайт и PagePlan не изменялись.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Не удалось вернуть baseline");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function activate(revision: Revision) {
+    await transition(revision, "activate");
   }
 
   return (
@@ -101,7 +126,9 @@ export function PromptsPage() {
           </form>
         </Surface>
         <Surface title="Revision history">
-          {selected.revisions.length === 0 ? <p className="muted">Operator revisions пока нет. Используется packaged baseline.</p> : <div className="table-wrap"><table className="table"><thead><tr><th>Версия</th><th>Статус</th><th>Создана</th><th></th></tr></thead><tbody>{selected.revisions.map((revision) => <tr key={revision.id}><td>{revision.version}</td><td><StatusPill tone={revision.active ? "ok" : "default"}>{revision.active ? "активна" : "draft"}</StatusPill></td><td className="muted">{revision.created_at?.slice(0, 19) || "—"}</td><td>{!revision.active ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void activate(revision)}>{busy === `activate:${revision.id}` ? "Активация…" : "Активировать"}</button> : null}</td></tr>)}</tbody></table></div>}
+          <p className="muted">Lifecycle: draft → review → approved → active. Возврат к packaged baseline не публикует сайт и не меняет PagePlan.</p>
+          <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void rollbackBaseline()}>{busy === "rollback" ? "Возврат…" : "Вернуть packaged baseline"}</button>
+          {selected.revisions.length === 0 ? <p className="muted">Operator revisions пока нет. Используется packaged baseline.</p> : <div className="table-wrap"><table className="table"><thead><tr><th>Версия</th><th>Статус</th><th>Создана</th><th></th></tr></thead><tbody>{selected.revisions.map((revision) => <tr key={revision.id}><td>{revision.version}</td><td><StatusPill tone={revision.active ? "ok" : "default"}>{revision.active ? "активна" : "draft"}</StatusPill></td><td className="muted">{revision.created_at?.slice(0, 19) || "—"}</td><td className="row">{revision.state === "draft" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void transition(revision, "submit-review")}>{busy === `submit-review:${revision.id}` ? "Отправка…" : "На review"}</button>}{revision.state === "review" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void transition(revision, "approve")}>{busy === `approve:${revision.id}` ? "Одобрение…" : "Одобрить"}</button>}{revision.state === "approved" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void activate(revision)}>{busy === `activate:${revision.id}` ? "Активация…" : "Активировать"}</button>}</td></tr>)}</tbody></table></div>}
         </Surface>
       </> : null}
     </div>

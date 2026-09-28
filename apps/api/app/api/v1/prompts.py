@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import UUID
 
 from app.api.deps import AuthContext, require_roles
@@ -16,6 +17,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 router = APIRouter()
 
 
+def _baseline(prompt_id: str):
+    return next((item for item in list_prompts() if item.prompt_id == prompt_id), None)
+
+
 def _serialize(entry: PromptEntry) -> dict:
     return {
         "id": str(entry.id),
@@ -23,8 +28,34 @@ def _serialize(entry: PromptEntry) -> dict:
         "version": entry.version,
         "instructions": entry.template,
         "active": entry.is_active,
+        "state": entry.state,
+        "baseline_hash": (entry.schema_json or {}).get("baseline_hash"),
+        "created_by": str(entry.created_by) if entry.created_by else None,
+        "reviewed_by": str(entry.reviewed_by) if entry.reviewed_by else None,
+        "submitted_at": entry.submitted_at.isoformat() if entry.submitted_at else None,
+        "reviewed_at": entry.reviewed_at.isoformat() if entry.reviewed_at else None,
+        "decision_reason": entry.decision_reason,
         "created_at": entry.created_at.isoformat() if entry.created_at else None,
     }
+
+
+async def _revision_or_404(
+    db: AsyncSession, prompt_id: str, revision_id: UUID, auth: AuthContext
+) -> PromptEntry:
+    if auth.tenant_id is None:
+        raise HTTPException(status_code=403, detail="Tenant required")
+    entry = (
+        await db.execute(
+            select(PromptEntry).where(
+                PromptEntry.id == revision_id,
+                PromptEntry.tenant_id == auth.tenant_id,
+                PromptEntry.key == prompt_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Prompt revision not found")
+    return entry
 
 
 @router.get("")
@@ -69,7 +100,7 @@ async def create_prompt_revision(
 ) -> dict:
     if auth.tenant_id is None:
         raise HTTPException(status_code=403, detail="Tenant required")
-    baseline = next((item for item in list_prompts() if item.prompt_id == prompt_id), None)
+    baseline = _baseline(prompt_id)
     if baseline is None:
         raise HTTPException(status_code=404, detail="Built-in prompt not found")
     version = await db.scalar(
@@ -86,6 +117,8 @@ async def create_prompt_revision(
         template=body.instructions,
         schema_json={"baseline_hash": baseline.content_hash},
         is_active=False,
+        state="draft",
+        created_by=auth.user.id,
     )
     db.add(entry)
     await db.flush()
@@ -106,6 +139,53 @@ async def create_prompt_revision(
     return _serialize(entry)
 
 
+@router.post("/{prompt_id}/revisions/{revision_id}/submit-review")
+async def submit_prompt_revision(
+    prompt_id: str,
+    revision_id: UUID,
+    auth: AuthContext = Depends(require_roles("superadmin")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    entry = await _revision_or_404(db, prompt_id, revision_id, auth)
+    if entry.state != "draft":
+        raise HTTPException(status_code=409, detail="Only draft revisions can be submitted")
+    entry.state = "review"
+    entry.submitted_at = datetime.now(UTC)
+    await append_audit(
+        db,
+        action="ai.prompt_revision.submit_review",
+        payload={"prompt_id": prompt_id, "revision_id": str(entry.id)},
+        tenant_id=auth.tenant_id,
+        actor_id=auth.user.id,
+    )
+    await db.commit()
+    return _serialize(entry)
+
+
+@router.post("/{prompt_id}/revisions/{revision_id}/approve")
+async def approve_prompt_revision(
+    prompt_id: str,
+    revision_id: UUID,
+    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    entry = await _revision_or_404(db, prompt_id, revision_id, auth)
+    if entry.state != "review":
+        raise HTTPException(status_code=409, detail="Only revisions under review can be approved")
+    entry.state = "approved"
+    entry.reviewed_by = auth.user.id
+    entry.reviewed_at = datetime.now(UTC)
+    await append_audit(
+        db,
+        action="ai.prompt_revision.approve",
+        payload={"prompt_id": prompt_id, "revision_id": str(entry.id)},
+        tenant_id=auth.tenant_id,
+        actor_id=auth.user.id,
+    )
+    await db.commit()
+    return _serialize(entry)
+
+
 @router.post("/{prompt_id}/revisions/{revision_id}/activate")
 async def activate_prompt_revision(
     prompt_id: str,
@@ -113,25 +193,23 @@ async def activate_prompt_revision(
     auth: AuthContext = Depends(require_roles("superadmin")),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    if auth.tenant_id is None:
-        raise HTTPException(status_code=403, detail="Tenant required")
-    entry = (
-        await db.execute(
-            select(PromptEntry).where(
-                PromptEntry.id == revision_id,
-                PromptEntry.tenant_id == auth.tenant_id,
-                PromptEntry.key == prompt_id,
-            )
+    entry = await _revision_or_404(db, prompt_id, revision_id, auth)
+    baseline = _baseline(prompt_id)
+    if baseline is None:
+        raise HTTPException(status_code=404, detail="Built-in prompt not found")
+    if entry.state != "approved":
+        raise HTTPException(status_code=409, detail="Approve the prompt revision before activation")
+    if (entry.schema_json or {}).get("baseline_hash") != baseline.content_hash:
+        raise HTTPException(
+            status_code=409, detail="Prompt baseline changed; create a new revision"
         )
-    ).scalar_one_or_none()
-    if entry is None:
-        raise HTTPException(status_code=404, detail="Prompt revision not found")
     await db.execute(
         update(PromptEntry)
         .where(PromptEntry.tenant_id == auth.tenant_id, PromptEntry.key == prompt_id)
-        .values(is_active=False)
+        .values(is_active=False, state="superseded")
     )
     entry.is_active = True
+    entry.state = "active"
     await append_audit(
         db,
         action="ai.prompt_revision.activate",
@@ -141,3 +219,27 @@ async def activate_prompt_revision(
     )
     await db.commit()
     return _serialize(entry)
+
+
+@router.post("/{prompt_id}/rollback-baseline")
+async def rollback_prompt_baseline(
+    prompt_id: str,
+    auth: AuthContext = Depends(require_roles("superadmin")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    if auth.tenant_id is None or _baseline(prompt_id) is None:
+        raise HTTPException(status_code=404, detail="Built-in prompt not found")
+    await db.execute(
+        update(PromptEntry)
+        .where(PromptEntry.tenant_id == auth.tenant_id, PromptEntry.key == prompt_id)
+        .values(is_active=False, state="superseded")
+    )
+    await append_audit(
+        db,
+        action="ai.prompt_revision.rollback_baseline",
+        payload={"prompt_id": prompt_id},
+        tenant_id=auth.tenant_id,
+        actor_id=auth.user.id,
+    )
+    await db.commit()
+    return {"prompt_id": prompt_id, "active": False, "using_packaged_baseline": True}

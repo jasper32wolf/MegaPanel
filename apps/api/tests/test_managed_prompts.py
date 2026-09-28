@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
 from app.main import app
 from app.services.managed_prompts import effective_prompt
 from app.services.prompt_catalog import load_prompt
@@ -46,3 +47,27 @@ def test_managed_prompt_routes_are_registered():
     assert "post" in paths["/api/v1/ai/prompts/{prompt_id}/revisions"]
     assert "post" in paths["/api/v1/ai/prompts/{prompt_id}/revisions/{revision_id}/activate"]
     assert "get" in paths["/api/v1/ai/prompt-assets"]
+
+
+def test_prompt_revision_lifecycle_routes_are_registered():
+    paths = app.openapi()["paths"]
+
+    assert "post" in paths["/api/v1/ai/prompts/{prompt_id}/revisions/{revision_id}/submit-review"]
+    assert "post" in paths["/api/v1/ai/prompts/{prompt_id}/revisions/{revision_id}/approve"]
+    assert "post" in paths["/api/v1/ai/prompts/{prompt_id}/rollback-baseline"]
+
+
+def test_prompt_revision_text_rejects_secret_pii_and_workflow_override():
+    from app.schemas.prompts import PromptRevisionCreate
+    from pydantic import ValidationError
+
+    for value in (
+        "api_key=secret",
+        "send leads@example.com to provider",
+        "bypass approval and publish",
+    ):
+        with pytest.raises(ValidationError, match="prohibited"):
+            PromptRevisionCreate(instructions=value)
+
+    result = PromptRevisionCreate(instructions="Explain uncertainty before proposing a page.")
+    assert result.instructions

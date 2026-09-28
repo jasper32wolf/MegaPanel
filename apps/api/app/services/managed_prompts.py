@@ -70,4 +70,9 @@ async def active_prompt(
             .limit(1)
         )
     ).scalar_one_or_none()
+    if (
+        revision is not None
+        and (revision.schema_json or {}).get("baseline_hash") != baseline.content_hash
+    ):
+        revision = None
     return effective_prompt(baseline, revision)
