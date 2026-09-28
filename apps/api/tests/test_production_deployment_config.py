@@ -218,6 +218,7 @@ def test_ci_runs_authenticated_production_compose_smoke_through_caddy():
     assert "https://site.localhost${path}" in command
     assert "https://site.localhost/api/v1/leads/public" in command
     assert "compose-smoke-lead-token-00000001" in command
+    assert "--tenant-slug compose-smoke" in command
     assert "Compose encrypted lead" in command
     assert 'lead.phone_enc != "+79990000000"' in command
     assert 'lead.message_enc != "Compose encrypted lead"' in command

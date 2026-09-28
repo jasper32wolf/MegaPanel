@@ -44,7 +44,9 @@
 - **Исправление:** `command` заменена на argv-массив `["chown 10001:10001 /data /config"]`; вся shell command передаётся одним аргументом после `-c`.
 - **Дополнительное улучшение:** Python dependencies production image теперь собираются один раз в `site-panel-api:local`, а `migrate` и `worker` используют тот же image. CI сохраняет bounded build/ps/service logs в artifact `production-compose-diagnostics` при любой следующей ошибке.
 - **Локальная проверка:** production Compose contract tests — 18 passed; Compose YAML parse passed. Docker runtime локально недоступен.
-- **Hosted verification:** требуется новый run на commit с argv fix.
+- **Следующая подтверждённая ошибка:** `bootstrap_operator.py` остановился с `An owner scope already exists. Use its slug when bootstrapping the operator.` Compose smoke заранее создаёт tenant `compose-smoke` для site/lead fixture, а bootstrap по умолчанию ищет `operator`.
+- **Исправление bootstrap smoke:** команда bootstrap теперь передаёт `--tenant-slug compose-smoke`; production bootstrap defaults не меняются.
+- **Hosted verification:** требуется новый run на commit с argv и bootstrap-scope fixes.
 
 ### 2026-09-28 — `panel-e2e` / candidate workflow
 

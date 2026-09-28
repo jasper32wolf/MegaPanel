@@ -352,7 +352,7 @@ jobs:
 
           asyncio.run(main())
           PY
-          printf '%s\n' 'production-compose-password' | docker compose -f infra/docker/docker-compose.production.yml --env-file .env exec -T api python /app/scripts/bootstrap_operator.py --email compose-e2e@example.com --password-stdin
+          printf '%s\n' 'production-compose-password' | docker compose -f infra/docker/docker-compose.production.yml --env-file .env exec -T api python /app/scripts/bootstrap_operator.py --email compose-e2e@example.com --tenant-slug compose-smoke --password-stdin
           curl --insecure --fail --silent --show-error \
             --cookie-jar /tmp/site-panel-compose.cookies \
             --header 'Content-Type: application/json' \
