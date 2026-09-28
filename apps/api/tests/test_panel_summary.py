@@ -75,3 +75,9 @@ def test_report_summary_returns_actionable_current_state_alerts():
         "count": 1,
         "route": "/domains",
     }
+
+
+def test_observability_route_is_registered():
+    from app.main import app
+
+    assert "get" in app.openapi()["paths"]["/api/v1/panel/reports/observability"]

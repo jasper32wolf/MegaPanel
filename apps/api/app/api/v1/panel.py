@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -214,4 +215,173 @@ async def report_summary(
         "build_statuses": build_counts,
         "system_operation_statuses": operation_counts,
         "alerts": alerts,
+    }
+
+
+@router.get("/reports/observability")
+async def report_observability(
+    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "client")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    if not auth.tenant_id and auth.role != "superadmin":
+        raise HTTPException(status_code=403, detail="Tenant required")
+
+    from pathlib import Path
+
+    from app.core.config import get_settings
+    from app.models import AIRun, DeadLetterJob, GenerationJob, MediaAsset, SitePage
+
+    build_statuses = await _status_counts(db, SiteBuild, auth)
+    ai_statuses = await _status_counts(db, AIRun, auth)
+    generation_statuses = await _status_counts(db, GenerationJob, auth)
+    operation_statuses = await _status_counts(db, SystemOperation, auth)
+    delivery_statuses = await _status_counts(db, WebhookDelivery, auth)
+    media_assets = list(
+        (await db.execute(select(MediaAsset).where(*_tenant_predicate(MediaAsset, auth))))
+        .scalars()
+        .all()
+    )
+    pages = list(
+        (await db.execute(select(SitePage).where(*_tenant_predicate(SitePage, auth))))
+        .scalars()
+        .all()
+    )
+    latest_build = (
+        await db.execute(
+            select(SiteBuild)
+            .where(*_tenant_predicate(SiteBuild, auth))
+            .order_by(SiteBuild.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    latest_success = (
+        await db.execute(
+            select(SiteBuild)
+            .where(*_tenant_predicate(SiteBuild, auth), SiteBuild.status == "success")
+            .order_by(SiteBuild.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    failed_ai = list(
+        (
+            await db.execute(
+                select(AIRun.error_code, func.count())
+                .where(*_tenant_predicate(AIRun, auth), AIRun.status == "failed")
+                .group_by(AIRun.error_code)
+            )
+        ).all()
+    )
+    ai_reserved = await db.scalar(
+        select(func.coalesce(func.sum(AIRun.cost_usd), 0)).where(
+            *_tenant_predicate(AIRun, auth), AIRun.status == "reserved"
+        )
+    )
+    ai_recorded = await db.scalar(
+        select(func.coalesce(func.sum(AIRun.cost_usd), 0)).where(
+            *_tenant_predicate(AIRun, auth), AIRun.status != "reserved"
+        )
+    )
+    unresolved_dlq = await db.scalar(
+        select(func.count())
+        .select_from(DeadLetterJob)
+        .where(*_tenant_predicate(DeadLetterJob, auth), DeadLetterJob.resolved.is_(False))
+    )
+    now = datetime.now(UTC)
+    missing_media = 0
+    provenance_gaps = 0
+    expired_media = 0
+    root = await asyncio.to_thread(lambda: Path(get_settings().uploads_root).resolve())
+    for asset in media_assets:
+        try:
+            path = await asyncio.to_thread(lambda asset_path=asset.path: Path(asset_path).resolve())
+            path.relative_to(root)
+            if not await asyncio.to_thread(path.is_file):
+                missing_media += 1
+        except ValueError:
+            missing_media += 1
+        provenance = (asset.meta or {}).get("provenance") or {}
+        hashes = (asset.meta or {}).get("hashes") or {}
+        if (
+            provenance.get("kind") != "manual_upload"
+            or provenance.get("rights_confirmed") is not True
+            or not hashes.get("stored_sha256")
+        ):
+            provenance_gaps += 1
+        expires = provenance.get("license_expires_at")
+        if isinstance(expires, str) and expires < now.date().isoformat():
+            expired_media += 1
+    return {
+        "observed_at": now.isoformat(),
+        "scope": "tenant_database_and_local_uploads",
+        "builds": {
+            "status_counts": build_statuses,
+            "failed": build_statuses.get("failed", 0),
+            "latest": {
+                "status": latest_build.status,
+                "build_hash": latest_build.build_hash,
+                "created_at": latest_build.created_at.isoformat()
+                if latest_build.created_at
+                else None,
+            }
+            if latest_build
+            else None,
+            "latest_success": {
+                "build_hash": latest_success.build_hash,
+                "created_at": latest_success.created_at.isoformat()
+                if latest_success.created_at
+                else None,
+            }
+            if latest_success
+            else None,
+        },
+        "ai": {
+            "status_counts": ai_statuses,
+            "failed_error_codes": {str(code or "unknown"): count for code, count in failed_ai},
+            "reserved_estimated_usd": float(ai_reserved or 0),
+            "recorded_cost_usd": float(ai_recorded or 0),
+            "generation_status_counts": generation_statuses,
+            "unresolved_dead_letter_jobs": int(unresolved_dlq or 0),
+        },
+        "delivery": {
+            "status_counts": delivery_statuses,
+            "pending": sum(
+                delivery_statuses.get(item, 0) for item in ("queued", "retrying", "processing")
+            ),
+            "dead_letter": delivery_statuses.get("dead_letter", 0),
+        },
+        "domains": {
+            "status_source": "last_persisted_domain_row",
+            "tls_status_counts": dict(
+                (
+                    await db.execute(
+                        select(Domain.ssl_status, func.count())
+                        .where(*_tenant_predicate(Domain, auth))
+                        .group_by(Domain.ssl_status)
+                    )
+                ).all()
+            ),
+        },
+        "content_gaps": {
+            "thin_pages": sum(page.thin for page in pages),
+            "noindex_pages": sum(page.index_state == "noindex" for page in pages),
+        },
+        "media": {
+            "assets": len(media_assets),
+            "missing_files": missing_media,
+            "provenance_gaps": provenance_gaps,
+            "expired_licenses": expired_media,
+            "references": "not_observed",
+            "references_reason": "No persisted page/block media reference relation",
+        },
+        "system": {
+            "operation_status_counts": operation_statuses,
+            "backups": {
+                "status": "not_observed",
+                "reason": "No persisted backup completion or restore-drill result",
+            },
+        },
+        "worker": {
+            "status": "not_observed",
+            "reason": "No persisted worker heartbeat or job-completion freshness signal",
+        },
     }
