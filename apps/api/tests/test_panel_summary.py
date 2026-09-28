@@ -4,7 +4,11 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
-from app.api.v1.panel import _worker_heartbeat_observation, report_summary
+from app.api.v1.panel import (
+    _manifest_media_reference_observation,
+    _worker_heartbeat_observation,
+    report_summary,
+)
 
 
 class Result:
@@ -75,6 +79,31 @@ def test_report_summary_returns_actionable_current_state_alerts():
         "detail": "Проверьте конкретный домен до публикации или после изменения DNS.",
         "count": 1,
         "route": "/domains",
+    }
+
+
+def test_materialized_media_references_are_aggregated_without_claiming_a_full_graph():
+    shared_asset = "11111111-1111-1111-1111-111111111111"
+    block_asset = "22222222-2222-2222-2222-222222222222"
+    observation = _manifest_media_reference_observation(
+        [
+            SimpleNamespace(
+                manifest={
+                    "media": [{"asset_id": shared_asset}],
+                    "block_media": {"hero": {"asset_id": block_asset}},
+                }
+            ),
+            SimpleNamespace(manifest={"media": [{"asset_id": shared_asset}]}),
+            SimpleNamespace(manifest={"media": [{"asset_id": "not-a-uuid"}]}),
+        ]
+    )
+
+    assert observation == {
+        "status": "manifest_snapshot",
+        "source": "materialized_site_page_manifest",
+        "assets": 2,
+        "pages": 2,
+        "invalid_entries": 1,
     }
 
 

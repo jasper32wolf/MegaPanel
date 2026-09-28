@@ -93,6 +93,40 @@ def _alert(
     }
 
 
+def _manifest_media_reference_observation(pages: list) -> dict:
+    asset_ids: set[UUID] = set()
+    referenced_pages = 0
+    invalid_entries = 0
+    for page in pages:
+        manifest = page.manifest or {}
+        if not isinstance(manifest, dict):
+            invalid_entries += 1
+            continue
+        page_has_reference = False
+        media = manifest.get("media") or []
+        block_media = manifest.get("block_media") or {}
+        if not isinstance(media, list) or not isinstance(block_media, dict):
+            invalid_entries += 1
+            continue
+        attachments = [*media, *block_media.values()]
+        for attachment in attachments:
+            try:
+                asset_id = UUID(str((attachment or {}).get("asset_id")))
+            except (AttributeError, TypeError, ValueError):
+                invalid_entries += 1
+                continue
+            asset_ids.add(asset_id)
+            page_has_reference = True
+        referenced_pages += int(page_has_reference)
+    return {
+        "status": "manifest_snapshot",
+        "source": "materialized_site_page_manifest",
+        "assets": len(asset_ids),
+        "pages": referenced_pages,
+        "invalid_entries": invalid_entries,
+    }
+
+
 def _worker_heartbeat_observation(
     last_seen_at: datetime | None, now: datetime, stale_after_seconds: int
 ) -> dict:
@@ -347,6 +381,7 @@ async def report_observability(
         expires = provenance.get("license_expires_at")
         if isinstance(expires, str) and expires < now.date().isoformat():
             expired_media += 1
+    media_references = _manifest_media_reference_observation(pages)
     return {
         "observed_at": now.isoformat(),
         "scope": "tenant_database_local_uploads_and_global_worker_heartbeat",
@@ -407,8 +442,7 @@ async def report_observability(
             "missing_files": missing_media,
             "provenance_gaps": provenance_gaps,
             "expired_licenses": expired_media,
-            "references": "not_observed",
-            "references_reason": "No persisted page/block media reference relation",
+            "references": media_references,
         },
         "system": {
             "operation_status_counts": operation_statuses,
