@@ -21,6 +21,7 @@ from app.api.v1.projects import (
 )
 from app.main import app
 from app.schemas.workflow import (
+    ClaimSlotBinding,
     FactRevisionCreate,
     LeadOutcomeIn,
     PageDraftBlockMediaAttachIn,
@@ -29,6 +30,7 @@ from app.schemas.workflow import (
     ProjectGeoUpdate,
     ProjectKeywordsUpdate,
 )
+from app.services.claim_slots import resolve_claim_slot_bindings
 from app.services.generation import create_page_draft
 from app.services.qa import run_page_qa
 from fastapi import HTTPException
@@ -513,6 +515,66 @@ def test_terminal_lead_outcomes_require_a_reason():
     assert LeadOutcomeIn(outcome="lost", reason="price").reason == "price"
 
 
+def test_claim_slot_bindings_are_verbatim_and_target_server_owned_slots():
+    facts = {"allowed_claims": ["Письменная гарантия", "Согласуем удобное время"]}
+    bindings = resolve_claim_slot_bindings(
+        kit_key="service-local-v1",
+        block_ids=["hero"],
+        block_selection={
+            "claim_slot_bindings": [
+                {"block_id": "hero", "slot": "unique_core", "claim_index": 0},
+                {"block_id": "hero", "slot": "hero_supporting_text", "claim_index": 1},
+            ]
+        },
+        facts=facts,
+    )
+
+    assert [binding["claim"] for binding in bindings] == facts["allowed_claims"]
+    with pytest.raises(ValueError, match="editable curated text slot"):
+        resolve_claim_slot_bindings(
+            kit_key="service-local-v1",
+            block_ids=["hero"],
+            block_selection={
+                "claim_slot_bindings": [{"block_id": "hero", "slot": "service", "claim_index": 0}]
+            },
+            facts=facts,
+        )
+    with pytest.raises(ValueError, match="unavailable confirmed claim"):
+        resolve_claim_slot_bindings(
+            kit_key="service-local-v1",
+            block_ids=["hero"],
+            block_selection={
+                "claim_slot_bindings": [
+                    {"block_id": "hero", "slot": "unique_core", "claim_index": 2}
+                ]
+            },
+            facts=facts,
+        )
+
+
+def test_claim_binding_request_rejects_duplicate_targets_and_claims():
+    with pytest.raises(ValidationError, match="duplicate targets"):
+        PagePlanCreate(
+            slug="/repair",
+            objective="Ремонт",
+            kit_key="service-local-v1",
+            claim_slot_bindings=[
+                ClaimSlotBinding(block_id="hero", slot="unique_core", claim_index=0),
+                ClaimSlotBinding(block_id="hero", slot="unique_core", claim_index=1),
+            ],
+        )
+    with pytest.raises(ValidationError, match="duplicate claims"):
+        PagePlanCreate(
+            slug="/repair",
+            objective="Ремонт",
+            kit_key="service-local-v1",
+            claim_slot_bindings=[
+                ClaimSlotBinding(block_id="hero", slot="unique_core", claim_index=0),
+                ClaimSlotBinding(block_id="hero", slot="hero_supporting_text", claim_index=0),
+            ],
+        )
+
+
 def test_generation_uses_confirmed_snapshot_only():
     project = SimpleNamespace(id=uuid4(), domain="example.test")
     plan = SimpleNamespace(
@@ -542,6 +604,45 @@ def test_generation_uses_confirmed_snapshot_only():
     assert snapshot["facts"] == facts.facts
     assert page["slug"] == "/repair"
     assert snapshot["generator_meta"]["tokens"] == 0
+
+
+def test_generation_copies_bound_claims_exactly_into_curated_slots():
+    project = SimpleNamespace(id=uuid4(), domain="example.test")
+    plan = SimpleNamespace(
+        slug="/repair",
+        kit_key="service-local-v1",
+        version=1,
+        block_selection={
+            "blocks": ["hero"],
+            "claim_slot_bindings": [
+                {"block_id": "hero", "slot": "unique_core", "claim_index": 0},
+                {"block_id": "hero", "slot": "hero_supporting_text", "claim_index": 1},
+            ],
+        },
+        keyword_snapshot={"items": []},
+        geo_snapshot={"items": [{"geo_id": str(uuid4()), "name": "Казань", "role": "primary"}]},
+    )
+    facts = SimpleNamespace(
+        id=uuid4(),
+        facts_hash="c" * 64,
+        facts={
+            "service": "Ремонт техники",
+            "contacts": {"phone": "+79990000000"},
+            "allowed_claims": ["Письменная гарантия", "Согласуем удобное время"],
+        },
+    )
+
+    page, snapshot, content = create_page_draft(project=project, plan=plan, facts=facts)
+
+    assert page["unique_core"] == "Письменная гарантия"
+    assert page["block_slot_values"] == {
+        "hero": {"hero_supporting_text": "Согласуем удобное время"}
+    }
+    assert snapshot["claim_slot_bindings"] == [
+        {"block_id": "hero", "slot": "unique_core", "claim_index": 0},
+        {"block_id": "hero", "slot": "hero_supporting_text", "claim_index": 1},
+    ]
+    assert "Согласуем удобное время" in content
 
 
 def test_commercial_generation_uses_only_the_bound_confirmed_fact() -> None:

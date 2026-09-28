@@ -53,6 +53,7 @@ from app.schemas.workflow import (
 from app.services.audit import append_audit
 from app.services.block_library import instantiate_kit_for_site
 from app.services.caddy_client import CaddyClient
+from app.services.claim_slots import resolve_claim_slot_bindings
 from app.services.domain_health import domain_probe
 from app.services.generation import create_page_draft
 from app.services.indexnow import new_indexnow_key
@@ -248,6 +249,28 @@ async def _semantic_target_snapshot(
         "collection_version": collection.version,
         "targets": snapshot_targets,
     }
+
+
+def _block_selection_with_claim_slot_bindings(
+    block_selection: dict, claim_slot_bindings: list[dict]
+) -> dict:
+    return {
+        **{key: value for key, value in block_selection.items() if key != "claim_slot_bindings"},
+        "claim_slot_bindings": claim_slot_bindings,
+    }
+
+
+def _effective_plan_block_ids(project: Project, plan: PagePlan) -> list[str]:
+    blocks, _css_vars, _kit_meta = instantiate_kit_for_site(plan.kit_key, str(project.id))
+    available = {block.type for block in blocks}
+    selected = (plan.block_selection or {}).get("blocks")
+    if selected is None:
+        return [block.type for block in blocks]
+    if not isinstance(selected, list) or len(selected) != len(set(selected)):
+        raise ValueError("PagePlan contains an invalid curated block selection")
+    if any(not isinstance(block_id, str) or block_id not in available for block_id in selected):
+        raise ValueError("PagePlan contains an invalid curated block selection")
+    return selected
 
 
 def _serialize_plan(plan: PagePlan) -> dict:
@@ -925,6 +948,10 @@ async def create_page_plan(
     project = await _project_or_404(db, project_id, auth)
     if body.kit_key not in {kit["key"] for kit in list_kits()}:
         raise HTTPException(status_code=400, detail="Unknown curated kit")
+    if "claim_slot_bindings" in body.block_selection:
+        raise HTTPException(
+            status_code=422, detail="Use the typed claim_slot_bindings field for claim placement"
+        )
     existing = (
         await db.execute(
             select(PagePlan)
@@ -945,7 +972,10 @@ async def create_page_plan(
         intent=body.intent.strip() if body.intent else None,
         risk_notes=body.risk_notes.strip() if body.risk_notes else None,
         kit_key=body.kit_key,
-        block_selection=body.block_selection,
+        block_selection=_block_selection_with_claim_slot_bindings(
+            body.block_selection,
+            [binding.model_dump(mode="json") for binding in body.claim_slot_bindings],
+        ),
         source_refs={
             **body.source_refs,
             **(
@@ -990,12 +1020,29 @@ async def update_page_plan(
         )
     if body.version != plan.version:
         raise HTTPException(status_code=409, detail={"blockers": ["Page plan changed; reload it"]})
+    if "claim_slot_bindings" in (body.block_selection or {}):
+        raise HTTPException(
+            status_code=422, detail="Use the typed claim_slot_bindings field for claim placement"
+        )
     changed: list[str] = []
-    for field in ("objective", "intent", "risk_notes", "kit_key", "block_selection", "source_refs"):
+    for field in ("objective", "intent", "risk_notes", "kit_key", "source_refs"):
         value = getattr(body, field)
         if value is not None and getattr(plan, field) != value:
             setattr(plan, field, value)
             changed.append(field)
+    if body.block_selection is not None or body.claim_slot_bindings is not None:
+        selection = (
+            body.block_selection if body.block_selection is not None else plan.block_selection or {}
+        )
+        bindings = (
+            [binding.model_dump(mode="json") for binding in body.claim_slot_bindings]
+            if body.claim_slot_bindings is not None
+            else (plan.block_selection or {}).get("claim_slot_bindings") or []
+        )
+        next_selection = _block_selection_with_claim_slot_bindings(selection, bindings)
+        if plan.block_selection != next_selection:
+            plan.block_selection = next_selection
+            changed.append("block_selection")
     if body.semantic_target is not None:
         plan.source_refs = {
             **(plan.source_refs or {}),
@@ -1032,6 +1079,15 @@ async def submit_page_plan_review(
     if plan.state != "draft":
         raise HTTPException(status_code=409, detail="Only draft plans can be submitted")
     facts = await _confirmed_facts(db, project)
+    try:
+        resolve_claim_slot_bindings(
+            kit_key=plan.kit_key,
+            block_ids=_effective_plan_block_ids(project, plan),
+            block_selection=plan.block_selection,
+            facts=facts.facts or {},
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     keywords, geo, blockers = await _selection_snapshots(db, project)
     if blockers:
         raise HTTPException(status_code=409, detail={"blockers": blockers})

@@ -5,6 +5,7 @@ from uuid import UUID
 
 from app.models.project import PagePlan, Project, ProjectFactRevision
 from app.services.block_library import instantiate_kit_for_site
+from app.services.claim_slots import resolve_claim_slot_bindings
 from site_panel_shared.manifests import PageManifest
 
 GENERATOR_VERSION = "deterministic-v1"
@@ -63,6 +64,22 @@ def create_page_draft(
             for order, block_id in enumerate(selected_block_ids)
         ]
     city_prep = (primary_geo.get("forms") or {}).get("prep") or city
+    claim_bindings = resolve_claim_slot_bindings(
+        kit_key=plan.kit_key,
+        block_ids=[block.type for block in blocks],
+        block_selection=getattr(plan, "block_selection", None),
+        facts=fact_values,
+    )
+    block_slot_values: dict[str, dict[str, str]] = {}
+    claim_unique_core = next(
+        (binding["claim"] for binding in claim_bindings if binding["slot"] == "unique_core"),
+        None,
+    )
+    for binding in claim_bindings:
+        if binding["slot"] != "unique_core":
+            block_slot_values.setdefault(binding["block_id"], {})[binding["slot"]] = binding[
+                "claim"
+            ]
     title = f"{service} в {city_prep}".strip() if city else service
     commercial_fact_key = (getattr(plan, "source_refs", None) or {}).get("commercial_fact_key")
     commercial_copy = str(fact_values.get(commercial_fact_key) or "").strip()
@@ -84,7 +101,10 @@ def create_page_draft(
         service=service or "Услуги",
         geo_id=UUID(primary_geo["geo_id"]) if primary_geo.get("geo_id") else None,
         blocks=blocks,
-        unique_core=commercial_copy or str(fact_values.get("unique_core") or ""),
+        block_slot_values=block_slot_values,
+        unique_core=claim_unique_core
+        or commercial_copy
+        or str(fact_values.get("unique_core") or ""),
         seed=plan.version,
     )
     input_snapshot = {
@@ -97,6 +117,14 @@ def create_page_draft(
         "geo_snapshot": plan.geo_snapshot or {},
         "kit_key": plan.kit_key,
         "plan_version": plan.version,
+        "claim_slot_bindings": [
+            {
+                "block_id": binding["block_id"],
+                "slot": binding["slot"],
+                "claim_index": binding["claim_index"],
+            }
+            for binding in claim_bindings
+        ],
         "commercial_fact_key": commercial_fact_key,
     }
     generator_meta = {
@@ -112,6 +140,11 @@ def create_page_draft(
             manifest.h1_template,
             manifest.meta_description_template,
             manifest.unique_core or "",
+            *[
+                value
+                for block_values in manifest.block_slot_values.values()
+                for value in block_values.values()
+            ],
         ]
     )
     return (

@@ -28,7 +28,13 @@ def test_external_ai_context_excludes_private_business_fields() -> None:
     assert {row["fact_key"] for row in rows} == {"service", "services"}
     assert "Ремонт техники" in serialized
     assert all(
-        value not in serialized for value in ("+79991234567", "lead@example.test", "private-value")
+        value not in serialized
+        for value in (
+            "+79991234567",
+            "lead@example.test",
+            "private-value",
+            "Гарантия без подтверждения",
+        )
     )
 
 

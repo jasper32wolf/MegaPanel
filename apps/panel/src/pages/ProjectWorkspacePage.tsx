@@ -11,7 +11,8 @@ type SemanticCollection = { id: string; name: string; state: string; version: nu
 type SemanticSignals = { totals: { members: number; bindings: number; covered: number; uncovered: number; unbound: number }; cannibalization: { plans: { slug: string }[]; reason: string }[]; unmapped_plans: { slug: string; state: string }[] };
 type GeoPlace = { id: string; name: string; kind: string; is_validated?: boolean };
 type ProjectGeo = { id: string; geo_id: string; name: string; kind: string; validated: boolean; role: "primary" | "service_area" | "reference"; position: number };
-type Plan = { id: string; slug: string; objective: string; intent: string | null; kit_key: string; block_selection: { blocks?: string[] }; state: string; version: number; decision_reason: string | null };
+type ClaimSlotBinding = { block_id: string; slot: string; claim_index: number };
+type Plan = { id: string; slug: string; objective: string; intent: string | null; kit_key: string; block_selection: { blocks?: string[]; claim_slot_bindings?: ClaimSlotBinding[] }; state: string; version: number; decision_reason: string | null };
 type Draft = { id: string; page_plan_id: string; revision: number; state: string; content_hash: string | null; last_qa_verdict: string | null; qa_runs: { verdict: string; findings: { verdict: string; rule: string; evidence: string }[] }[]; page_manifest: { blocks?: { type?: unknown }[] } & Record<string, unknown>; failure_message: string | null };
 type Coverage = { selected: number; covered: number; uncovered: { keyword_id: string; phrase: string }[]; plans: number };
 type Build = { id: string; status: string; build_hash: string | null; previous_build_hash: string | null; pages_built: number; created_at: string | null; activated_at: string | null };
@@ -104,6 +105,9 @@ export function ProjectWorkspacePage() {
   const [planSlug, setPlanSlug] = useState("/");
   const [planObjective, setPlanObjective] = useState("");
   const [planIntent, setPlanIntent] = useState("");
+  const [planClaimSlot, setPlanClaimSlot] = useState("hero.unique_core");
+  const [planClaimIndex, setPlanClaimIndex] = useState("");
+  const [planClaimBindings, setPlanClaimBindings] = useState<ClaimSlotBinding[]>([]);
   const [kitKey, setKitKey] = useState("service-local-v1");
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -111,8 +115,13 @@ export function ProjectWorkspacePage() {
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
 
   const latestFact = facts[0] || null;
+  const confirmedFact = useMemo(() => facts.find((fact) => fact.state === "confirmed") || null, [facts]);
   const selectedKeywordSet = useMemo(() => new Set(selectedKeywordIds), [selectedKeywordIds]);
   const selectedGeoSet = useMemo(() => new Set(selectedGeoIds), [selectedGeoIds]);
+  const approvedClaims = useMemo(() => {
+    const claims = confirmedFact?.facts.allowed_claims;
+    return Array.isArray(claims) ? claims.filter((claim): claim is string => typeof claim === "string" && Boolean(claim.trim())) : [];
+  }, [confirmedFact]);
   const mediaDraftBlocks = useMemo(() => {
     const blocks = drafts.find((draft) => draft.id === mediaDraftId)?.page_manifest.blocks;
     return Array.isArray(blocks)
@@ -157,6 +166,15 @@ export function ProjectWorkspacePage() {
     setSemanticCollections(nextCollections);
     setSemanticSignals(nextSignals);
   }
+
+  useEffect(() => {
+    const claims = latestFact?.facts.allowed_claims;
+    setAllowedClaimsText(
+      Array.isArray(claims)
+        ? claims.filter((claim): claim is string => typeof claim === "string").join(String.fromCharCode(10))
+        : "",
+    );
+  }, [latestFact?.id]);
 
   useEffect(() => {
     api<AIProvider[]>("/api/v1/ai/providers", {}, token)
@@ -298,9 +316,21 @@ export function ProjectWorkspacePage() {
     await run("geo", () => api(`/api/v1/projects/${projectId}/geo`, { method: "PUT", body: JSON.stringify({ items: selectedGeoIds.map((geo_id, position) => ({ geo_id, role: geo_id === primaryGeoId ? "primary" : "service_area", position })) }) }, token), "География проекта сохранена.");
   }
 
+  function addPlanClaimBinding() {
+    const [block_id, slot] = planClaimSlot.split(".");
+    const claim_index = Number(planClaimIndex);
+    if (!block_id || !slot || !Number.isInteger(claim_index) || !approvedClaims[claim_index]) return;
+    if (planClaimBindings.some((binding) => binding.block_id === block_id && binding.slot === slot) || planClaimBindings.some((binding) => binding.claim_index === claim_index)) {
+      setError("Для каждого curated-слота и claim доступна только одна дословная привязка.");
+      return;
+    }
+    setPlanClaimBindings((current) => [...current, { block_id, slot, claim_index }]);
+    setPlanClaimIndex("");
+  }
+
   async function createPlan(event: FormEvent) {
     event.preventDefault();
-    await run("plan", () => api(`/api/v1/projects/${projectId}/page-plans`, { method: "POST", body: JSON.stringify({ slug: planSlug, objective: planObjective, intent: planIntent || null, kit_key: kitKey }) }, token), "Черновик плана страницы создан.");
+    await run("plan", () => api(`/api/v1/projects/${projectId}/page-plans`, { method: "POST", body: JSON.stringify({ slug: planSlug, objective: planObjective, intent: planIntent || null, kit_key: kitKey, claim_slot_bindings: planClaimBindings }) }, token), "Черновик плана страницы создан.");
   }
 
   async function performPlanDecision(
@@ -675,6 +705,7 @@ export function ProjectWorkspacePage() {
           <label className="field">Цель страницы<input value={planObjective} onChange={(event) => setPlanObjective(event.target.value)} placeholder="Какую потребность закрывает страница" required /></label>
           <label className="field">Намерение<input value={planIntent} onChange={(event) => setPlanIntent(event.target.value)} placeholder="Например: заказать услугу" /></label>
           <label className="field">Комплект<select value={kitKey} onChange={(event) => setKitKey(event.target.value)}><option value="service-local-v1">Локальные услуги</option><option value="home-repair-v1">Домашний ремонт</option></select></label>
+          <div className="surface"><strong>Дословные утверждённые claims</strong><p className="muted">Не AI-текст: выбранное утверждение будет скопировано без перефразирования в серверный curated text slot после freeze facts и review плана.</p><div className="detail-grid"><label className="field">Curated slot<select value={planClaimSlot} onChange={(event) => setPlanClaimSlot(event.target.value)}><option value="hero.unique_core">hero · unique_core</option><option value="hero.hero_supporting_text">hero · hero_supporting_text</option></select></label><label className="field">Claim<select value={planClaimIndex} onChange={(event) => setPlanClaimIndex(event.target.value)}><option value="">Выберите подтверждённый claim</option>{approvedClaims.map((claim, index) => <option key={`${index}-${claim}`} value={index}>{index + 1}. {claim}</option>)}</select></label></div><button className="btn btn-ghost" type="button" disabled={busy !== null || !planClaimIndex} onClick={addPlanClaimBinding}>Привязать дословно</button>{planClaimBindings.length > 0 && <ul>{planClaimBindings.map((binding) => <li key={`${binding.block_id}.${binding.slot}`}><code>{binding.block_id}.{binding.slot}</code> ← #{binding.claim_index + 1}: {approvedClaims[binding.claim_index]} <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => setPlanClaimBindings((current) => current.filter((item) => item !== binding))}>Убрать</button></li>)}</ul>}{approvedClaims.length === 0 && <p className="muted">Сначала сохраните и подтвердите claims в facts. Без binding обычный deterministic draft не изменяется.</p>}</div>
           <button className="btn" type="submit" disabled={busy !== null || !planObjective.trim()}>{busy === "plan" ? "Сохранение…" : "Создать черновик плана"}</button>
         </form>
         {plans.length === 0 ? <EmptyState title="Планов страниц пока нет" /> : <DataTable headers={["Путь", "Цель", "Статус", "Действия"]}>{plans.map((plan) => <tr key={plan.id}><td>{plan.slug}</td><td>{plan.objective}</td><td><StatusPill tone={tone(plan.state)}>{plan.state}</StatusPill></td><td className="row">{plan.state === "draft" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => decision(plan, "submit-review")}>На проверку</button>}{plan.state === "review" && <><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => decision(plan, "approve")}>Одобрить</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => decision(plan, "reject")}>Отклонить</button></>}{plan.state === "approved" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => generate(plan)}>Создать черновик</button>}</td></tr>)}</DataTable>}

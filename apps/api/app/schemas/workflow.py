@@ -232,6 +232,14 @@ class SemanticPlanTargetIn(BaseModel):
         return self
 
 
+class ClaimSlotBinding(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    block_id: str = Field(min_length=1, max_length=128)
+    slot: str = Field(min_length=1, max_length=128)
+    claim_index: int = Field(ge=0, le=99)
+
+
 class PagePlanCreate(BaseModel):
     slug: str = Field(min_length=1, max_length=512)
     objective: str = Field(min_length=3, max_length=512)
@@ -239,8 +247,19 @@ class PagePlanCreate(BaseModel):
     risk_notes: str | None = Field(default=None, max_length=4000)
     kit_key: str = Field(min_length=2, max_length=128)
     block_selection: dict = Field(default_factory=dict)
+    claim_slot_bindings: list[ClaimSlotBinding] = Field(default_factory=list, max_length=20)
     source_refs: dict = Field(default_factory=dict)
     semantic_target: SemanticPlanTargetIn | None = None
+
+    @model_validator(mode="after")
+    def require_unique_claim_slot_targets(self) -> PagePlanCreate:
+        targets = [(item.block_id, item.slot) for item in self.claim_slot_bindings]
+        if len(targets) != len(set(targets)):
+            raise ValueError("Claim slot bindings contain duplicate targets")
+        claim_indices = [item.claim_index for item in self.claim_slot_bindings]
+        if len(claim_indices) != len(set(claim_indices)):
+            raise ValueError("Claim slot bindings contain duplicate claims")
+        return self
 
     @field_validator("slug")
     @classmethod
@@ -254,9 +273,20 @@ class PagePlanUpdate(BaseModel):
     risk_notes: str | None = Field(default=None, max_length=4000)
     kit_key: str | None = Field(default=None, min_length=2, max_length=128)
     block_selection: dict | None = None
+    claim_slot_bindings: list[ClaimSlotBinding] | None = Field(default=None, max_length=20)
     source_refs: dict | None = None
     semantic_target: SemanticPlanTargetIn | None = None
     version: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def require_unique_claim_slot_targets(self) -> PagePlanUpdate:
+        targets = [(item.block_id, item.slot) for item in self.claim_slot_bindings or []]
+        if len(targets) != len(set(targets)):
+            raise ValueError("Claim slot bindings contain duplicate targets")
+        claim_indices = [item.claim_index for item in self.claim_slot_bindings or []]
+        if len(claim_indices) != len(set(claim_indices)):
+            raise ValueError("Claim slot bindings contain duplicate claims")
+        return self
 
 
 class PagePlanDecision(BaseModel):

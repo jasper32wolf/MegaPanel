@@ -67,6 +67,33 @@ def test_deterministic_draft_without_ai_provenance_is_not_rejected_by_ai_rules()
     assert not any(item["rule"].startswith("ai_") for item in result["findings"])
 
 
+def test_qa_blocks_claim_slot_mutation_against_the_frozen_fact_snapshot():
+    page = {
+        **base_page(),
+        "blocks": [{"type": "hero", "hash_class": "hero", "html": "<p>{unique_core}</p>"}],
+        "unique_core": "Письменная гарантия",
+    }
+    snapshot = {
+        **base_input(),
+        "kit_key": "service-local-v1",
+        "facts": {
+            "service": "Ремонт",
+            "contacts": {"phone": "+79990000000"},
+            "allowed_claims": ["Письменная гарантия"],
+        },
+        "claim_slot_bindings": [{"block_id": "hero", "slot": "unique_core", "claim_index": 0}],
+    }
+
+    exact = run_page_qa(page_manifest=page, input_snapshot=snapshot, existing_texts=[])
+    assert not any(item["rule"] == "claim_slot_contract" for item in exact["findings"])
+    altered = run_page_qa(
+        page_manifest={**page, "unique_core": "Неподтверждённая гарантия"},
+        input_snapshot=snapshot,
+        existing_texts=[],
+    )
+    assert any(item["rule"] == "claim_slot_contract" for item in altered["findings"])
+
+
 def test_qa_blocks_email_in_public_page_fields():
     from app.services.qa import run_page_qa
 

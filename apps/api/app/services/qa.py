@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 
+from app.services.claim_slots import resolve_claim_slot_bindings
 from app.services.dedup import compare_texts
 from site_panel_shared.manifests import PageManifest
 
@@ -78,6 +79,33 @@ def run_page_qa(*, page_manifest: dict, input_snapshot: dict, existing_texts: li
                         "AI-generated content remains noindex until an approved "
                         "indexing policy applies"
                     ),
+                }
+            )
+    claim_slot_bindings = input_snapshot.get("claim_slot_bindings") or []
+    if claim_slot_bindings:
+        try:
+            resolved_claim_bindings = resolve_claim_slot_bindings(
+                kit_key=str(input_snapshot.get("kit_key") or ""),
+                block_ids=[block.type for block in page.blocks],
+                block_selection={"claim_slot_bindings": claim_slot_bindings},
+                facts=facts,
+            )
+            for binding in resolved_claim_bindings:
+                actual = (
+                    page.unique_core
+                    if binding["slot"] == "unique_core"
+                    else (page.block_slot_values.get(binding["block_id"]) or {}).get(
+                        binding["slot"]
+                    )
+                )
+                if actual != binding["claim"]:
+                    raise ValueError("Bound curated slot does not match the frozen confirmed claim")
+        except (FileNotFoundError, ValueError) as exc:
+            findings.append(
+                {
+                    "verdict": "block",
+                    "rule": "claim_slot_contract",
+                    "evidence": str(exc),
                 }
             )
     block_slot_text = " ".join(
