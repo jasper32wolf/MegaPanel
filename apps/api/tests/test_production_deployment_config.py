@@ -255,3 +255,15 @@ def test_release_worker_runs_only_lead_delivery_tasks():
     assert "dsar_cleanup_task" not in worker
     assert "webhook_delivery_task" in worker
     assert "webhook_delivery_sweep_task" in worker
+
+
+def test_production_compose_builds_one_api_image_for_migrate_api_and_worker():
+    services = production_compose()["services"]
+
+    assert services["api"]["image"] == "site-panel-api:local"
+    assert services["migrate"]["image"] == services["api"]["image"]
+    assert services["worker"]["image"] == services["api"]["image"]
+    assert "build" in services["api"]
+    assert "build" not in services["migrate"]
+    assert "build" not in services["worker"]
+    assert services["worker"]["command"] == ["arq", "app.worker.WorkerSettings"]

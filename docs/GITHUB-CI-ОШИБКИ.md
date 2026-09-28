@@ -38,7 +38,8 @@
 - **Первый полезный error:** пока не получен.
 - **Полученный фрагмент:** PostgreSQL и Redis успешно инициализированы; затем GitHub cleanup остановил все Compose services и удалил volumes. В выводе нет лога `migrate`, `api`, `worker`, `caddy`, строки `API health smoke timed out` или исходной команды, завершившейся с ненулевым status. Поэтому PostgreSQL locale warning и Redis host warning не считаются причиной job failure.
 - **Локальное воспроизведение:** не выполнено — Docker CLI в текущем окружении недоступен.
-- **Следующий шаг:** добавить сюда 100–200 строк **до** первого `Container ... Stopping`, включая строку команды/timeout и полный `docker compose logs` для `migrate`, `api`, `worker`, `caddy`, `caddy-state-init`.
+- **Локальное исправление:** production Compose теперь строит Python dependencies только один раз в `site-panel-api:local`; `migrate`, `api` и `worker` запускаются из этого image разными командами. Это убирает три параллельных `pip install`/image build из hosted job и уменьшает вероятность timeout/resource failure.
+- **Следующий шаг:** новый hosted run на commit с single-image Compose. Если он всё ещё упадёт, artifact `production-compose-diagnostics` содержит bounded build/ps/services logs с первичной ошибкой.
 
 ### 2026-09-28 — `panel-e2e` / candidate workflow
 

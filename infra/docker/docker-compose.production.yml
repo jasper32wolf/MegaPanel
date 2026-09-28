@@ -31,9 +31,7 @@ services:
     networks: [internal]
 
   migrate:
-    build:
-      context: ../..
-      dockerfile: infra/docker/Dockerfile.api
+    image: site-panel-api:local
     command: ["alembic", "upgrade", "head"]
     working_dir: /app/apps/api
     env_file: ../../.env
@@ -46,6 +44,7 @@ services:
     networks: [internal]
 
   api:
+    image: site-panel-api:local
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.api
@@ -81,9 +80,8 @@ services:
     networks: [internal]
 
   worker:
-    build:
-      context: ../..
-      dockerfile: infra/docker/Dockerfile.worker
+    image: site-panel-api:local
+    command: ["arq", "app.worker.WorkerSettings"]
     user: "10001:10001"
     read_only: true
     cap_drop: [ALL]
