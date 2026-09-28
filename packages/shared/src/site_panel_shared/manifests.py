@@ -56,14 +56,23 @@ class PageManifest(BaseModel):
     unique_core: str | None = None
     block_slot_values: dict[str, dict[str, str | None]] = Field(default_factory=dict)
     media: list[PageMedia] = Field(default_factory=list, max_length=12)
+    block_media: dict[str, PageMedia] = Field(default_factory=dict, max_length=12)
     schema_org: dict[str, Any] = Field(default_factory=dict)
     seed: int = 0
 
     @model_validator(mode="after")
-    def require_unique_media_assets(self) -> PageManifest:
-        asset_ids = [item.asset_id for item in self.media]
+    def require_valid_media_placements(self) -> PageManifest:
+        block_ids = [block.type for block in self.blocks]
+        if len(block_ids) != len(set(block_ids)):
+            raise ValueError("Page blocks must have unique types for media placement")
+        unknown_block_ids = set(self.block_media).difference(block_ids)
+        if unknown_block_ids:
+            raise ValueError("Block media must target a page block")
+        asset_ids = [item.asset_id for item in [*self.media, *self.block_media.values()]]
         if len(asset_ids) != len(set(asset_ids)):
             raise ValueError("Page media assets must be unique")
+        if len(asset_ids) > 12:
+            raise ValueError("A page can contain at most 12 media assets")
         return self
 
 

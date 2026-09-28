@@ -374,7 +374,9 @@ class SiteBuilder:
         try:
             asset_urls, assets_meta = self._copy_assets(staging, assets or [])
             referenced_asset_ids = {
-                str(attachment.asset_id) for page in site.pages for attachment in page.media
+                str(attachment.asset_id)
+                for page in site.pages
+                for attachment in [*page.media, *page.block_media.values()]
             }
             if referenced_asset_ids != set(asset_urls):
                 raise ValueError("Static media assets do not match the manifest")

@@ -145,6 +145,57 @@ def test_candidate_build_copies_hashed_local_media_for_root_and_nested_pages(tmp
     assert not (tmp_path / str(site_id) / "current").exists()
 
 
+def test_candidate_build_copies_block_media_for_the_selected_block(tmp_path: Path):
+    asset_id = uuid4()
+    media_path = tmp_path / "uploaded.webp"
+    media_bytes = b"local-block-media-fixture"
+    media_path.write_bytes(media_bytes)
+    digest = hashlib.sha256(media_bytes).hexdigest()
+    site_id = uuid4()
+    blocks = [BlockDef(type="hero", hash_class="hero", html="<p>Hero</p>", order=0)]
+    site = SiteManifest(
+        site_id=site_id,
+        tenant_id=uuid4(),
+        domain="candidate.test",
+        pages=[
+            PageManifest(
+                slug="/",
+                title_template="Ремонт",
+                h1_template="Ремонт",
+                service="Ремонт",
+                blocks=blocks,
+                block_media={
+                    "hero": {"asset_id": asset_id, "stored_sha256": digest, "alt": "Фото hero"}
+                },
+            ),
+            PageManifest(
+                slug="/district",
+                title_template="Ремонт",
+                h1_template="Ремонт",
+                service="Ремонт",
+                blocks=blocks,
+                block_media={
+                    "hero": {"asset_id": asset_id, "stored_sha256": digest, "alt": "Фото hero"}
+                },
+            ),
+        ],
+    )
+
+    result = SiteBuilder(tmp_path).build(
+        site,
+        assets=[BuildAsset(asset_id=asset_id, source_path=media_path, stored_sha256=digest)],
+        activate=False,
+    )
+
+    release = tmp_path / str(site_id) / "releases" / result["build_hash"]
+    assert (release / "assets" / f"{digest}.webp").read_bytes() == media_bytes
+    assert 'data-media-for="hero"' in (release / "index.html").read_text(encoding="utf-8")
+    assert f'src="assets/{digest}.webp"' in (release / "index.html").read_text(encoding="utf-8")
+    assert f'src="../assets/{digest}.webp"' in (release / "district" / "index.html").read_text(
+        encoding="utf-8"
+    )
+
+
 def test_candidate_build_rejects_tampered_local_media(tmp_path: Path):
     asset_id = uuid4()
     media_path = tmp_path / "uploaded.webp"

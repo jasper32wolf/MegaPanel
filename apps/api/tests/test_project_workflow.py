@@ -16,12 +16,14 @@ from app.api.v1.projects import (
     _selection_snapshots,
     _serialize_fact,
     _verified_media_hash,
+    attach_draft_block_media,
     attach_draft_media,
 )
 from app.main import app
 from app.schemas.workflow import (
     FactRevisionCreate,
     LeadOutcomeIn,
+    PageDraftBlockMediaAttachIn,
     PageDraftMediaAttachIn,
     PagePlanCreate,
     ProjectGeoUpdate,
@@ -191,6 +193,7 @@ def test_project_fact_revisions_route_is_registered():
     assert "get" in paths["/api/v1/projects/{project_id}/facts"]
     assert "post" in paths["/api/v1/projects/{project_id}/commercial-page-plans"]
     assert "post" in paths["/api/v1/projects/{project_id}/page-drafts/{draft_id}/media"]
+    assert "post" in paths["/api/v1/projects/{project_id}/page-drafts/{draft_id}/block-media"]
 
 
 def test_media_attachment_hash_requires_confirmed_rights_and_matching_sha():
@@ -286,6 +289,85 @@ def test_draft_media_attachment_snapshots_hash_and_resets_qa(monkeypatch):
     assert result["page_manifest"]["media"] == [
         {"asset_id": str(asset_id), "stored_sha256": "a" * 64, "alt": "Проверенное фото"}
     ]
+    assert draft.qa_runs == []
+    assert draft.last_qa_verdict is None
+    assert draft.qa_override == {}
+    assert draft.content_hash != "old"
+    assert db.committed
+
+
+def test_draft_block_media_attachment_snapshots_hash_and_resets_qa(monkeypatch):
+    tenant_id, project_id, draft_id, asset_id = (uuid4() for _ in range(4))
+    project = SimpleNamespace(id=project_id, tenant_id=tenant_id)
+    draft = SimpleNamespace(
+        id=draft_id,
+        project_id=project_id,
+        state="draft",
+        page_manifest={
+            "slug": "/",
+            "title_template": "Ремонт",
+            "h1_template": "Ремонт",
+            "service": "Ремонт",
+            "blocks": [{"type": "hero", "hash_class": "hero", "html": "<p>Hero</p>"}],
+        },
+        qa_runs=[{"source_hash": "old"}],
+        last_qa_verdict="pass",
+        qa_override={"reason": "old"},
+        content_hash="old",
+        page_plan_id=uuid4(),
+        revision=1,
+        generator_meta={},
+        failure_message=None,
+        created_at=None,
+        updated_at=None,
+    )
+    asset = SimpleNamespace(
+        id=asset_id,
+        tenant_id=tenant_id,
+        meta={
+            "provenance": {"kind": "manual_upload", "rights_confirmed": True},
+            "hashes": {"stored_sha256": "a" * 64},
+        },
+    )
+
+    class Session:
+        def __init__(self):
+            self.calls = 0
+            self.committed = False
+
+        async def execute(self, _statement):
+            self.calls += 1
+            value = draft if self.calls == 1 else asset
+            return SimpleNamespace(scalar_one_or_none=lambda: value)
+
+        async def commit(self):
+            self.committed = True
+
+    db = Session()
+    monkeypatch.setattr(projects, "_project_or_404", AsyncMock(return_value=project))
+    monkeypatch.setattr(projects, "_asset_path", lambda _: Path("asset.webp"))
+    monkeypatch.setattr(projects, "append_audit", AsyncMock())
+    auth = SimpleNamespace(tenant_id=tenant_id, user=SimpleNamespace(id=uuid4()))
+
+    result = asyncio.run(
+        attach_draft_block_media(
+            project_id,
+            draft_id,
+            PageDraftBlockMediaAttachIn(
+                block_id="hero", asset_id=asset_id, alt="Проверенное фото hero"
+            ),
+            auth,
+            db,
+        )
+    )
+
+    assert result["page_manifest"]["block_media"] == {
+        "hero": {
+            "asset_id": str(asset_id),
+            "stored_sha256": "a" * 64,
+            "alt": "Проверенное фото hero",
+        }
+    }
     assert draft.qa_runs == []
     assert draft.last_qa_verdict is None
     assert draft.qa_override == {}

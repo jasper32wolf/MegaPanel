@@ -12,7 +12,7 @@ type SemanticSignals = { totals: { members: number; bindings: number; covered: n
 type GeoPlace = { id: string; name: string; kind: string; is_validated?: boolean };
 type ProjectGeo = { id: string; geo_id: string; name: string; kind: string; validated: boolean; role: "primary" | "service_area" | "reference"; position: number };
 type Plan = { id: string; slug: string; objective: string; intent: string | null; kit_key: string; block_selection: { blocks?: string[] }; state: string; version: number; decision_reason: string | null };
-type Draft = { id: string; page_plan_id: string; revision: number; state: string; content_hash: string | null; last_qa_verdict: string | null; qa_runs: { verdict: string; findings: { verdict: string; rule: string; evidence: string }[] }[]; page_manifest: Record<string, unknown>; failure_message: string | null };
+type Draft = { id: string; page_plan_id: string; revision: number; state: string; content_hash: string | null; last_qa_verdict: string | null; qa_runs: { verdict: string; findings: { verdict: string; rule: string; evidence: string }[] }[]; page_manifest: { blocks?: { type?: unknown }[] } & Record<string, unknown>; failure_message: string | null };
 type Coverage = { selected: number; covered: number; uncovered: { keyword_id: string; phrase: string }[]; plans: number };
 type Build = { id: string; status: string; build_hash: string | null; previous_build_hash: string | null; pages_built: number; created_at: string | null; activated_at: string | null };
 type AIProvider = { id: string; label: string; provider_id: string; enabled: boolean };
@@ -78,6 +78,7 @@ export function ProjectWorkspacePage() {
   const [slotRuns, setSlotRuns] = useState<AIRunBrief[]>([]);
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
   const [mediaDraftId, setMediaDraftId] = useState("");
+  const [mediaBlockId, setMediaBlockId] = useState("");
   const [mediaAssetId, setMediaAssetId] = useState("");
   const [mediaAlt, setMediaAlt] = useState("");
   const [organization, setOrganization] = useState("");
@@ -112,6 +113,12 @@ export function ProjectWorkspacePage() {
   const latestFact = facts[0] || null;
   const selectedKeywordSet = useMemo(() => new Set(selectedKeywordIds), [selectedKeywordIds]);
   const selectedGeoSet = useMemo(() => new Set(selectedGeoIds), [selectedGeoIds]);
+  const mediaDraftBlocks = useMemo(() => {
+    const blocks = drafts.find((draft) => draft.id === mediaDraftId)?.page_manifest.blocks;
+    return Array.isArray(blocks)
+      ? blocks.flatMap((block) => typeof block.type === "string" ? [block.type] : [])
+      : [];
+  }, [drafts, mediaDraftId]);
 
   async function load() {
     const [nextProject, nextFacts, nextKeywords, nextProjectKeywords, nextPlaces, nextProjectGeo, nextPlans, nextDrafts, nextCoverage, nextBuilds, nextSeoRuns, nextSlotRuns, nextCollections, nextSignals] = await Promise.all([
@@ -527,14 +534,17 @@ export function ProjectWorkspacePage() {
 
   async function attachDraftMedia() {
     if (!mediaDraftId || !mediaAssetId || !mediaAlt.trim()) return;
+    const blockPlacement = Boolean(mediaBlockId);
     await run(
       `draft-media:${mediaDraftId}`,
       () => api(
-        `/api/v1/projects/${projectId}/page-drafts/${mediaDraftId}/media`,
-        { method: "POST", body: JSON.stringify({ asset_id: mediaAssetId, alt: mediaAlt.trim() }) },
+        `/api/v1/projects/${projectId}/page-drafts/${mediaDraftId}/${blockPlacement ? "block-media" : "media"}`,
+        { method: "POST", body: JSON.stringify({ asset_id: mediaAssetId, alt: mediaAlt.trim(), ...(blockPlacement ? { block_id: mediaBlockId } : {}) }) },
         token,
       ),
-      "Файл прикреплён к черновику. QA и ручную проверку нужно выполнить заново.",
+      blockPlacement
+        ? "Файл размещён после curated-блока. QA и ручную проверку нужно выполнить заново."
+        : "Файл прикреплён к черновику. QA и ручную проверку нужно выполнить заново.",
     );
     setMediaAlt("");
   }
@@ -716,9 +726,10 @@ export function ProjectWorkspacePage() {
         </div>
       </Surface>
       <Surface title="4.4. Медиа для черновика">
-        <p className="muted">Можно прикрепить только уже загруженный файл с подтверждёнными правами. В черновике сохраняется UUID и SHA-256, а candidate build копирует проверенные bytes в локальный immutable release. Attachment сбрасывает QA; URL и HTML сюда не принимаются.</p>
+        <p className="muted">Можно прикрепить только уже загруженный файл с подтверждёнными правами: в конце страницы или после одного выбранного curated-блока. В черновике сохраняется UUID и SHA-256, а candidate build копирует проверенные bytes в локальный immutable release. Attachment сбрасывает QA; URL и HTML сюда не принимаются.</p>
         <div className="stack">
-          <label className="field">Черновик<select value={mediaDraftId} onChange={(event) => setMediaDraftId(event.target.value)}><option value="">Выберите draft</option>{drafts.filter((draft) => draft.state === "draft").map((draft) => <option key={draft.id} value={draft.id}>{plans.find((plan) => plan.id === draft.page_plan_id)?.slug || draft.id} · rev {draft.revision}</option>)}</select></label>
+          <label className="field">Черновик<select value={mediaDraftId} onChange={(event) => { setMediaDraftId(event.target.value); setMediaBlockId(""); }}><option value="">Выберите draft</option>{drafts.filter((draft) => draft.state === "draft").map((draft) => <option key={draft.id} value={draft.id}>{plans.find((plan) => plan.id === draft.page_plan_id)?.slug || draft.id} · rev {draft.revision}</option>)}</select></label>
+          <label className="field">Размещение<select value={mediaBlockId} disabled={!mediaDraftId} onChange={(event) => setMediaBlockId(event.target.value)}><option value="">В конце страницы (gallery)</option>{mediaDraftBlocks.map((blockId) => <option key={blockId} value={blockId}>После блока: {blockId}</option>)}</select></label>
           <label className="field">Файл из медиатеки<select value={mediaAssetId} onChange={(event) => setMediaAssetId(event.target.value)}><option value="">Выберите файл</option>{mediaAssets.filter((asset) => asset.availability === "eligible").map((asset) => <option key={asset.id} value={asset.id}>{asset.author || "Без автора"} · {asset.license || "rights declared"} · {asset.hashes.stored_sha256?.slice(0, 12)}</option>)}</select></label>
           <label className="field">Alt-текст<input value={mediaAlt} onChange={(event) => setMediaAlt(event.target.value)} maxLength={255} placeholder="Кратко и по делу опишите изображение" /></label>
           <button className="btn btn-ghost" type="button" disabled={busy !== null || !mediaDraftId || !mediaAssetId || !mediaAlt.trim()} onClick={() => void attachDraftMedia()}>{busy?.startsWith("draft-media:") ? "Прикрепление…" : "Прикрепить к draft"}</button>

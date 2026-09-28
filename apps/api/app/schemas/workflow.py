@@ -272,6 +272,12 @@ class PageDraftMediaAttachIn(BaseModel):
     alt: str = Field(min_length=1, max_length=255)
 
 
+class PageDraftBlockMediaAttachIn(PageDraftMediaAttachIn):
+    model_config = {"extra": "forbid"}
+
+    block_id: str = Field(min_length=1, max_length=128)
+
+
 class QaOverrideIn(BaseModel):
     reason: Literal["operator_review", "known_exception", "approved_legal_copy"]
     justification: str = Field(min_length=10, max_length=2000)

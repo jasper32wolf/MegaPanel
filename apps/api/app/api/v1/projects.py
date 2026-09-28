@@ -36,6 +36,7 @@ from app.schemas.workflow import (
     BuildPublishRequest,
     BuildRollbackRequest,
     FactRevisionCreate,
+    PageDraftBlockMediaAttachIn,
     PageDraftDecision,
     PageDraftMediaAttachIn,
     PageDraftRequest,
@@ -1388,6 +1389,79 @@ async def attach_draft_media(
     return _serialize_draft(draft)
 
 
+@router.post("/{project_id}/page-drafts/{draft_id}/block-media")
+async def attach_draft_block_media(
+    project_id: UUID,
+    draft_id: UUID,
+    body: PageDraftBlockMediaAttachIn,
+    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    project = await _project_or_404(db, project_id, auth)
+    draft = (
+        await db.execute(
+            select(PageDraft)
+            .where(PageDraft.id == draft_id, PageDraft.project_id == project.id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if not draft:
+        raise HTTPException(status_code=404, detail="Page draft not found")
+    if draft.state != "draft":
+        raise HTTPException(
+            status_code=409, detail="Attach media before submitting the draft for review"
+        )
+    asset = (
+        await db.execute(
+            select(MediaAsset).where(
+                MediaAsset.id == body.asset_id,
+                MediaAsset.tenant_id == project.tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if not asset:
+        raise HTTPException(status_code=404, detail="Media asset not found")
+    try:
+        _asset_path(asset)
+        stored_sha256 = _verified_media_hash(asset)
+        page = PageManifest.model_validate(draft.page_manifest or {})
+        manifest = PageManifest.model_validate(
+            {
+                **page.model_dump(mode="json"),
+                "block_media": {
+                    **page.block_media,
+                    body.block_id: {
+                        "asset_id": asset.id,
+                        "stored_sha256": stored_sha256,
+                        "alt": body.alt.strip(),
+                    },
+                },
+            }
+        ).model_dump(mode="json")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    draft.page_manifest = manifest
+    draft.content_hash = _draft_manifest_hash(manifest)
+    draft.qa_runs = []
+    draft.last_qa_verdict = None
+    draft.qa_override = {}
+    await append_audit(
+        db,
+        action="page_draft.block_media.attach",
+        payload={
+            "project_id": str(project.id),
+            "page_draft_id": str(draft.id),
+            "block_id": body.block_id,
+            "asset_id": str(asset.id),
+            "stored_sha256": stored_sha256,
+        },
+        tenant_id=project.tenant_id,
+        actor_id=auth.user.id,
+    )
+    await db.commit()
+    return _serialize_draft(draft)
+
+
 @router.get("/{project_id}/page-drafts/{draft_id}")
 async def get_page_draft(
     project_id: UUID,
@@ -1736,7 +1810,7 @@ async def _build_assets_for_manifest(
 ) -> list[BuildAsset]:
     expected_hashes: dict[UUID, str] = {}
     for page in manifest.pages:
-        for attachment in page.media:
+        for attachment in [*page.media, *page.block_media.values()]:
             existing = expected_hashes.setdefault(attachment.asset_id, attachment.stored_sha256)
             if existing != attachment.stored_sha256:
                 raise HTTPException(

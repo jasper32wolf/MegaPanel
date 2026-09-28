@@ -76,6 +76,51 @@ def test_page_media_is_typed_unique_and_renderer_owned():
                 {"asset_id": asset_id, "stored_sha256": "a" * 64, "alt": "Второй"},
             ],
         )
+    with pytest.raises(ValidationError, match="unique"):
+        PageManifest(
+            slug="/",
+            title_template="Ремонт",
+            h1_template="Ремонт",
+            service="Ремонт",
+            blocks=[BlockDef(type="hero", hash_class="hero", html="", order=0)],
+            media=[{"asset_id": asset_id, "stored_sha256": "a" * 64, "alt": "Gallery"}],
+            block_media={"hero": {"asset_id": asset_id, "stored_sha256": "a" * 64, "alt": "Block"}},
+        )
+
+
+def test_block_media_is_renderer_owned_and_targets_only_a_page_block():
+    asset_id = uuid4()
+    page = PageManifest(
+        slug="/",
+        title_template="Ремонт",
+        h1_template="Ремонт",
+        service="Ремонт",
+        blocks=[BlockDef(type="hero", hash_class="hero", html="<p>Текст</p>", order=0)],
+        block_media={
+            "hero": {
+                "asset_id": asset_id,
+                "stored_sha256": "a" * 64,
+                "alt": "<img src=x onerror=alert(1)>",
+            }
+        },
+    )
+    site = SiteManifest(site_id=uuid4(), tenant_id=uuid4(), domain="example.test", pages=[])
+
+    html = render_page(site, page, media_urls={str(asset_id): "assets/a.webp"})
+
+    assert 'data-media-for="hero"' in html
+    assert html.index('data-block="hero"') < html.index('data-media-for="hero"')
+    assert 'src="assets/a.webp"' in html
+    assert "&lt;img src=x onerror=alert(1)&gt;" in html
+    with pytest.raises(ValidationError, match="target a page block"):
+        PageManifest(
+            slug="/",
+            title_template="Ремонт",
+            h1_template="Ремонт",
+            service="Ремонт",
+            blocks=[BlockDef(type="hero", hash_class="hero", html="", order=0)],
+            block_media={"faq": {"asset_id": asset_id, "stored_sha256": "a" * 64, "alt": "Фото"}},
+        )
 
 
 def test_render_page_canonical():

@@ -63,6 +63,8 @@ def render_page(
         "color:var(--sp-text,var(--text,#111));"
         "font-family:var(--sp-font,system-ui,sans-serif);}"
         " main{max-width:960px;margin:0 auto;padding:1rem;}"
+        " .sp-block-media{margin:1rem 0}"
+        " .sp-block-media img{display:block;max-width:100%;height:auto}"
     )
 
     has_hero = any(block.type == "hero" for block in blocks)
@@ -82,6 +84,14 @@ def render_page(
             f'<section class="{escape(block.hash_class, quote=True)}" '
             f'data-block="{escape(block.type, quote=True)}">{html}</section>'
         )
+        attachment = page.block_media.get(block.type)
+        if attachment and (url := (media_urls or {}).get(str(attachment.asset_id))):
+            body_parts.append(
+                '<figure class="sp-block-media" '
+                f'data-media-for="{escape(block.type, quote=True)}">'
+                f'<img src="{escape(url, quote=True)}" alt="{escape(attachment.alt, quote=True)}" '
+                'loading="lazy" decoding="async"></figure>'
+            )
         css = _safe_css(block.css)
         if css:
             css_parts.append(css)
