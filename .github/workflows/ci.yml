@@ -187,8 +187,16 @@ jobs:
       - name: Start isolated production Compose stack
         run: |
           set -euo pipefail
+          compose=(docker compose -f infra/docker/docker-compose.production.yml --env-file .env)
           cleanup() {
-            docker compose -f infra/docker/docker-compose.production.yml --env-file .env down --volumes --remove-orphans
+            status=$?
+            if [ "$status" -ne 0 ]; then
+              echo "Production Compose smoke failed; service state follows" >&2
+              "${compose[@]}" ps -a || true
+              "${compose[@]}" logs --tail=200 --no-color || true
+            fi
+            "${compose[@]}" down --volumes --remove-orphans || true
+            exit "$status"
           }
           trap cleanup EXIT
           field_encryption_key="$(python3 -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())')"
@@ -208,17 +216,13 @@ jobs:
           CORS_ORIGINS=https://localhost
           CADDY_EMAIL=ci-operator@example.test
           EOF
-          if ! docker compose -f infra/docker/docker-compose.production.yml --env-file .env up --build --detach; then
-            docker compose -f infra/docker/docker-compose.production.yml --env-file .env logs
-            exit 1
-          fi
+          "${compose[@]}" up --build --detach
           for attempt in $(seq 1 90); do
             if curl --insecure --fail --silent https://localhost/ >/tmp/site-panel-compose-index.html \
               && curl --insecure --fail --silent https://localhost/api/v1/health/ready >/dev/null; then
               break
             fi
             if [ "$attempt" -eq 90 ]; then
-              docker compose -f infra/docker/docker-compose.production.yml --env-file .env logs
               exit 1
             fi
             sleep 1
