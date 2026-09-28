@@ -6,8 +6,10 @@ import json
 import os
 import shutil
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 from site_panel_shared.enums import IndexState
 from site_panel_shared.manifests import PageManifest, SiteManifest
@@ -17,6 +19,16 @@ from site_panel_ssg.templates import content_hash, fill_slots, page_url, render_
 
 THIN_CONTENT_MIN_CHARS = 350
 LEAD_FORM_MIN_AGE_MS = 2500
+
+
+@dataclass(frozen=True)
+class BuildAsset:
+    asset_id: UUID
+    source_path: Path
+    stored_sha256: str
+    content_type: str = "image/webp"
+
+
 LEAD_FORM_SCRIPT = """(() => {
   const query = new URLSearchParams(window.location.search);
   const minFormAge = 2500;
@@ -283,12 +295,41 @@ class SiteBuilder:
     def release_path(self, site_id: str, build_hash: str) -> Path:
         return self.output_root / str(site_id) / "releases" / build_hash
 
+    @staticmethod
+    def _copy_assets(
+        staging: Path, assets: list[BuildAsset]
+    ) -> tuple[dict[str, str], list[dict[str, str]]]:
+        urls: dict[str, str] = {}
+        metadata: list[dict[str, str]] = []
+        assets_dir = staging / "assets"
+        for asset in sorted(assets, key=lambda item: str(item.asset_id)):
+            data = asset.source_path.read_bytes()
+            digest = hashlib.sha256(data).hexdigest()
+            if digest != asset.stored_sha256:
+                raise ValueError("Static asset hash does not match the approved manifest")
+            filename = f"{digest}.webp"
+            target = assets_dir / filename
+            if not target.exists():
+                assets_dir.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(data)
+            urls[str(asset.asset_id)] = f"assets/{filename}"
+            metadata.append(
+                {
+                    "asset_id": str(asset.asset_id),
+                    "stored_sha256": digest,
+                    "path": f"assets/{filename}",
+                    "content_type": asset.content_type,
+                }
+            )
+        return urls, metadata
+
     def build(
         self,
         site: SiteManifest,
         context: dict | None = None,
         *,
         index_states: dict[str, str] | None = None,
+        assets: list[BuildAsset] | None = None,
         compress: bool = True,
         activate: bool = True,
     ) -> dict[str, Any]:
@@ -302,8 +343,20 @@ class SiteBuilder:
         ctx = {**(context or {}), "site_id": str(site.site_id)}
 
         try:
+            asset_urls, assets_meta = self._copy_assets(staging, assets or [])
+            referenced_asset_ids = {
+                str(attachment.asset_id) for page in site.pages for attachment in page.media
+            }
+            if referenced_asset_ids != set(asset_urls):
+                raise ValueError("Static media assets do not match the manifest")
             for page in site.pages:
-                html = render_page(site, page, ctx)
+                slug = page.slug.strip("/")
+                output = staging / "index.html" if not slug else staging / slug / "index.html"
+                relative_media_urls = {
+                    asset_id: os.path.relpath(staging / path, output.parent).replace(os.sep, "/")
+                    for asset_id, path in asset_urls.items()
+                }
+                html = render_page(site, page, ctx, relative_media_urls)
                 has_lead_form = any(block.type == "lead_form" for block in page.blocks)
                 if has_lead_form:
                     html = html.replace(
@@ -365,8 +418,17 @@ class SiteBuilder:
                 render_sitemap(site.domain, indexed_urls), encoding="utf-8"
             )
             write_legal_pack(staging, site.legal or {})
+            assets_hash = hashlib.sha256(
+                json.dumps(
+                    assets_meta, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                ).encode()
+            ).hexdigest()
+            hashes.append(assets_hash)
             build_hash = hashlib.sha256("".join(hashes).encode()).hexdigest()
             (staging / "BUILD_HASH").write_text(build_hash, encoding="utf-8")
+            (staging / "assets_meta.json").write_text(
+                json.dumps(assets_meta, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
             (staging / "pages_meta.json").write_text(
                 json.dumps(page_meta, ensure_ascii=False, indent=2), encoding="utf-8"
             )

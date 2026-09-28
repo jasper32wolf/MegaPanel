@@ -4,20 +4,25 @@ import asyncio
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 from app.api.v1 import projects
 from app.api.v1.projects import (
+    _draft_manifest_hash,
     _project_site_or_409,
     _public_fact_values,
     _selection_snapshots,
     _serialize_fact,
+    _verified_media_hash,
+    attach_draft_media,
 )
 from app.main import app
 from app.schemas.workflow import (
     FactRevisionCreate,
     LeadOutcomeIn,
+    PageDraftMediaAttachIn,
     PagePlanCreate,
     ProjectGeoUpdate,
     ProjectKeywordsUpdate,
@@ -185,6 +190,132 @@ def test_project_fact_revisions_route_is_registered():
 
     assert "get" in paths["/api/v1/projects/{project_id}/facts"]
     assert "post" in paths["/api/v1/projects/{project_id}/commercial-page-plans"]
+    assert "post" in paths["/api/v1/projects/{project_id}/page-drafts/{draft_id}/media"]
+
+
+def test_media_attachment_hash_requires_confirmed_rights_and_matching_sha():
+    asset = SimpleNamespace(
+        meta={
+            "provenance": {"kind": "manual_upload", "rights_confirmed": True},
+            "hashes": {"stored_sha256": "a" * 64},
+        }
+    )
+
+    assert _verified_media_hash(asset) == "a" * 64
+    with pytest.raises(ValueError, match="rights"):
+        _verified_media_hash(SimpleNamespace(meta={"provenance": {}, "hashes": {}}))
+
+
+def test_media_attachment_changes_canonical_draft_hash():
+    base = {
+        "slug": "/",
+        "title_template": "Ремонт",
+        "h1_template": "Ремонт",
+        "service": "Ремонт",
+    }
+    attached = {
+        **base,
+        "media": [{"asset_id": str(uuid4()), "stored_sha256": "a" * 64, "alt": "Фото"}],
+    }
+
+    assert _draft_manifest_hash(base) != _draft_manifest_hash(attached)
+
+
+def test_draft_media_attachment_snapshots_hash_and_resets_qa(monkeypatch):
+    tenant_id, project_id, draft_id, asset_id = (uuid4() for _ in range(4))
+    project = SimpleNamespace(id=project_id, tenant_id=tenant_id)
+    draft = SimpleNamespace(
+        id=draft_id,
+        project_id=project_id,
+        state="draft",
+        page_manifest={
+            "slug": "/",
+            "title_template": "Ремонт",
+            "h1_template": "Ремонт",
+            "service": "Ремонт",
+        },
+        qa_runs=[{"source_hash": "old"}],
+        last_qa_verdict="pass",
+        qa_override={"reason": "old"},
+        content_hash="old",
+        page_plan_id=uuid4(),
+        revision=1,
+        generator_meta={},
+        failure_message=None,
+        created_at=None,
+        updated_at=None,
+    )
+    asset = SimpleNamespace(
+        id=asset_id,
+        tenant_id=tenant_id,
+        meta={
+            "provenance": {"kind": "manual_upload", "rights_confirmed": True},
+            "hashes": {"stored_sha256": "a" * 64},
+        },
+    )
+
+    class Session:
+        def __init__(self):
+            self.calls = 0
+            self.committed = False
+
+        async def execute(self, _statement):
+            self.calls += 1
+            value = draft if self.calls == 1 else asset
+            return SimpleNamespace(scalar_one_or_none=lambda: value)
+
+        async def commit(self):
+            self.committed = True
+
+    db = Session()
+    monkeypatch.setattr(projects, "_project_or_404", AsyncMock(return_value=project))
+    monkeypatch.setattr(projects, "_asset_path", lambda _: Path("asset.webp"))
+    monkeypatch.setattr(projects, "append_audit", AsyncMock())
+    auth = SimpleNamespace(tenant_id=tenant_id, user=SimpleNamespace(id=uuid4()))
+
+    result = asyncio.run(
+        attach_draft_media(
+            project_id,
+            draft_id,
+            PageDraftMediaAttachIn(asset_id=asset_id, alt="Проверенное фото"),
+            auth,
+            db,
+        )
+    )
+
+    assert result["page_manifest"]["media"] == [
+        {"asset_id": str(asset_id), "stored_sha256": "a" * 64, "alt": "Проверенное фото"}
+    ]
+    assert draft.qa_runs == []
+    assert draft.last_qa_verdict is None
+    assert draft.qa_override == {}
+    assert draft.content_hash != "old"
+    assert db.committed
+
+
+def test_draft_media_attachment_rejects_non_draft(monkeypatch):
+    project_id, tenant_id = uuid4(), uuid4()
+    project = SimpleNamespace(id=project_id, tenant_id=tenant_id)
+    draft = SimpleNamespace(state="review")
+
+    class Session:
+        async def execute(self, _statement):
+            return SimpleNamespace(scalar_one_or_none=lambda: draft)
+
+    monkeypatch.setattr(projects, "_project_or_404", AsyncMock(return_value=project))
+    auth = SimpleNamespace(tenant_id=tenant_id, user=SimpleNamespace(id=uuid4()))
+    with pytest.raises(HTTPException, match="before submitting") as exc_info:
+        asyncio.run(
+            attach_draft_media(
+                project_id,
+                uuid4(),
+                PageDraftMediaAttachIn(asset_id=uuid4(), alt="Фото"),
+                auth,
+                Session(),
+            )
+        )
+
+    assert exc_info.value.status_code == 409
 
 
 def test_project_site_link_requires_matching_tenant_and_reciprocal_project():

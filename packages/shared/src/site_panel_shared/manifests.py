@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from site_panel_shared.enums import IndexState, PublishState
 
@@ -33,6 +33,14 @@ class GeoEntity(BaseModel):
     attrs: dict[str, Any] = Field(default_factory=dict)
 
 
+class PageMedia(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    asset_id: UUID
+    stored_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    alt: str = Field(min_length=1, max_length=255)
+
+
 class PageManifest(BaseModel):
     slug: str
     title_template: str
@@ -47,8 +55,16 @@ class PageManifest(BaseModel):
     index_state: IndexState = IndexState.NOINDEX
     unique_core: str | None = None
     block_slot_values: dict[str, dict[str, str | None]] = Field(default_factory=dict)
+    media: list[PageMedia] = Field(default_factory=list, max_length=12)
     schema_org: dict[str, Any] = Field(default_factory=dict)
     seed: int = 0
+
+    @model_validator(mode="after")
+    def require_unique_media_assets(self) -> PageManifest:
+        asset_ids = [item.asset_id for item in self.media]
+        if len(asset_ids) != len(set(asset_ids)):
+            raise ValueError("Page media assets must be unique")
+        return self
 
 
 class SiteManifest(BaseModel):

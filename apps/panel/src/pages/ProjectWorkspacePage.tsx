@@ -18,6 +18,7 @@ type AIDraftQuote = { provider_id: string; model_id: string; estimated_cost_usd:
 type AIRunBrief = { id: string; action: string; status: string; output: { brief?: Record<string, unknown>; page_draft_id?: string; slot_copy?: BlockSlotCopy }; error_code: string | null; prompt_hash: string; cost_usd: number | null };
 type BlockSlotSchema = { block_id: string; slots: Record<string, { type: string; max_length: number }> };
 type BlockSlotCopy = { block_id: string; slots: Record<string, string | null>; fact_keys: string[]; warnings: string[] };
+type MediaAsset = { id: string; author: string | null; license: string | null; hashes: { stored_sha256?: string }; provenance: { rights_confirmed?: boolean; license_expires_at?: string | null } };
 type Confirmation = {
   title: string;
   description: string;
@@ -69,6 +70,10 @@ export function ProjectWorkspacePage() {
   const [slotConsent, setSlotConsent] = useState(false);
   const [slotRun, setSlotRun] = useState<AIRunBrief | null>(null);
   const [slotRuns, setSlotRuns] = useState<AIRunBrief[]>([]);
+  const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
+  const [mediaDraftId, setMediaDraftId] = useState("");
+  const [mediaAssetId, setMediaAssetId] = useState("");
+  const [mediaAlt, setMediaAlt] = useState("");
   const [organization, setOrganization] = useState("");
   const [service, setService] = useState("");
   const [phone, setPhone] = useState("");
@@ -150,6 +155,12 @@ export function ProjectWorkspacePage() {
     if (!projectId) return;
     load().catch((cause) => setError(cause instanceof Error ? cause.message : "Не удалось загрузить проект"));
   }, [projectId, token]);
+
+  useEffect(() => {
+    api<MediaAsset[]>("/api/v1/media", {}, token)
+      .then(setMediaAssets)
+      .catch((cause) => setError(cause instanceof Error ? cause.message : "Не удалось загрузить медиатеку"));
+  }, [token]);
 
   async function run(action: string, request: () => Promise<unknown>, success: string) {
     setBusy(action);
@@ -464,6 +475,20 @@ export function ProjectWorkspacePage() {
     await run(`slot-import:${slotRun.id}`, () => api<Draft>(`/api/v1/projects/${projectId}/block-slot-proposals/${slotRun.id}/drafts`, { method: "POST" }, token), "Из одобренного текста блока создан noindex PageDraft. Запустите QA и ручную проверку.");
   }
 
+  async function attachDraftMedia() {
+    if (!mediaDraftId || !mediaAssetId || !mediaAlt.trim()) return;
+    await run(
+      `draft-media:${mediaDraftId}`,
+      () => api(
+        `/api/v1/projects/${projectId}/page-drafts/${mediaDraftId}/media`,
+        { method: "POST", body: JSON.stringify({ asset_id: mediaAssetId, alt: mediaAlt.trim() }) },
+        token,
+      ),
+      "Файл прикреплён к черновику. QA и ручную проверку нужно выполнить заново.",
+    );
+    setMediaAlt("");
+  }
+
   async function qa(draft: Draft) {
     await run(`qa:${draft.id}`, () => api(`/api/v1/projects/${projectId}/page-drafts/${draft.id}/qa`, { method: "POST" }, token), "Проверка качества завершена.");
   }
@@ -623,6 +648,15 @@ export function ProjectWorkspacePage() {
           <button className="btn" type="button" disabled={busy !== null || !slotQuote || !slotConsent} onClick={generateBlockSlotCopy}>Создать proposal текста блока</button>
           {slotRuns.length > 0 && <label className="field">История proposal<select value={slotRun?.id || ""} onChange={(event) => setSlotRun(slotRuns.find((item) => item.id === event.target.value) || null)}>{slotRuns.map((item) => <option key={item.id} value={item.id}>{item.id.slice(0, 8)} · {item.status}</option>)}</select></label>}
           {slotRun && <div className="surface"><p>Статус: {slotRun.status}</p>{slotRun.output.slot_copy && <pre className="code-block">{JSON.stringify(slotRun.output.slot_copy, null, 2)}</pre>}{slotRun.status === "pending_approval" && <div className="row"><button className="btn" type="button" disabled={busy !== null} onClick={() => void decideSlotRun("approve")}>Одобрить</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void decideSlotRun("reject")}>Отклонить</button></div>}{slotRun.status === "approved" && !slotRun.output.page_draft_id && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={importApprovedSlotRun}>Создать PageDraft из одобренного текста</button>}{slotRun.output.page_draft_id && <p className="muted">PageDraft: {slotRun.output.page_draft_id}. Далее запустите QA.</p>}</div>}
+        </div>
+      </Surface>
+      <Surface title="4.4. Медиа для черновика">
+        <p className="muted">Можно прикрепить только уже загруженный файл с подтверждёнными правами. В черновике сохраняется UUID и SHA-256, а candidate build копирует проверенные bytes в локальный immutable release. Attachment сбрасывает QA; URL и HTML сюда не принимаются.</p>
+        <div className="stack">
+          <label className="field">Черновик<select value={mediaDraftId} onChange={(event) => setMediaDraftId(event.target.value)}><option value="">Выберите draft</option>{drafts.filter((draft) => draft.state === "draft").map((draft) => <option key={draft.id} value={draft.id}>{plans.find((plan) => plan.id === draft.page_plan_id)?.slug || draft.id} · rev {draft.revision}</option>)}</select></label>
+          <label className="field">Файл из медиатеки<select value={mediaAssetId} onChange={(event) => setMediaAssetId(event.target.value)}><option value="">Выберите файл</option>{mediaAssets.filter((asset) => asset.provenance.rights_confirmed && asset.hashes.stored_sha256).map((asset) => <option key={asset.id} value={asset.id}>{asset.author || "Без автора"} · {asset.license || "rights declared"} · {asset.hashes.stored_sha256?.slice(0, 12)}</option>)}</select></label>
+          <label className="field">Alt-текст<input value={mediaAlt} onChange={(event) => setMediaAlt(event.target.value)} maxLength={255} placeholder="Кратко и по делу опишите изображение" /></label>
+          <button className="btn btn-ghost" type="button" disabled={busy !== null || !mediaDraftId || !mediaAssetId || !mediaAlt.trim()} onClick={() => void attachDraftMedia()}>{busy?.startsWith("draft-media:") ? "Прикрепление…" : "Прикрепить к draft"}</button>
         </div>
       </Surface>
       <Surface title="5. Черновики и проверка качества">

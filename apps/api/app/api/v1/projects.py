@@ -1,20 +1,23 @@
 from __future__ import annotations
 
 import json
+import re
 import secrets
 import time
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
 
 from app.api.deps import AuthContext, require_roles
 from app.api.v1.domains import normalize_hostname
+from app.api.v1.media import _asset_path
 from app.core.config import get_settings
 from app.core.security import sha256_hex
 from app.db.session import get_db
 from app.models import (
     GeoPlace,
     Keyword,
+    MediaAsset,
     PageDraft,
     PagePlan,
     Project,
@@ -31,6 +34,7 @@ from app.schemas.workflow import (
     BuildRollbackRequest,
     FactRevisionCreate,
     PageDraftDecision,
+    PageDraftMediaAttachIn,
     PageDraftRequest,
     PagePlanCreate,
     PagePlanDecision,
@@ -53,7 +57,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 from site_panel_blocks import list_kits
 from site_panel_shared.manifests import PageManifest, SiteManifest
-from site_panel_ssg import SiteBuilder
+from site_panel_ssg import BuildAsset, SiteBuilder
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1028,6 +1032,36 @@ async def _plan_or_404(db: AsyncSession, project: Project, plan_id: UUID) -> Pag
     return plan
 
 
+def _verified_media_hash(asset: MediaAsset) -> str:
+    meta = asset.meta or {}
+    provenance = meta.get("provenance") or {}
+    hashes = meta.get("hashes") or {}
+    if provenance.get("kind") != "manual_upload" or provenance.get("rights_confirmed") is not True:
+        raise ValueError("Media asset rights are not confirmed")
+    expires_at = provenance.get("license_expires_at")
+    if expires_at:
+        try:
+            if date.fromisoformat(str(expires_at)) < date.today():
+                raise ValueError("Media asset license has expired")
+        except ValueError as exc:
+            if str(exc) == "Media asset license has expired":
+                raise
+            raise ValueError("Media asset license expiry is invalid") from exc
+    stored_sha256 = str(hashes.get("stored_sha256") or "")
+    if not re.fullmatch(r"[a-f0-9]{64}", stored_sha256):
+        raise ValueError("Media asset hash is unavailable")
+    return stored_sha256
+
+
+def _draft_manifest_hash(manifest: dict) -> str:
+    page = PageManifest.model_validate(manifest)
+    return sha256_hex(
+        json.dumps(
+            page.model_dump(mode="json"), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+    )
+
+
 def _serialize_draft(draft: PageDraft) -> dict:
     return {
         "id": str(draft.id),
@@ -1118,6 +1152,74 @@ async def generate_page_draft(
             "page_draft_id": str(draft.id),
             "revision": draft.revision,
             "content_hash": content_hash,
+        },
+        tenant_id=project.tenant_id,
+        actor_id=auth.user.id,
+    )
+    await db.commit()
+    return _serialize_draft(draft)
+
+
+@router.post("/{project_id}/page-drafts/{draft_id}/media")
+async def attach_draft_media(
+    project_id: UUID,
+    draft_id: UUID,
+    body: PageDraftMediaAttachIn,
+    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    project = await _project_or_404(db, project_id, auth)
+    draft = (
+        await db.execute(
+            select(PageDraft)
+            .where(PageDraft.id == draft_id, PageDraft.project_id == project.id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if not draft:
+        raise HTTPException(status_code=404, detail="Page draft not found")
+    if draft.state != "draft":
+        raise HTTPException(
+            status_code=409, detail="Attach media before submitting the draft for review"
+        )
+    asset = (
+        await db.execute(
+            select(MediaAsset).where(
+                MediaAsset.id == body.asset_id,
+                MediaAsset.tenant_id == project.tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if not asset:
+        raise HTTPException(status_code=404, detail="Media asset not found")
+    try:
+        _asset_path(asset)
+        stored_sha256 = _verified_media_hash(asset)
+        page = PageManifest.model_validate(draft.page_manifest or {})
+        manifest = PageManifest.model_validate(
+            {
+                **page.model_dump(mode="json"),
+                "media": [
+                    *page.media,
+                    {"asset_id": asset.id, "stored_sha256": stored_sha256, "alt": body.alt.strip()},
+                ],
+            }
+        ).model_dump(mode="json")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    draft.page_manifest = manifest
+    draft.content_hash = _draft_manifest_hash(manifest)
+    draft.qa_runs = []
+    draft.last_qa_verdict = None
+    draft.qa_override = {}
+    await append_audit(
+        db,
+        action="page_draft.media.attach",
+        payload={
+            "project_id": str(project.id),
+            "page_draft_id": str(draft.id),
+            "asset_id": str(asset.id),
+            "stored_sha256": stored_sha256,
         },
         tenant_id=project.tenant_id,
         actor_id=auth.user.id,
@@ -1466,6 +1568,56 @@ async def list_project_builds(
     ]
 
 
+async def _build_assets_for_manifest(
+    db: AsyncSession,
+    *,
+    manifest: SiteManifest,
+    tenant_id: UUID,
+) -> list[BuildAsset]:
+    expected_hashes: dict[UUID, str] = {}
+    for page in manifest.pages:
+        for attachment in page.media:
+            existing = expected_hashes.setdefault(attachment.asset_id, attachment.stored_sha256)
+            if existing != attachment.stored_sha256:
+                raise HTTPException(
+                    status_code=422, detail="Media asset hash conflicts across pages"
+                )
+    if not expected_hashes:
+        return []
+    assets = list(
+        (
+            await db.execute(
+                select(MediaAsset).where(
+                    MediaAsset.id.in_(tuple(expected_hashes)),
+                    MediaAsset.tenant_id == tenant_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if len(assets) != len(expected_hashes):
+        raise HTTPException(status_code=422, detail="A referenced media asset is unavailable")
+    build_assets = []
+    for asset in assets:
+        try:
+            stored_sha256 = _verified_media_hash(asset)
+            if stored_sha256 != expected_hashes[asset.id]:
+                raise ValueError("Media asset changed after draft review")
+            build_assets.append(
+                BuildAsset(
+                    asset_id=asset.id,
+                    source_path=_asset_path(asset),
+                    stored_sha256=stored_sha256,
+                    content_type=asset.content_type,
+                )
+            )
+        except (HTTPException, ValueError) as exc:
+            detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+            raise HTTPException(status_code=422, detail=f"Media asset blocker: {detail}") from exc
+    return build_assets
+
+
 @router.post("/{project_id}/builds", status_code=status.HTTP_201_CREATED)
 async def materialize_project_build(
     project_id: UUID,
@@ -1490,10 +1642,21 @@ async def materialize_project_build(
         "lead_token": site.lead_token,
         "lead_api_url": "/api/v1/leads/public",
     }
+    build_assets = await _build_assets_for_manifest(
+        db,
+        manifest=manifest,
+        tenant_id=project.tenant_id,
+    )
     builder = SiteBuilder(Path(settings.sites_root))
     started = time.perf_counter()
     try:
-        result = builder.build(manifest, context, index_states=index_states, activate=False)
+        result = builder.build(
+            manifest,
+            context,
+            index_states=index_states,
+            assets=build_assets,
+            activate=False,
+        )
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"Candidate build failed: {exc}") from exc
     plan_ids = [

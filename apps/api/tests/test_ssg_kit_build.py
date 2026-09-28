@@ -1,9 +1,11 @@
+import hashlib
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
 from site_panel_blocks import instantiate_blocks, load_kit
 from site_panel_shared.manifests import BlockDef, PageManifest, SiteManifest
-from site_panel_ssg import SiteBuilder
+from site_panel_ssg import BuildAsset, SiteBuilder
 
 
 def test_ssg_kit_build_contains_core_blocks(tmp_path: Path):
@@ -96,6 +98,80 @@ def test_ssg_kit_build_contains_core_blocks(tmp_path: Path):
     assert "const minFormAge = 2500;" in lead_script
     assert "button.disabled = true;" in lead_script
     assert "prepareForm(form);" in lead_script
+
+
+def test_candidate_build_copies_hashed_local_media_for_root_and_nested_pages(tmp_path: Path):
+    asset_id = uuid4()
+    media_path = tmp_path / "uploaded.webp"
+    media_bytes = b"local-webp-fixture"
+    media_path.write_bytes(media_bytes)
+    digest = hashlib.sha256(media_bytes).hexdigest()
+    site_id = uuid4()
+    media = [{"asset_id": asset_id, "stored_sha256": digest, "alt": "Проверенное фото"}]
+    site = SiteManifest(
+        site_id=site_id,
+        tenant_id=uuid4(),
+        domain="candidate.test",
+        pages=[
+            PageManifest(
+                slug="/",
+                title_template="Ремонт",
+                h1_template="Ремонт",
+                service="Ремонт",
+                media=media,
+            ),
+            PageManifest(
+                slug="/district",
+                title_template="Ремонт",
+                h1_template="Ремонт",
+                service="Ремонт",
+                media=media,
+            ),
+        ],
+    )
+
+    result = SiteBuilder(tmp_path).build(
+        site,
+        assets=[BuildAsset(asset_id=asset_id, source_path=media_path, stored_sha256=digest)],
+        activate=False,
+    )
+
+    release = tmp_path / str(site_id) / "releases" / result["build_hash"]
+    assert (release / "assets" / f"{digest}.webp").read_bytes() == media_bytes
+    assert f'src="assets/{digest}.webp"' in (release / "index.html").read_text(encoding="utf-8")
+    assert f'src="../assets/{digest}.webp"' in (release / "district" / "index.html").read_text(
+        encoding="utf-8"
+    )
+    assert not (tmp_path / str(site_id) / "current").exists()
+
+
+def test_candidate_build_rejects_tampered_local_media(tmp_path: Path):
+    asset_id = uuid4()
+    media_path = tmp_path / "uploaded.webp"
+    media_path.write_bytes(b"tampered")
+    site = SiteManifest(
+        site_id=uuid4(),
+        tenant_id=uuid4(),
+        domain="candidate.test",
+        pages=[
+            PageManifest(
+                slug="/",
+                title_template="Ремонт",
+                h1_template="Ремонт",
+                service="Ремонт",
+                media=[{"asset_id": asset_id, "stored_sha256": "a" * 64, "alt": "Фото"}],
+            )
+        ],
+    )
+
+    with pytest.raises(ValueError, match="hash"):
+        SiteBuilder(tmp_path).build(
+            site,
+            assets=[BuildAsset(asset_id=asset_id, source_path=media_path, stored_sha256="a" * 64)],
+            activate=False,
+        )
+
+    assert not list((tmp_path / str(site.site_id) / "releases").glob(".building-*"))
 
 
 def test_candidate_build_does_not_activate_until_requested(tmp_path: Path):

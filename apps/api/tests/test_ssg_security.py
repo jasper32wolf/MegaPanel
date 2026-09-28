@@ -1,5 +1,7 @@
 from uuid import uuid4
 
+import pytest
+from pydantic import ValidationError
 from site_panel_security import sanitize_html
 from site_panel_shared.manifests import BlockDef, PageManifest, SiteManifest
 from site_panel_ssg.templates import fill_slots, render_page
@@ -40,6 +42,40 @@ def test_render_page_renders_block_slots_only_for_matching_block():
 
     assert html.count("&lt;b&gt;Только hero&lt;/b&gt;") == 1
     assert '<section class="faq" data-block="faq"><p></p></section>' in html
+
+
+def test_page_media_is_typed_unique_and_renderer_owned():
+    asset_id = uuid4()
+    page = PageManifest(
+        slug="/",
+        title_template="Ремонт",
+        h1_template="Ремонт",
+        service="Ремонт",
+        media=[
+            {
+                "asset_id": asset_id,
+                "stored_sha256": "a" * 64,
+                "alt": "<img src=x onerror=alert(1)>",
+            }
+        ],
+    )
+    site = SiteManifest(site_id=uuid4(), tenant_id=uuid4(), domain="example.test", pages=[])
+
+    html = render_page(site, page, media_urls={str(asset_id): "assets/a.webp"})
+
+    assert 'src="assets/a.webp"' in html
+    assert "&lt;img src=x onerror=alert(1)&gt;" in html
+    with pytest.raises(ValidationError, match="unique"):
+        PageManifest(
+            slug="/",
+            title_template="Ремонт",
+            h1_template="Ремонт",
+            service="Ремонт",
+            media=[
+                {"asset_id": asset_id, "stored_sha256": "a" * 64, "alt": "Первый"},
+                {"asset_id": asset_id, "stored_sha256": "a" * 64, "alt": "Второй"},
+            ],
+        )
 
 
 def test_render_page_canonical():

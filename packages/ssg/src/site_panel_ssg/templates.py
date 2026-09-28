@@ -34,7 +34,10 @@ def _safe_css(value: str) -> str:
 
 
 def render_page(
-    site: SiteManifest, page: PageManifest, context: dict[str, Any] | None = None
+    site: SiteManifest,
+    page: PageManifest,
+    context: dict[str, Any] | None = None,
+    media_urls: dict[str, str] | None = None,
 ) -> str:
     ctx = {
         "domain": site.domain,
@@ -84,7 +87,17 @@ def render_page(
             css_parts.append(css)
 
     css = "\n".join(css_parts)
-    body = "\n".join(body_parts)
+    media_html = "\n".join(
+        (
+            '<section class="sp-media-gallery">'
+            f'<figure><img src="{escape(url, quote=True)}" alt="{escape(item.alt, quote=True)}" '
+            'loading="lazy" decoding="async"></figure>'
+            "</section>"
+        )
+        for item in page.media
+        if (url := (media_urls or {}).get(str(item.asset_id)))
+    )
+    body = "\n".join([*body_parts, media_html] if media_html else body_parts)
     h1_html = "" if has_hero else f"<h1>{h1}</h1>"
     unique_html = "" if has_hero or not unique else f'<p class="unique-core">{unique}</p>'
 
