@@ -20,7 +20,7 @@ type AIDraftQuote = { provider_id: string; model_id: string; estimated_cost_usd:
 type AIRunBrief = { id: string; action: string; status: string; output: { brief?: Record<string, unknown>; page_draft_id?: string; slot_copy?: BlockSlotCopy }; error_code: string | null; prompt_hash: string; cost_usd: number | null };
 type BlockSlotSchema = { block_id: string; slots: Record<string, { type: string; max_length: number }> };
 type BlockSlotCopy = { block_id: string; slots: Record<string, string | null>; fact_keys: string[]; warnings: string[] };
-type MediaAsset = { id: string; author: string | null; license: string | null; hashes: { stored_sha256?: string }; provenance: { rights_confirmed?: boolean; license_expires_at?: string | null } };
+type MediaAsset = { id: string; author: string | null; license: string | null; availability: "eligible" | "expired" | "rights_missing"; hashes: { stored_sha256?: string }; provenance: { rights_confirmed?: boolean; license_expires_at?: string | null } };
 type Confirmation = {
   title: string;
   description: string;
@@ -707,7 +707,7 @@ export function ProjectWorkspacePage() {
         <p className="muted">Можно прикрепить только уже загруженный файл с подтверждёнными правами. В черновике сохраняется UUID и SHA-256, а candidate build копирует проверенные bytes в локальный immutable release. Attachment сбрасывает QA; URL и HTML сюда не принимаются.</p>
         <div className="stack">
           <label className="field">Черновик<select value={mediaDraftId} onChange={(event) => setMediaDraftId(event.target.value)}><option value="">Выберите draft</option>{drafts.filter((draft) => draft.state === "draft").map((draft) => <option key={draft.id} value={draft.id}>{plans.find((plan) => plan.id === draft.page_plan_id)?.slug || draft.id} · rev {draft.revision}</option>)}</select></label>
-          <label className="field">Файл из медиатеки<select value={mediaAssetId} onChange={(event) => setMediaAssetId(event.target.value)}><option value="">Выберите файл</option>{mediaAssets.filter((asset) => asset.provenance.rights_confirmed && asset.hashes.stored_sha256).map((asset) => <option key={asset.id} value={asset.id}>{asset.author || "Без автора"} · {asset.license || "rights declared"} · {asset.hashes.stored_sha256?.slice(0, 12)}</option>)}</select></label>
+          <label className="field">Файл из медиатеки<select value={mediaAssetId} onChange={(event) => setMediaAssetId(event.target.value)}><option value="">Выберите файл</option>{mediaAssets.filter((asset) => asset.availability === "eligible").map((asset) => <option key={asset.id} value={asset.id}>{asset.author || "Без автора"} · {asset.license || "rights declared"} · {asset.hashes.stored_sha256?.slice(0, 12)}</option>)}</select></label>
           <label className="field">Alt-текст<input value={mediaAlt} onChange={(event) => setMediaAlt(event.target.value)} maxLength={255} placeholder="Кратко и по делу опишите изображение" /></label>
           <button className="btn btn-ghost" type="button" disabled={busy !== null || !mediaDraftId || !mediaAssetId || !mediaAlt.trim()} onClick={() => void attachDraftMedia()}>{busy?.startsWith("draft-media:") ? "Прикрепление…" : "Прикрепить к draft"}</button>
         </div>

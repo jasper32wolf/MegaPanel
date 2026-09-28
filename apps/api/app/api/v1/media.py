@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from app.api.deps import AuthContext, require_roles
@@ -25,6 +25,24 @@ ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 MAX_BYTES = 8 * 1024 * 1024
 
 
+def _asset_availability(asset: MediaAsset) -> str:
+    meta = getattr(asset, "meta", None) or {}
+    provenance = meta.get("provenance") or {}
+    stored_sha256 = str((meta.get("hashes") or {}).get("stored_sha256") or "")
+    if provenance.get("kind") != "manual_upload" or provenance.get("rights_confirmed") is not True:
+        return "rights_missing"
+    expires_at = provenance.get("license_expires_at")
+    if expires_at:
+        try:
+            if date.fromisoformat(str(expires_at)) < date.today():
+                return "expired"
+        except ValueError:
+            return "rights_missing"
+    if len(stored_sha256) != 64 or any(char not in "0123456789abcdef" for char in stored_sha256):
+        return "rights_missing"
+    return "eligible"
+
+
 def _asset_out(asset: MediaAsset) -> dict:
     meta = getattr(asset, "meta", None) or {}
     return {
@@ -40,6 +58,7 @@ def _asset_out(asset: MediaAsset) -> dict:
         "tags": asset.tags,
         "provenance": meta.get("provenance") or {},
         "hashes": meta.get("hashes") or {},
+        "availability": _asset_availability(asset),
     }
 
 

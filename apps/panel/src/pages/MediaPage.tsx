@@ -14,6 +14,7 @@ type MediaAsset = {
   tags: string[];
   provenance: { rights_basis?: "own" | "licensed" | "cc"; rights_confirmed?: boolean; source_reference?: string | null; source_url?: string | null; license_name?: string | null; license_expires_at?: string | null };
   hashes: { original_sha256?: string; stored_sha256?: string };
+  availability: "eligible" | "expired" | "rights_missing";
 };
 
 export function MediaPage() {
@@ -94,7 +95,7 @@ export function MediaPage() {
         </form>
       </Surface>
       <Surface title="Файлы">
-        {assets.length === 0 ? <EmptyState title="Медиатека пуста" hint="После загрузки изображения появятся здесь." /> : <div className="kit-grid">{assets.map((asset) => <article className="kit-card" key={asset.id}><img src={asset.path} alt="" style={{ width: "100%", maxHeight: 180, objectFit: "cover", borderRadius: 6 }} /><div><strong>{asset.author || "Без указанного автора"}</strong><p className="muted" style={{ marginBottom: 0 }}>{asset.source || "Источник не указан"}</p></div><div className="row"><StatusPill tone="accent">{asset.license || "—"}</StatusPill>{asset.normalized && <StatusPill tone="warn">нормализован</StatusPill>}</div><p className="muted" style={{ margin: 0 }}>pHash: {asset.phash || "—"}</p><p className="muted" style={{ margin: 0 }}>SHA-256: {asset.hashes.stored_sha256?.slice(0, 16) || "—"}</p>{asset.provenance.license_expires_at && <p className="muted" style={{ margin: 0 }}>Лицензия до: {asset.provenance.license_expires_at}</p>}</article>)}</div>}
+        {assets.length === 0 ? <EmptyState title="Медиатека пуста" hint="После загрузки изображения появятся здесь." /> : <div className="kit-grid">{assets.map((asset) => <article className="kit-card" key={asset.id}><img src={asset.path} alt="" style={{ width: "100%", maxHeight: 180, objectFit: "cover", borderRadius: 6 }} /><div><strong>{asset.author || "Без указанного автора"}</strong><p className="muted" style={{ marginBottom: 0 }}>{asset.source || "Источник не указан"}</p></div><div className="row"><StatusPill tone="accent">{asset.license || "—"}</StatusPill><StatusPill tone={asset.availability === "eligible" ? "ok" : "danger"}>{asset.availability === "eligible" ? "доступен для draft" : asset.availability === "expired" ? "лицензия истекла" : "нет подтверждённых прав"}</StatusPill>{asset.normalized && <StatusPill tone="warn">нормализован</StatusPill>}</div><p className="muted" style={{ margin: 0 }}>pHash: {asset.phash || "—"}</p><p className="muted" style={{ margin: 0 }}>SHA-256: {asset.hashes.stored_sha256?.slice(0, 16) || "—"}</p>{asset.provenance.license_expires_at && <p className="muted" style={{ margin: 0 }}>Лицензия до: {asset.provenance.license_expires_at}</p>}</article>)}</div>}
       </Surface>
     </div>
   );

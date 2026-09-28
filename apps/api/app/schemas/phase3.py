@@ -118,5 +118,6 @@ class MediaOut(BaseModel):
     tags: list
     provenance: dict
     hashes: dict
+    availability: Literal["eligible", "expired", "rights_missing"]
 
     model_config = {"from_attributes": True}

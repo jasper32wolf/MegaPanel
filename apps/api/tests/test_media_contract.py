@@ -85,3 +85,42 @@ def test_manual_media_provenance_requires_confirmed_rights_and_valid_license():
 
 def test_media_upload_limit_is_eight_megabytes():
     assert MAX_BYTES == 8 * 1024 * 1024
+
+
+def test_media_availability_projects_expired_and_malformed_provenance():
+    expired = SimpleNamespace(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        path="/safe/file.webp",
+        content_type="image/webp",
+        source=None,
+        license=None,
+        author=None,
+        phash=None,
+        normalized=False,
+        tags=[],
+        meta={
+            "provenance": {
+                "kind": "manual_upload",
+                "rights_confirmed": True,
+                "license_expires_at": "2000-01-01",
+            },
+            "hashes": {"stored_sha256": "a" * 64},
+        },
+    )
+    malformed = SimpleNamespace(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        path="/safe/file.webp",
+        content_type="image/webp",
+        source=None,
+        license=None,
+        author=None,
+        phash=None,
+        normalized=False,
+        tags=[],
+        meta={"provenance": {"kind": "manual_upload", "rights_confirmed": True}, "hashes": {}},
+    )
+
+    assert _asset_out(expired)["availability"] == "expired"
+    assert _asset_out(malformed)["availability"] == "rights_missing"
