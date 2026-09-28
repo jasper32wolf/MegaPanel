@@ -19,9 +19,15 @@ def upgrade() -> None:
         sa.Column("state", sa.String(length=16), nullable=False, server_default="active"),
     )
     op.add_column("prompt_registry", sa.Column("created_by", sa.UUID(), nullable=True))
-    op.add_column("prompt_registry", sa.Column("submitted_at", sa.DateTime(timezone=True), nullable=True))
+    op.add_column(
+        "prompt_registry",
+        sa.Column("submitted_at", sa.DateTime(timezone=True), nullable=True),
+    )
     op.add_column("prompt_registry", sa.Column("reviewed_by", sa.UUID(), nullable=True))
-    op.add_column("prompt_registry", sa.Column("reviewed_at", sa.DateTime(timezone=True), nullable=True))
+    op.add_column(
+        "prompt_registry",
+        sa.Column("reviewed_at", sa.DateTime(timezone=True), nullable=True),
+    )
     op.add_column("prompt_registry", sa.Column("decision_reason", sa.Text(), nullable=True))
     op.create_index("ix_prompt_registry_state", "prompt_registry", ["state"])
 
