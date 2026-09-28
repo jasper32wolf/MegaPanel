@@ -90,6 +90,9 @@ class CompetitorScan(Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), index=True
     )
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     seed_url: Mapped[str] = mapped_column(String(1024), nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="pending")
     urls: Mapped[list] = mapped_column(JSONB, default=list)
@@ -112,7 +115,18 @@ class KnowledgeDoc(Base):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     kind: Mapped[str] = mapped_column(String(64), default="skeleton")
     content: Mapped[dict] = mapped_column(JSONB, default=dict)
-    source_scan_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    source_scan_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("competitor_scans.id", ondelete="RESTRICT"), nullable=True
+    )
+    state: Mapped[str] = mapped_column(String(16), default="draft", index=True)
+    approved_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

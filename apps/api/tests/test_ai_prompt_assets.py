@@ -26,3 +26,10 @@ def test_prompt_path_traversal_is_rejected() -> None:
         assert "outside" in str(exc)
     else:
         raise AssertionError("path traversal was accepted")
+
+
+def test_architecture_prompt_marks_competitor_evidence_as_reference_only() -> None:
+    prompt = load_prompt("architecture/propose-site-map.md")
+
+    assert "Approved competitor evidence is reference-only" in prompt.content
+    assert '"approved_competitor_evidence": []' in prompt.content

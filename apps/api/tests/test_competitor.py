@@ -76,3 +76,39 @@ def test_ssrf_blocks_metadata_ip():
     guard = SSRFGuard()
     with pytest.raises(SSRFBlockedError):
         guard.resolve_safe("169.254.169.254")
+
+
+def test_approved_evidence_is_bounded_reference_only_and_has_no_urls():
+    from app.services.competitor import approved_evidence_content, evidence_provider_rows
+
+    evidence = approved_evidence_content(
+        "11111111-1111-1111-1111-111111111111",
+        ["https://competitor.example.test/one", "https://competitor.example.test/two"],
+        {
+            "sample_titles": ["  " + "Заголовок " * 40, "Заголовок " * 40],
+            "sample_h1": ["Услуга"],
+            "sample_faq": ["Сколько стоит?"],
+            "sections": [{"type": "hero"}, {"type": "unsafe"}, {"type": "faq"}],
+        },
+    )
+
+    assert evidence["reference_class"] == "competitor_evidence"
+    assert evidence["scope"] == "reference_only"
+    assert evidence["coverage"] == "manual_urls_only"
+    assert evidence["source_url_count"] == 2
+    assert "https://competitor.example.test" not in str(evidence)
+    assert evidence["signals"]["structural_sections"] == ["hero", "faq"]
+    assert len(evidence["signals"]["sample_titles"]) == 1
+    assert len(evidence["signals"]["sample_titles"][0]) == 180
+
+    provider_row = evidence_provider_rows(
+        {
+            **evidence,
+            "signals": {
+                **evidence["signals"],
+                "structural_sections": ["contacts", "script", "pricing"],
+            },
+        }
+    )
+    assert provider_row["signals"]["structural_sections"] == ["contacts", "pricing"]
+    assert "https://competitor.example.test" not in str(provider_row)

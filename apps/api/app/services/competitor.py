@@ -99,6 +99,82 @@ def build_skeleton(pages: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _bounded_text(value: object, *, limit: int = 180) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = re.sub(r"\s+", " ", value).strip()
+    if not normalized:
+        return None
+    return normalized[:limit]
+
+
+def _bounded_items(value: object, *, maximum: int = 10) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value:
+        normalized = _bounded_text(item)
+        if normalized and normalized not in result:
+            result.append(normalized)
+        if len(result) == maximum:
+            break
+    return result
+
+
+_STRUCTURAL_SECTION_TYPES = {"hero", "services", "pricing", "faq", "contacts"}
+
+
+def approved_evidence_content(scan_id: str, urls: object, skeleton: object) -> dict[str, Any]:
+    source_urls = [item for item in urls if isinstance(item, str)] if isinstance(urls, list) else []
+    source = skeleton if isinstance(skeleton, dict) else {}
+    sections = source.get("sections", [])
+    structural_sections = []
+    if isinstance(sections, list):
+        for item in sections:
+            label = item.get("type") if isinstance(item, dict) else None
+            if isinstance(label, str) and label in _STRUCTURAL_SECTION_TYPES:
+                structural_sections.append(label)
+    return {
+        "reference_class": "competitor_evidence",
+        "scope": "reference_only",
+        "source_scan_id": scan_id,
+        "coverage": "manual_urls_only",
+        "source_url_count": len(source_urls),
+        "signals": {
+            "sample_titles": _bounded_items(source.get("sample_titles")),
+            "sample_h1": _bounded_items(source.get("sample_h1")),
+            "sample_faq": _bounded_items(source.get("sample_faq")),
+            "structural_sections": list(dict.fromkeys(structural_sections))[:8],
+        },
+    }
+
+
+def evidence_provider_rows(content: object) -> dict[str, Any]:
+    source = content if isinstance(content, dict) else {}
+    signals = source.get("signals") if isinstance(source.get("signals"), dict) else {}
+    structural_sections = signals.get("structural_sections")
+    source_url_count = source.get("source_url_count")
+    return {
+        "reference_class": "competitor_evidence",
+        "scope": "reference_only",
+        "source_scan_id": _bounded_text(source.get("source_scan_id"), limit=36) or "",
+        "coverage": "manual_urls_only",
+        "source_url_count": source_url_count if isinstance(source_url_count, int) else 0,
+        "signals": {
+            "sample_titles": _bounded_items(signals.get("sample_titles")),
+            "sample_h1": _bounded_items(signals.get("sample_h1")),
+            "sample_faq": _bounded_items(signals.get("sample_faq")),
+            "structural_sections": [
+                item
+                for item in structural_sections
+                if isinstance(item, str) and item in _STRUCTURAL_SECTION_TYPES
+            ][:8]
+            if isinstance(structural_sections, list)
+            else [],
+        },
+    }
+
+
 def _validate_manual_url(value: str) -> str:
     parsed = urlparse(value)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:

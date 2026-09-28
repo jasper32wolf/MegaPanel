@@ -54,6 +54,7 @@ class ScanCreate(BaseModel):
 class ScanOut(BaseModel):
     id: UUID
     tenant_id: UUID
+    project_id: UUID | None
     seed_url: str
     status: str
     urls: list
@@ -67,9 +68,15 @@ class ScanOut(BaseModel):
 class KnowledgeOut(BaseModel):
     id: UUID
     tenant_id: UUID
+    project_id: UUID | None
     title: str
     kind: str
     content: dict
+    source_scan_id: UUID | None
+    state: str
+    approved_by: UUID | None
+    approved_at: datetime | None
+    created_at: datetime
 
     model_config = {"from_attributes": True}
 

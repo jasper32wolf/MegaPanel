@@ -227,13 +227,17 @@ def test_unready_generation_apis_are_not_exposed():
         assert client.post("/api/v1/ai/prompts/seed", json={}).status_code == 404
 
 
-def test_manual_competitor_research_routes_are_private_operator_apis():
+def test_project_competitor_evidence_routes_are_private_operator_apis():
     paths = app.openapi()["paths"]
+    scans_path = "/api/v1/competitors/projects/{project_id}/scans"
+    evidence_path = "/api/v1/competitors/projects/{project_id}/scans/{scan_id}/approve-evidence"
 
-    assert "post" in paths["/api/v1/competitors/scan"]
-    assert "get" in paths["/api/v1/competitors/scans"]
-    assert "security" in paths["/api/v1/competitors/scan"]["post"]
-    assert "security" in paths["/api/v1/competitors/scans"]["get"]
+    assert "/api/v1/competitors/scan" not in paths
+    assert "post" in paths[scans_path]
+    assert "get" in paths[scans_path]
+    assert "post" in paths[evidence_path]
+    assert "security" in paths[scans_path]["post"]
+    assert "security" in paths[evidence_path]["post"]
 
 
 def test_unready_custom_block_apis_are_not_exposed():

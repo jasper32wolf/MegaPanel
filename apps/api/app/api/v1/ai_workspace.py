@@ -11,7 +11,7 @@ from app.api.deps import AuthContext, require_roles
 from app.api.v1.ai_providers import _adapter
 from app.api.v1.projects import _confirmed_facts, _project_or_404, _selection_snapshots
 from app.db.session import get_db
-from app.models import AIProviderConnection, AIRun, PagePlan, Project
+from app.models import AIProviderConnection, AIRun, KnowledgeDoc, PagePlan, Project
 from app.providers import ProviderError, StructuredRequest, Usage
 from app.schemas.ai import (
     AIRunOut,
@@ -25,6 +25,7 @@ from app.schemas.workflow import normalize_page_plan_slug
 from app.services.ai_data_policy import public_fact_rows, safe_provider_context
 from app.services.ai_secrets import decrypt_provider_key
 from app.services.audit import append_audit
+from app.services.competitor import evidence_provider_rows
 from app.services.managed_prompts import active_prompt
 from app.services.prompt_catalog import list_prompts
 from fastapi import APIRouter, Depends, HTTPException
@@ -321,6 +322,22 @@ async def _prepare_architecture_context(
         .scalars()
         .all()
     )
+    approved_evidence = list(
+        (
+            await db.execute(
+                select(KnowledgeDoc)
+                .where(
+                    KnowledgeDoc.project_id == project.id,
+                    KnowledgeDoc.tenant_id == project.tenant_id,
+                    KnowledgeDoc.kind == "competitor_evidence",
+                    KnowledgeDoc.state == "approved",
+                )
+                .order_by(KnowledgeDoc.approved_at.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
     kits = list_kits()
     catalogs = {item["key"]: set(item["blocks"]) for item in kits}
     facts = facts_revision.facts or {}
@@ -329,6 +346,9 @@ async def _prepare_architecture_context(
         "confirmed_facts": public_fact_rows(facts),
         "selected_keywords": keyword_snapshot["items"],
         "validated_geo": geo_snapshot["items"],
+        "approved_competitor_evidence": [
+            evidence_provider_rows(item.content) for item in approved_evidence
+        ],
         "existing_page_plans": [
             {
                 "id": str(plan.id),
