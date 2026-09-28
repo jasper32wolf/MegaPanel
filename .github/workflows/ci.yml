@@ -358,7 +358,7 @@ jobs:
             --header 'Content-Type: application/json' \
             --data '{"email":"compose-e2e@example.com","password":"production-compose-password"}' \
             https://localhost/api/v1/auth/login >/tmp/site-panel-compose-login.json
-          python3 -c 'import json; assert json.load(open("/tmp/site-panel-compose-login.json"))["email"] == "compose-e2e@example.com"'
+          python3 -c 'import json; result = json.load(open("/tmp/site-panel-compose-login.json")); assert result["ok"] is True and result["mfa_required"] is False'
           curl --insecure --fail --silent --show-error \
             --cookie /tmp/site-panel-compose.cookies \
             https://localhost/api/v1/security/me >/tmp/site-panel-compose-me.json

@@ -46,7 +46,9 @@
 - **Локальная проверка:** production Compose contract tests — 18 passed; Compose YAML parse passed. Docker runtime локально недоступен.
 - **Следующая подтверждённая ошибка:** `bootstrap_operator.py` остановился с `An owner scope already exists. Use its slug when bootstrapping the operator.` Compose smoke заранее создаёт tenant `compose-smoke` для site/lead fixture, а bootstrap по умолчанию ищет `operator`.
 - **Исправление bootstrap smoke:** команда bootstrap теперь передаёт `--tenant-slug compose-smoke`; production bootstrap defaults не меняются.
-- **Hosted verification:** требуется новый run на commit с argv и bootstrap-scope fixes.
+- **Следующая подтверждённая ошибка:** Compose smoke проверял `login_response["email"]`, хотя `/auth/login` по контракту возвращает только `{"ok": true, "mfa_required": false}`. Поле `email` корректно проверяется следующим `/security/me` запросом.
+- **Исправление login smoke:** assertion заменён на `ok is True` и `mfa_required is False`; проверка `/security/me` не менялась.
+- **Hosted verification:** требуется новый run на commit с argv, bootstrap-scope и login-contract fixes.
 
 ### 2026-09-28 — `panel-e2e` / candidate workflow
 

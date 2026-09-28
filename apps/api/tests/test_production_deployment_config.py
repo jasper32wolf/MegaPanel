@@ -227,6 +227,7 @@ def test_ci_runs_authenticated_production_compose_smoke_through_caddy():
     assert "assert await enqueue_delivery(delivery_id)" in command
     assert 'delivery.status == "dead_letter"' in command
     assert "https://localhost/api/v1/auth/login" in command
+    assert 'result["ok"] is True and result["mfa_required"] is False' in command
     assert "https://localhost/api/v1/security/me" in command
     assert "chromium.launch" in command
     assert 'baseURL: "https://localhost"' in command
