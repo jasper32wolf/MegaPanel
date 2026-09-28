@@ -36,9 +36,23 @@
 - **Commit:** не указан
 - **Статус:** `investigating`
 - **Первый полезный error:** пока не получен.
-- **Полученный фрагмент:** job успешно скачал базовые images, собрал panel image и продолжал `pip install` для API/worker images. Лог обрывается до `docker compose up` результата, service failure или readiness timeout.
+- **Полученный фрагмент:** PostgreSQL и Redis успешно инициализированы; затем GitHub cleanup остановил все Compose services и удалил volumes. В выводе нет лога `migrate`, `api`, `worker`, `caddy`, строки `API health smoke timed out` или исходной команды, завершившейся с ненулевым status. Поэтому PostgreSQL locale warning и Redis host warning не считаются причиной job failure.
 - **Локальное воспроизведение:** не выполнено — Docker CLI в текущем окружении недоступен.
-- **Следующий шаг:** добавить сюда хвост job с первой строкой `ERROR`, `service "…" failed`, `API health smoke timed out` или выводом `docker compose logs`, который workflow печатает при отказе.
+- **Следующий шаг:** добавить сюда 100–200 строк **до** первого `Container ... Stopping`, включая строку команды/timeout и полный `docker compose logs` для `migrate`, `api`, `worker`, `caddy`, `caddy-state-init`.
+
+### 2026-09-28 — `panel-e2e` / candidate workflow
+
+- **Run:** не указан
+- **Commit с исправлением:** ожидает commit текущего рабочего дерева
+- **Статус:** `fixed-locally`
+- **Ошибка:**
+  ```text
+  strict mode violation: getByText('E2E город …') resolved to 2 elements
+  ```
+- **Причина:** после создания города одинаковый текст присутствует в option выбора AI-географии и в strong таблицы иерархии. E2E ожидал неуточнённый text locator.
+- **Изменение:** assertion заменён на `getByRole("strong", { name: city, exact: true })`, то есть проверяет именно созданную запись таблицы.
+- **Локальная проверка:** `npm --prefix apps/panel run build` и `npx playwright test --list` проходят. Полный browser scenario требует controlled API/PostgreSQL/Redis stack и здесь не запускался.
+- **Hosted verification:** не выполнена; нужен новый GitHub run на commit с исправлением.
 
 ## Исправлено локально, ожидает hosted verification
 

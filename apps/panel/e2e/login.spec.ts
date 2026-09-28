@@ -122,7 +122,7 @@ test("оператор создаёт и готовит candidate без пуб�
   await page.getByLabel("Название").fill(city);
   await expect(page.getByRole("button", { name: "Добавить", exact: true })).toBeEnabled();
   await page.getByRole("button", { name: "Добавить", exact: true }).click();
-  await expect(page.getByText(city)).toBeVisible();
+  await expect(page.getByRole("strong", { name: city, exact: true })).toBeVisible();
 
   await page.getByRole("link", { name: "Проекты" }).click();
   await expect(
