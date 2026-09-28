@@ -18,6 +18,12 @@ def test_geo_update_route_is_registered():
     assert "patch" in app.openapi()["paths"]["/api/v1/geo/{place_id}"]
 
 
+def test_city_is_a_root_of_the_operator_hierarchy():
+    assert (
+        asyncio.run(geo.validate_parent(ParentDatabase(None), kind="city", parent_id=None)) is None
+    )
+
+
 def test_geo_ai_routes_are_registered():
     paths = app.openapi()["paths"]
 

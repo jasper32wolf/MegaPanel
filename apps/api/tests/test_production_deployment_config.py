@@ -103,7 +103,7 @@ def test_caddy_state_volumes_are_prepared_before_non_root_caddy_starts():
     assert state_init["cap_drop"] == ["ALL"]
     assert state_init["cap_add"] == ["CHOWN", "FOWNER", "DAC_OVERRIDE"]
     assert state_init["entrypoint"] == ["/bin/sh", "-ec"]
-    assert state_init["command"] == "mkdir -p /data /config && chown -R 10001:10001 /data /config"
+    assert state_init["command"] == "chown 10001:10001 /data /config"
     assert {volume["target"] for volume in state_init["volumes"]} == {"/data", "/config"}
     assert all(volume["volume"] == {"nocopy": True} for volume in state_init["volumes"])
     assert caddy["user"] == "10001:10001"

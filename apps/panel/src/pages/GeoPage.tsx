@@ -53,12 +53,11 @@ export function GeoPage() {
     if (kind === "district" || kind === "metro") return place.kind === "city";
     if (kind === "landmark") return ["city", "district", "metro"].includes(place.kind);
     if (kind === "street") return ["city", "district"].includes(place.kind);
-    if (kind === "city") return ["country", "region"].includes(place.kind);
     if (kind === "region") return place.kind === "country";
     return false;
   });
 
-  const parentRequired = ["region", "city", "district", "metro", "landmark", "street"].includes(kind);
+  const parentRequired = ["region", "district", "metro", "landmark", "street"].includes(kind);
   const [result, setResult] = useState<ImportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -251,7 +250,7 @@ export function GeoPage() {
               </select>
             </label>
             <label className="field">Название<input value={name} onChange={(event) => setName(event.target.value)} required /></label>
-            {parentRequired ? <label className="field">Родитель<select value={parentId} onChange={(event) => setParentId(event.target.value)} required><option value="">Выберите родительский объект</option>{parentCandidates.map((place) => <option key={place.id} value={place.id}>{place.name} · {place.kind}</option>)}</select><span className="muted">{kind === "district" || kind === "metro" ? "Район и метро создаются только внутри города." : kind === "landmark" ? "Ориентир можно вложить в город, район или метро." : "Выберите допустимый родительский объект."}</span></label> : <p className="muted">Страна — корневой элемент и не имеет родителя.</p>}
+            {parentRequired ? <label className="field">Родитель<select value={parentId} onChange={(event) => setParentId(event.target.value)} required><option value="">Выберите родительский объект</option>{parentCandidates.map((place) => <option key={place.id} value={place.id}>{place.name} · {place.kind}</option>)}</select><span className="muted">{kind === "district" || kind === "metro" ? "Район и метро создаются только внутри города." : kind === "landmark" ? "Ориентир можно вложить в город, район или метро." : "Выберите допустимый родительский объект."}</span></label> : <p className="muted">{kind === "city" ? "Город — корневой элемент и может содержать районы или метро." : "Страна — корневой элемент и не имеет родителя."}</p>}
             <div className="row"><button className="btn" type="submit" disabled={busy || (parentRequired && !parentId)}>{busy ? "Сохранение…" : editing ? "Сохранить" : "Добавить"}</button>{editing && <button className="btn btn-ghost" type="button" disabled={busy} onClick={cancelEditing}>Отмена</button>}</div>
           </form>
         </Surface>

@@ -9,6 +9,8 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from app.api.v1.projects import _serialize_draft, _serialize_plan
 from app.core.config import get_settings
 from app.db.rls import set_tenant_rls
@@ -219,6 +221,10 @@ def test_workflow_update_timestamps_can_be_serialized_after_commit() -> None:
 )
 def test_legacy_webhook_secret_upgrade_on_existing_database() -> None:
     api_dir = Path(__file__).resolve().parents[1]
+    head_revision = ScriptDirectory.from_config(
+        Config(str(api_dir / "alembic.ini"))
+    ).get_current_head()
+    assert head_revision is not None
 
     async def run() -> None:
         source_url = make_url(get_settings().database_url)
@@ -324,14 +330,14 @@ def test_legacy_webhook_secret_upgrade_on_existing_database() -> None:
                     revision = await connection.scalar(
                         text("SELECT version_num FROM alembic_version")
                     )
-                    assert revision == "0021_encrypt_legacy_webhook_secrets"
+                    assert revision == head_revision
                     version_column_length = await connection.scalar(
                         text(
                             "SELECT character_maximum_length FROM information_schema.columns "
                             "WHERE table_name = 'alembic_version' AND column_name = 'version_num'"
                         )
                     )
-                    assert version_column_length >= len("0021_encrypt_legacy_webhook_secrets")
+                    assert version_column_length >= len(head_revision)
                     rows = await connection.execute(text("SELECT id, manifest FROM sites"))
                     manifests = dict(rows.all())
                 safe_contacts = manifests[safe_id]["contacts"]

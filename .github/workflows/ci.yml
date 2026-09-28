@@ -208,7 +208,10 @@ jobs:
           CORS_ORIGINS=https://localhost
           CADDY_EMAIL=ci-operator@example.test
           EOF
-          docker compose -f infra/docker/docker-compose.production.yml --env-file .env up --build --detach
+          if ! docker compose -f infra/docker/docker-compose.production.yml --env-file .env up --build --detach; then
+            docker compose -f infra/docker/docker-compose.production.yml --env-file .env logs
+            exit 1
+          fi
           for attempt in $(seq 1 90); do
             if curl --insecure --fail --silent https://localhost/ >/tmp/site-panel-compose-index.html \
               && curl --insecure --fail --silent https://localhost/api/v1/health/ready >/dev/null; then

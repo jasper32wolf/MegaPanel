@@ -23,7 +23,7 @@ async def get_or_compute_forms(session: AsyncSession, word: str) -> dict[str, st
 _PARENT_KINDS = {
     "country": set(),
     "region": {"country"},
-    "city": {"country", "region"},
+    "city": set(),
     "district": {"city"},
     "metro": {"city"},
     "landmark": {"city", "district", "metro"},
