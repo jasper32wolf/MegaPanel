@@ -9,6 +9,7 @@ type Kit = {
   description: string;
   niches: string[];
   blocks: string[];
+  block_slots: Record<string, Record<string, { type: "string"; max_length: number }>>;
 };
 
 type KitsResponse = {
@@ -103,6 +104,7 @@ body{margin:0;font-family:system-ui,sans-serif;background:var(--sp-bg,#fff);colo
                 </span>
               ))}
             </div>
+            {Object.keys(kit.block_slots).length > 0 && <div className="stack"><p className="muted" style={{ margin: 0 }}>AI writable slots: только plain-text значения в curated text nodes. Они создают proposal в проекте и не меняют HTML/CSS.</p><div className="block-chips">{Object.entries(kit.block_slots).flatMap(([block, slots]) => Object.entries(slots).map(([slot, spec]) => <span className="pill" key={`${block}:${slot}`}>{block}.{slot} · ≤ {spec.max_length}</span>))}</div></div>}
             <div className="row">
               <button className="btn btn-ghost" type="button" onClick={() => showPreview(kit.key)}>
                 Превью

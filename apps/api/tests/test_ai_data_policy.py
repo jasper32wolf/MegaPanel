@@ -60,6 +60,11 @@ def test_external_ai_context_rejects_sensitive_nested_keys() -> None:
         safe_provider_context({"validated_geo": [{"forms": {"api_key": "private"}}]})
 
 
+def test_external_ai_context_rejects_private_lead_routing() -> None:
+    with pytest.raises(ValueError, match="sensitive field names"):
+        safe_provider_context({"private_lead_email": "leads@example.test"})
+
+
 def test_draft_provider_request_omits_full_internal_fact_snapshot(monkeypatch) -> None:
     project_id, plan_id, fact_id, tenant_id, connection_id = (uuid4() for _ in range(5))
     project = SimpleNamespace(
@@ -129,6 +134,8 @@ def test_draft_provider_request_omits_full_internal_fact_snapshot(monkeypatch) -
             self.calls += 1
             if self.calls == 1:
                 return SimpleNamespace(scalar_one_or_none=lambda: facts)
+            if self.calls == 2:
+                return SimpleNamespace(scalar_one_or_none=lambda: None)
             return SimpleNamespace(scalar_one=lambda: 0.0)
 
     monkeypatch.setattr(ai_content, "_project_or_404", project_lookup)

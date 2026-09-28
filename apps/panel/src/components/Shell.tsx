@@ -10,6 +10,7 @@ const groups = [
       { to: "/projects", label: "Проекты" },
       { to: "/sites", label: "Сайты" },
       { to: "/keywords", label: "Семантика" },
+      { to: "/competitors", label: "Конкуренты" },
       { to: "/geo", label: "География" },
       { to: "/projects", label: "Новый проект" },
       { to: "/leads", label: "Лиды" },
@@ -20,6 +21,7 @@ const groups = [
     links: [
       { to: "/ai", label: "AI workspace" },
       { to: "/ai/providers", label: "Провайдеры" },
+      { to: "/ai/prompts", label: "Системные prompts" },
     ],
   },
   {
@@ -37,6 +39,7 @@ const groups = [
       { to: "/ops", label: "Статус" },
       { to: "/system", label: "Обновления" },
       { to: "/settings", label: "Настройки" },
+      { to: "/help", label: "Справка" },
     ],
   },
 ] as const;
@@ -47,7 +50,7 @@ export function Shell({ children }: { children: ReactNode }) {
     <div className="shell">
       <aside className="nav">
         <div className="nav-brand">
-          <div className="nav-mark" aria-hidden />
+          <img className="nav-mark" src="/site-panel-mark.svg" width="40" height="40" alt="" />
           <div>
             <h1>Site Panel</h1>
             <small>Programmatic SEO</small>

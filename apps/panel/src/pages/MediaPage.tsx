@@ -12,15 +12,22 @@ type MediaAsset = {
   phash: string | null;
   normalized: boolean;
   tags: string[];
+  provenance: { rights_basis?: "own" | "licensed" | "cc"; rights_confirmed?: boolean; source_reference?: string | null; source_url?: string | null; license_name?: string | null; license_expires_at?: string | null };
+  hashes: { original_sha256?: string; stored_sha256?: string };
 };
 
 export function MediaPage() {
   const { token } = useAuth();
   const [assets, setAssets] = useState<MediaAsset[]>([]);
   const [file, setFile] = useState<File | null>(null);
-  const [license, setLicense] = useState("own");
-  const [source, setSource] = useState("");
+  const [rightsBasis, setRightsBasis] = useState("own");
+  const [sourceUrl, setSourceUrl] = useState("");
+  const [sourceReference, setSourceReference] = useState("");
+  const [licenseName, setLicenseName] = useState("");
+  const [licenseUrl, setLicenseUrl] = useState("");
+  const [licenseExpiresAt, setLicenseExpiresAt] = useState("");
   const [author, setAuthor] = useState("");
+  const [rightsConfirmed, setRightsConfirmed] = useState(false);
   const [normalize, setNormalize] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -41,14 +48,24 @@ export function MediaPage() {
     try {
       const data = new FormData();
       data.set("file", file);
-      data.set("license", license);
-      data.set("source", source);
+      data.set("rights_basis", rightsBasis);
+      data.set("rights_confirmed", String(rightsConfirmed));
+      data.set("source_url", sourceUrl);
+      data.set("source_reference", sourceReference);
+      data.set("license_name", licenseName);
+      data.set("license_url", licenseUrl);
+      data.set("license_expires_at", licenseExpiresAt);
       data.set("author", author);
       data.set("normalize", String(normalize));
       await api<MediaAsset>("/api/v1/media", { method: "POST", body: data }, token);
       setFile(null);
-      setSource("");
+      setSourceUrl("");
+      setSourceReference("");
+      setLicenseName("");
+      setLicenseUrl("");
+      setLicenseExpiresAt("");
       setAuthor("");
+      setRightsConfirmed(false);
       setNormalize(false);
       await load();
     } catch (cause) {
@@ -65,16 +82,19 @@ export function MediaPage() {
       <Surface title="Загрузить изображение">
         <form onSubmit={upload} className="stack">
           <label className="field">Файл<input type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={(event) => setFile(event.target.files?.[0] || null)} required /></label>
-          <label className="field">Лицензия<select value={license} onChange={(event) => { setLicense(event.target.value); if (event.target.value !== "own") setNormalize(false); }}><option value="own">Собственный / лицензированный файл</option><option value="licensed">Внешняя лицензия</option><option value="cc">Creative Commons</option></select></label>
-          <label className="field">Источник<input value={source} onChange={(event) => setSource(event.target.value)} placeholder="URL или внутренний реестр лицензии" /></label>
+          <label className="field">Основание прав<select value={rightsBasis} onChange={(event) => { setRightsBasis(event.target.value); if (event.target.value !== "own") setNormalize(false); }}><option value="own">Собственный оригинал</option><option value="licensed">Внешняя лицензия</option><option value="cc">Creative Commons</option></select><span className="muted">Это декларация оператора, а не автоматическая юридическая проверка.</span></label>
+          <label className="field">Источник URL (необязательно)<input type="url" value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="https://source.example/asset" /></label>
+          <label className="field">Внутренний reference прав<input value={sourceReference} onChange={(event) => setSourceReference(event.target.value)} placeholder="Договор, реестр или подтверждение оригинала" required={!sourceUrl} /></label>
+          {rightsBasis !== "own" && <><label className="field">Название лицензии<input value={licenseName} onChange={(event) => setLicenseName(event.target.value)} placeholder="Например: CC BY 4.0" required /></label><label className="field">URL лицензии (необязательно)<input type="url" value={licenseUrl} onChange={(event) => setLicenseUrl(event.target.value)} placeholder="https://license.example/terms" /></label><label className="field">Дата окончания лицензии (если есть)<input type="date" value={licenseExpiresAt} onChange={(event) => setLicenseExpiresAt(event.target.value)} /></label></>}
           <label className="field">Автор<input value={author} onChange={(event) => setAuthor(event.target.value)} /></label>
-          <label className="row"><input type="checkbox" checked={normalize} disabled={license !== "own"} onChange={(event) => setNormalize(event.target.checked)} /> Нормализовать собственный файл перед сохранением</label>
-          {license !== "own" && <p className="muted" style={{ margin: 0 }}>Нормализация доступна только для собственных файлов, чтобы не изменять чужой лицензированный материал.</p>}
-          <button className="btn" type="submit" disabled={busy || !file}>{busy ? "Загрузка…" : "Загрузить"}</button>
+          <label className="row"><input type="checkbox" checked={rightsConfirmed} onChange={(event) => setRightsConfirmed(event.target.checked)} required /> Подтверждаю, что имею право использовать этот файл.</label>
+          <label className="row"><input type="checkbox" checked={normalize} disabled={rightsBasis !== "own"} onChange={(event) => setNormalize(event.target.checked)} /> Нормализовать собственный файл перед сохранением</label>
+          {rightsBasis !== "own" && <p className="muted" style={{ margin: 0 }}>Нормализация доступна только для собственных файлов, чтобы не изменять чужой лицензированный материал.</p>}
+          <button className="btn" type="submit" disabled={busy || !file || !rightsConfirmed}>{busy ? "Загрузка…" : "Загрузить"}</button>
         </form>
       </Surface>
       <Surface title="Файлы">
-        {assets.length === 0 ? <EmptyState title="Медиатека пуста" hint="После загрузки изображения появятся здесь." /> : <div className="kit-grid">{assets.map((asset) => <article className="kit-card" key={asset.id}><img src={asset.path} alt="" style={{ width: "100%", maxHeight: 180, objectFit: "cover", borderRadius: 6 }} /><div><strong>{asset.author || "Без указанного автора"}</strong><p className="muted" style={{ marginBottom: 0 }}>{asset.source || "Источник не указан"}</p></div><div className="row"><StatusPill tone="accent">{asset.license || "—"}</StatusPill>{asset.normalized && <StatusPill tone="warn">нормализован</StatusPill>}</div></article>)}</div>}
+        {assets.length === 0 ? <EmptyState title="Медиатека пуста" hint="После загрузки изображения появятся здесь." /> : <div className="kit-grid">{assets.map((asset) => <article className="kit-card" key={asset.id}><img src={asset.path} alt="" style={{ width: "100%", maxHeight: 180, objectFit: "cover", borderRadius: 6 }} /><div><strong>{asset.author || "Без указанного автора"}</strong><p className="muted" style={{ marginBottom: 0 }}>{asset.source || "Источник не указан"}</p></div><div className="row"><StatusPill tone="accent">{asset.license || "—"}</StatusPill>{asset.normalized && <StatusPill tone="warn">нормализован</StatusPill>}</div><p className="muted" style={{ margin: 0 }}>pHash: {asset.phash || "—"}</p><p className="muted" style={{ margin: 0 }}>SHA-256: {asset.hashes.stored_sha256?.slice(0, 16) || "—"}</p>{asset.provenance.license_expires_at && <p className="muted" style={{ margin: 0 }}>Лицензия до: {asset.provenance.license_expires_at}</p>}</article>)}</div>}
       </Surface>
     </div>
   );

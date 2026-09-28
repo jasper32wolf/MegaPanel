@@ -78,12 +78,18 @@ def run_page_qa(*, page_manifest: dict, input_snapshot: dict, existing_texts: li
                     ),
                 }
             )
+    block_slot_text = " ".join(
+        str(value or "")
+        for block_values in page.block_slot_values.values()
+        for value in block_values.values()
+    )
     rendered_text = " ".join(
         [
             page.title_template,
             page.h1_template,
             page.meta_description_template,
             page.unique_core or "",
+            block_slot_text,
         ]
     )
     if any(

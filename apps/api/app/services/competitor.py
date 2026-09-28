@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import re
-import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 
 from site_panel_security import SSRFBlockedError, SSRFGuard
 
@@ -20,9 +19,9 @@ class _MetaExtractor(HTMLParser):
         self.faqs: list[dict[str, str]] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        ad = {k: v or "" for k, v in attrs}
-        if tag == "meta" and ad.get("name", "").lower() == "description":
-            self.meta_description = ad.get("content", "")
+        attributes = {key: value or "" for key, value in attrs}
+        if tag == "meta" and attributes.get("name", "").lower() == "description":
+            self.meta_description = attributes.get("content", "")
         if tag in self.headings:
             self._capture = tag
             self._buf = []
@@ -39,12 +38,6 @@ class _MetaExtractor(HTMLParser):
             self._buf.append(data)
         if self._capture is None and "title" == getattr(self, "_in_title", None):
             self.title += data
-
-    def handle_starttag_title(self, tag: str) -> None:
-        pass
-
-    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        self.handle_starttag(tag, attrs)
 
 
 class _TitleAwareExtractor(_MetaExtractor):
@@ -78,83 +71,68 @@ def extract_html(html: str) -> dict[str, Any]:
         "headings": parser.headings,
         "h1": parser.headings.get("h1", []),
         "faq_candidates": [
-            h for h in parser.headings.get("h2", []) + parser.headings.get("h3", []) if "?" in h
+            heading
+            for heading in parser.headings.get("h2", []) + parser.headings.get("h3", [])
+            if "?" in heading
         ],
     }
 
 
-def parse_sitemap_xml(xml_text: str, base_url: str, limit: int = 200) -> list[str]:
-    urls: list[str] = []
-    try:
-        root = ET.fromstring(xml_text)
-    except ET.ParseError:
-        return urls
-    # Handle namespaces
-    for loc in root.iter():
-        if loc.tag.endswith("loc") and loc.text:
-            urls.append(urljoin(base_url, loc.text.strip()))
-            if len(urls) >= limit:
-                break
-    return urls
-
-
 def build_skeleton(pages: list[dict[str, Any]]) -> dict[str, Any]:
-    """Master Skeleton Builder — merge competitor structures into silo tree."""
-    titles = [p.get("title") for p in pages if p.get("title")]
-    h1s = [h for p in pages for h in p.get("h1", [])]
-    faqs = [q for p in pages for q in p.get("faq_candidates", [])]
-    sections = []
-    for label in ("hero", "services", "pricing", "faq", "contacts"):
-        sections.append({"type": label, "required": True})
+    titles = [page.get("title") for page in pages if page.get("title")]
+    h1s = [heading for page in pages for heading in page.get("h1", [])]
+    faqs = [question for page in pages for question in page.get("faq_candidates", [])]
     return {
         "silo": {
             "home": {"intent": "brand+geo", "blocks": ["hero", "services", "lead_form"]},
             "service": {"intent": "commercial", "blocks": ["hero", "pricing", "faq", "lead_form"]},
             "geo": {"intent": "local", "blocks": ["hero", "services", "contacts"]},
         },
-        "sections": sections,
+        "sections": [
+            {"type": label, "required": True}
+            for label in ("hero", "services", "pricing", "faq", "contacts")
+        ],
         "sample_titles": titles[:20],
         "sample_h1": h1s[:20],
         "sample_faq": faqs[:20],
-        "coverage": "intent_full",
+        "coverage": "manual_urls_only",
     }
 
 
-async def scan_competitor(seed_url: str, *, max_pages: int = 5) -> dict[str, Any]:
+def _validate_manual_url(value: str) -> str:
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise SSRFBlockedError("Invalid public URL")
+    return value
+
+
+async def scan_competitors(urls: list[str]) -> dict[str, Any]:
+    """Fetch only operator-supplied public URLs; never discover or crawl pages."""
     guard = SSRFGuard(timeout=12.0, max_response_bytes=2_000_000)
-    parsed = urlparse(seed_url)
-    if parsed.scheme not in {"http", "https"}:
-        raise SSRFBlockedError("Invalid scheme")
+    manual_urls = [_validate_manual_url(url) for url in urls]
+    if len(manual_urls) != len(set(manual_urls)):
+        raise ValueError("Competitor URLs must be unique")
+    if not 1 <= len(manual_urls) <= 10:
+        raise ValueError("Provide from 1 to 10 competitor URLs")
 
-    urls: list[str] = [seed_url]
-    sitemap_url = urljoin(seed_url, "/sitemap.xml")
-    try:
-        sm = await guard.fetch(sitemap_url)
-        if sm.status_code == 200:
-            urls = parse_sitemap_xml(sm.text, seed_url) or urls
-    except SSRFBlockedError:
-        raise
-    except Exception:  # noqa: BLE001
-        pass
-
-    urls = urls[:max_pages]
     extracted_pages: list[dict[str, Any]] = []
-    for u in urls:
+    errors: list[dict[str, str]] = []
+    for url in manual_urls:
         try:
-            resp = await guard.fetch(u)
-            if resp.status_code >= 400:
+            response = await guard.fetch(url)
+            if response.status_code >= 400:
+                errors.append({"url": url, "error": f"HTTP {response.status_code}"})
                 continue
-            data = extract_html(resp.text)
-            data["url"] = u
+            data = extract_html(response.text)
+            data["url"] = url
             extracted_pages.append(data)
         except SSRFBlockedError:
             raise
         except Exception:  # noqa: BLE001
-            continue
+            errors.append({"url": url, "error": "Fetch failed"})
 
-    skeleton = build_skeleton(extracted_pages)
     return {
-        "urls": urls,
-        "extracted": {"pages": extracted_pages},
-        "skeleton": skeleton,
+        "urls": manual_urls,
+        "extracted": {"pages": extracted_pages, "errors": errors},
+        "skeleton": build_skeleton(extracted_pages),
     }

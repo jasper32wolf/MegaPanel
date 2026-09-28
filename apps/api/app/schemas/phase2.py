@@ -42,6 +42,11 @@ class GeoCreate(BaseModel):
     attrs: dict = Field(default_factory=dict)
 
 
+class GeoUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    parent_id: UUID | None = None
+
+
 class GeoOut(BaseModel):
     id: UUID
     kind: str

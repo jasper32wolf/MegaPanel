@@ -1,5 +1,12 @@
+from __future__ import annotations
+
+import asyncio
+
 import pytest
-from app.services.competitor import build_skeleton, extract_html, parse_sitemap_xml
+from app.schemas.phase3 import ScanCreate
+from app.services import competitor
+from app.services.competitor import build_skeleton, extract_html, scan_competitors
+from pydantic import ValidationError
 from site_panel_security import SSRFBlockedError, SSRFGuard
 
 
@@ -18,15 +25,40 @@ def test_extract_html_basic():
     assert data["faq_candidates"]
 
 
-def test_parse_sitemap():
-    xml = """<?xml version="1.0"?>
-    <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-      <url><loc>https://example.com/a</loc></url>
-      <url><loc>https://example.com/b</loc></url>
-    </urlset>
-    """
-    urls = parse_sitemap_xml(xml, "https://example.com")
-    assert len(urls) == 2
+def test_scan_schema_requires_unique_manual_urls_and_acknowledgement():
+    with pytest.raises(ValidationError, match="unique"):
+        ScanCreate(
+            urls=["https://example.test/a", "https://example.test/a"],
+            terms_acknowledged=True,
+        )
+    assert ScanCreate(urls=["https://example.test/a"], terms_acknowledged=True).urls
+
+
+def test_manual_scan_fetches_only_operator_supplied_urls(monkeypatch: pytest.MonkeyPatch):
+    calls: list[str] = []
+
+    class Response:
+        status_code = 200
+        text = "<title>Конкурент</title><h1>Услуга</h1><h2>Цена?</h2>"
+
+    class Guard:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def fetch(self, url: str) -> Response:
+            calls.append(url)
+            return Response()
+
+    monkeypatch.setattr(competitor, "SSRFGuard", Guard)
+
+    result = asyncio.run(
+        scan_competitors(["https://one.example.test/page", "https://two.example.test/page"])
+    )
+
+    assert calls == ["https://one.example.test/page", "https://two.example.test/page"]
+    assert result["urls"] == calls
+    assert result["skeleton"]["coverage"] == "manual_urls_only"
+    assert all("sitemap" not in url for url in calls)
 
 
 def test_skeleton_merge():
@@ -34,10 +66,10 @@ def test_skeleton_merge():
         {"title": "A", "h1": ["H1"], "faq_candidates": ["Цена?"]},
         {"title": "B", "h1": ["H2"], "faq_candidates": []},
     ]
-    sk = build_skeleton(pages)
-    assert sk["coverage"] == "intent_full"
-    assert "silo" in sk
-    assert len(sk["sample_titles"]) == 2
+    skeleton = build_skeleton(pages)
+    assert skeleton["coverage"] == "manual_urls_only"
+    assert "silo" in skeleton
+    assert len(skeleton["sample_titles"]) == 2
 
 
 def test_ssrf_blocks_metadata_ip():

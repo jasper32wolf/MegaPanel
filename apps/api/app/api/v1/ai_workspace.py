@@ -25,7 +25,8 @@ from app.schemas.workflow import normalize_page_plan_slug
 from app.services.ai_data_policy import public_fact_rows, safe_provider_context
 from app.services.ai_secrets import decrypt_provider_key
 from app.services.audit import append_audit
-from app.services.prompt_catalog import list_prompts, load_prompt
+from app.services.managed_prompts import active_prompt
+from app.services.prompt_catalog import list_prompts
 from fastapi import APIRouter, Depends, HTTPException
 from site_panel_blocks import list_kits
 from sqlalchemy import select
@@ -348,7 +349,11 @@ async def _prepare_architecture_context(
         raise HTTPException(status_code=422, detail={"code": "unsafe_ai_context"}) from exc
     if len(json.dumps(snapshot, ensure_ascii=False)) > 64_000:
         raise HTTPException(status_code=413, detail="Project context exceeds the AI request limit")
-    prompt = load_prompt("architecture/propose-site-map.md")
+    prompt = await active_prompt(
+        db,
+        tenant_id=auth.tenant_id,
+        relative_path="architecture/propose-site-map.md",
+    )
     user_prompt = json.dumps(snapshot, ensure_ascii=False, sort_keys=True)
     input_tokens_bound = len(user_prompt.encode("utf-8")) + len(prompt.content.encode("utf-8"))
     estimated_cost = (
@@ -398,7 +403,7 @@ async def _prepare_architecture_context(
     }
 
 
-@router.get("/prompts")
+@router.get("/prompt-assets")
 async def list_prompt_assets(
     _auth: AuthContext = Depends(require_roles("superadmin")),
 ) -> list[dict[str, str]]:
@@ -657,7 +662,12 @@ async def decide_ai_run(
     ).scalar_one_or_none()
     if not run:
         raise HTTPException(status_code=404, detail="AI run not found")
-    if run.action not in {"architecture.site-map", "seo.create-brief", "content.block-slot-copy"}:
+    if run.action not in {
+        "architecture.site-map",
+        "seo.create-brief",
+        "content.block-slot-copy",
+        "geo.city-hierarchy",
+    }:
         raise HTTPException(
             status_code=409,
             detail="This AI action has no approval decision endpoint",
@@ -675,7 +685,7 @@ async def decide_ai_run(
     )
     await db.commit()
     await db.refresh(run)
-    return _run_out(run) if run.action == "seo.create-brief" else _proposal_out(run)
+    return _proposal_out(run) if run.action == "architecture.site-map" else _run_out(run)
 
 
 @router.post("/runs/{run_id}/page-plans", response_model=ArchitectureProposalOut)

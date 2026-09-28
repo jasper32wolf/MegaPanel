@@ -46,6 +46,7 @@ class PageManifest(BaseModel):
     publish_state: PublishState = PublishState.DRAFT
     index_state: IndexState = IndexState.NOINDEX
     unique_core: str | None = None
+    block_slot_values: dict[str, dict[str, str | None]] = Field(default_factory=dict)
     schema_org: dict[str, Any] = Field(default_factory=dict)
     seed: int = 0
 

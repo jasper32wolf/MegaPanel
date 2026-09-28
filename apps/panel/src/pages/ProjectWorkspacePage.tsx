@@ -4,7 +4,7 @@ import { api, useAuth } from "../lib/auth";
 import { ConfirmDialog, DataTable, EmptyState, PageHeader, StatusPill, Surface } from "../components/ui";
 
 type Project = { id: string; name: string; domain: string | null; niche: string | null; site_id: string | null; current_fact_revision_id: string | null; domain_check_meta: { dns_status?: string; ssl_status?: string; checked_at?: string } };
-type FactRevision = { id: string; version: number; state: string; facts: Record<string, unknown>; source_notes: string | null };
+type FactRevision = { id: string; version: number; state: string; facts: Record<string, unknown>; has_private_lead_email: boolean; source_notes: string | null };
 type Keyword = { id: string; phrase: string; meta: Record<string, string> };
 type ProjectKeyword = { keyword_id: string; phrase: string; cluster: string | null; intent: string | null; priority: number | null };
 type GeoPlace = { id: string; name: string; kind: string; is_validated?: boolean };
@@ -72,7 +72,15 @@ export function ProjectWorkspacePage() {
   const [organization, setOrganization] = useState("");
   const [service, setService] = useState("");
   const [phone, setPhone] = useState("");
+  const [address, setAddress] = useState("");
+  const [workHours, setWorkHours] = useState("");
+  const [privateLeadEmail, setPrivateLeadEmail] = useState("");
   const [legal, setLegal] = useState("");
+  const [inn, setInn] = useState("");
+  const [companyHistory, setCompanyHistory] = useState("");
+  const [mission, setMission] = useState("");
+  const [legalEntities, setLegalEntities] = useState("");
+  const [paymentTerms, setPaymentTerms] = useState("");
   const [sourceNotes, setSourceNotes] = useState("");
   const [selectedKeywordIds, setSelectedKeywordIds] = useState<string[]>([]);
   const [selectedGeoIds, setSelectedGeoIds] = useState<string[]>([]);
@@ -160,7 +168,45 @@ export function ProjectWorkspacePage() {
 
   async function saveFacts(event: FormEvent) {
     event.preventDefault();
-    await run("facts", () => api(`/api/v1/projects/${projectId}/facts`, { method: "POST", body: JSON.stringify({ facts: { organization, service, contacts: { phone }, legal: legal ? { operator: legal } : {}, allowed_claims: [] }, source_notes: sourceNotes || null }) }, token), "Черновик фактов сохранён. Подтвердите его перед планированием страниц.");
+    await run(
+      "facts",
+      () =>
+        api(
+          `/api/v1/projects/${projectId}/facts`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              facts: {
+                organization,
+                service,
+                contacts: { phone, address: address || undefined, work_hours: workHours || undefined },
+                legal: {
+                  org: legal || organization,
+                  inn: inn || undefined,
+                  address: address || undefined,
+                },
+                company_history: companyHistory || undefined,
+                mission: mission || undefined,
+                legal_entities: legalEntities || undefined,
+                payment_terms: paymentTerms || undefined,
+                allowed_claims: [],
+              },
+              private_lead_email: privateLeadEmail || undefined,
+              source_notes: sourceNotes || null,
+            }),
+          },
+          token,
+        ),
+      "Черновик фактов сохранён. Подтвердите его перед планированием страниц.",
+    );
+  }
+
+  async function createCommercialPagePlans() {
+    await run(
+      "commercial-pages",
+      () => api(`/api/v1/projects/${projectId}/commercial-page-plans`, { method: "POST" }, token),
+      "Созданы draft PagePlan для заполненных коммерческих facts. Проверьте и одобрите их по обычному workflow.",
+    );
   }
 
   function toggleKeyword(id: string) {
@@ -492,14 +538,23 @@ export function ProjectWorkspacePage() {
       {message && <p className="muted" aria-live="polite">{message}</p>}
       <Surface title="1. Факты бизнеса">
         <form className="stack" onSubmit={saveFacts}>
-          <label className="field">Организация<input value={organization} onChange={(event) => setOrganization(event.target.value)} placeholder="Название организации" required /></label>
-          <label className="field">Основная услуга<input value={service} onChange={(event) => setService(event.target.value)} placeholder="Например: ремонт стиральных машин" required /></label>
-          <label className="field">Телефон<input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="+7 (900) 000-00-00" required /></label>
-          <label className="field">Юридические данные<input value={legal} onChange={(event) => setLegal(event.target.value)} placeholder="Оператор и реквизиты после юридической проверки" /></label>
+          <p className="muted">Публичные поля используются в контенте и контактах сайта после подтверждения facts. Адрес доставки лидов хранится отдельно, не попадает в preview, SSG или AI-контекст.</p>
+          <label className="field">Организация<input value={organization} onChange={(event) => setOrganization(event.target.value)} placeholder="Название организации" required /><span className="muted">Появится в коммерческих и юридических страницах после ручной проверки.</span></label>
+          <label className="field">Основная услуга<input value={service} onChange={(event) => setService(event.target.value)} placeholder="Например: ремонт стиральных машин" required /><span className="muted">Основа семантики, структуры и коммерческих страниц.</span></label>
+          <label className="field">Публичный телефон<input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="+7 (900) 000-00-00" required /><span className="muted">Может отображаться на сайте и используется в форме заявки.</span></label>
+          <label className="field">Публичный адрес<input value={address} onChange={(event) => setAddress(event.target.value)} placeholder="Город, улица, дом" /><span className="muted">Отображается только в блоках, где адрес включён шаблоном.</span></label>
+          <label className="field">Часы работы<input value={workHours} onChange={(event) => setWorkHours(event.target.value)} placeholder="Пн–Вс, 09:00–20:00" /></label>
+          <label className="field">Email для заявок<input type="email" value={privateLeadEmail} onChange={(event) => setPrivateLeadEmail(event.target.value)} placeholder="leads@example.com" /><span className="muted">Приватный маршрут доставки. Не публикуется на сайте и не отправляется AI-провайдерам.</span></label>
+          <label className="field">Юридическое наименование<input value={legal} onChange={(event) => setLegal(event.target.value)} placeholder="ООО «Организация»" /></label>
+          <label className="field">ИНН<input value={inn} onChange={(event) => setInn(event.target.value)} placeholder="1234567890" inputMode="numeric" /></label>
+          <label className="field">История компании<textarea value={companyHistory} onChange={(event) => setCompanyHistory(event.target.value)} placeholder="Проверенные факты для страницы «История компании»" /></label>
+          <label className="field">Миссия<textarea value={mission} onChange={(event) => setMission(event.target.value)} placeholder="Проверенная формулировка миссии" /></label>
+          <label className="field">Для юридических лиц<textarea value={legalEntities} onChange={(event) => setLegalEntities(event.target.value)} placeholder="Условия и особенности работы с компаниями" /></label>
+          <label className="field">Оплата<textarea value={paymentTerms} onChange={(event) => setPaymentTerms(event.target.value)} placeholder="Проверенные способы и условия оплаты" /></label>
           <label className="field">Источник фактов<textarea value={sourceNotes} onChange={(event) => setSourceNotes(event.target.value)} placeholder="Откуда оператор подтвердил сведения" /></label>
           <button className="btn" type="submit" disabled={busy !== null}>{busy === "facts" ? "Сохранение…" : "Сохранить новую версию фактов"}</button>
         </form>
-        {facts.length === 0 ? <EmptyState title="Факты ещё не сохранены" hint="Без подтверждённых фактов план страницы не перейдёт на проверку." /> : <div className="row"><StatusPill tone={latestFact?.state === "confirmed" ? "ok" : "warn"}>версия {latestFact?.version}: {latestFact?.state}</StatusPill>{latestFact?.state === "draft" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => run(`confirm:${latestFact.id}`, () => api(`/api/v1/projects/${projectId}/facts/${latestFact.id}/confirm`, { method: "POST" }, token), "Факты подтверждены.")}>Подтвердить факты</button>}</div>}
+        {facts.length === 0 ? <EmptyState title="Факты ещё не сохранены" hint="Без подтверждённых фактов план страницы не перейдёт на проверку." /> : <div className="row"><StatusPill tone={latestFact?.state === "confirmed" ? "ok" : "warn"}>версия {latestFact?.version}: {latestFact?.state}</StatusPill>{latestFact?.state === "draft" ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => run(`confirm:${latestFact.id}`, () => api(`/api/v1/projects/${projectId}/facts/${latestFact.id}/confirm`, { method: "POST" }, token), "Факты подтверждены.")}>Подтвердить факты</button> : null}{latestFact?.state === "confirmed" ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void createCommercialPagePlans()}>{busy === "commercial-pages" ? "Создание…" : "Создать коммерческие PagePlan"}</button> : null}</div>}
       </Surface>
       <Surface title="2. Семантика проекта">
         <p className="muted">Выберите уже импортированные ключевые фразы. Это не создаёт страницы и не запускает генерацию.</p>
@@ -562,7 +617,7 @@ export function ProjectWorkspacePage() {
           <label className="field">Утверждённый план<select value={slotPlanId} onChange={(event) => { setSlotPlanId(event.target.value); setSlotBlockId(""); setSlotSchema(null); resetSlotQuote(); }}><option value="">Выберите PagePlan</option>{plans.filter((plan) => plan.state === "approved").map((plan) => <option key={plan.id} value={plan.id}>{plan.slug} — {plan.objective}</option>)}</select></label>
           <label className="field">Curated-блок<select value={slotBlockId} disabled={!slotPlanId} onChange={(event) => { const nextBlockId = event.target.value; setSlotBlockId(nextBlockId); resetSlotQuote(); void loadSlotSchema(slotPlanId, nextBlockId); }}><option value="">Выберите блок</option>{(plans.find((plan) => plan.id === slotPlanId)?.block_selection?.blocks || []).map((blockId: string) => <option key={blockId} value={blockId}>{blockId}</option>)}</select></label>
           {slotSchema && <div className="surface"><strong>Серверный контракт слотов</strong><ul>{Object.entries(slotSchema.slots).map(([name, schema]) => <li key={name}><code>{name}</code> · текст до {schema.max_length} символов</li>)}</ul></div>}
-          <button className="btn btn-ghost" type="button" disabled={busy !== null || !slotSchema || !aiProviderId || !aiModel.trim()} onClick={quoteBlockSlotCopy}>{busy === "slot-quote" ? "Расчёт…" : "Рассчитать текст блока"}</button>
+          <button className="btn btn-ghost" type="button" disabled={busy !== null || !slotSchema || Object.keys(slotSchema.slots).length === 0 || !aiProviderId || !aiModel.trim()} onClick={quoteBlockSlotCopy}>{busy === "slot-quote" ? "Расчёт…" : "Рассчитать текст блока"}</button>
           {slotQuote && <p className="muted">Оценка ${slotQuote.estimated_cost_usd.toFixed(6)} · лимит ${slotQuote.max_cost_usd.toFixed(6)} · {slotQuote.pricing_source} на {slotQuote.pricing_observed_at}</p>}
           <label className="field"><span><input type="checkbox" disabled={!slotQuote} checked={slotConsent} onChange={(event) => setSlotConsent(event.target.checked)} /> Подтверждаю оценку, внешнюю обработку контекста и настроенный spending limit у провайдера.</span></label>
           <button className="btn" type="button" disabled={busy !== null || !slotQuote || !slotConsent} onClick={generateBlockSlotCopy}>Создать proposal текста блока</button>

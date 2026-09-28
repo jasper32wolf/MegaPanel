@@ -10,7 +10,19 @@ from site_panel_blocks.schema import LIBRARY_VERSION, BlockSpec, KitSpec, ThemeP
 
 KITS_DIR = Path(__file__).resolve().parent / "kits"
 _SLOT = re.compile(r"\{([a-z][a-z0-9_]*)\}", re.IGNORECASE)
-_AI_TEXT_SLOTS = {"unique_core"}
+_RESERVED_SLOT_NAMES = {
+    "domain",
+    "locale",
+    "service",
+    "modifier",
+    "method",
+    "phone",
+    "price",
+    "lead_token",
+    "lead_api_url",
+    "site_id",
+}
+_RESERVED_SLOT_PREFIXES = ("city_",)
 
 
 def library_version() -> str:
@@ -28,6 +40,7 @@ def _read_block(kit_dir: Path, block_type: str, meta: dict) -> BlockSpec:
         html=html.strip(),
         css=css.strip(),
         props=meta.get("props") or {},
+        editable_slots=meta.get("editable_slots") or {},
         cro=meta.get("cro") or [],
     )
 
@@ -57,16 +70,32 @@ def load_kit(key: str) -> KitSpec:
     )
 
 
+def _slot_is_in_html_text_node(html: str, name: str) -> bool:
+    marker = f"{{{name}}}"
+    positions = [match.start() for match in re.finditer(re.escape(marker), html)]
+    return bool(positions) and all(
+        html.rfind("<", 0, position) < html.rfind(">", 0, position) for position in positions
+    )
+
+
 def block_slot_schema(key: str, block_type: str) -> dict[str, dict[str, Any]]:
-    """Return the server-owned plain-text slot contract for one curated block."""
+    """Return the explicit server-owned plain-text slot contract for one curated block."""
     block = next((item for item in load_kit(key).blocks if item.type == block_type), None)
     if block is None:
         raise FileNotFoundError(f"Unknown block {block_type!r} in kit {key!r}")
-    return {
-        name: {"type": "string", "max_length": 8000}
-        for name in _SLOT.findall(block.html)
-        if name in _AI_TEXT_SLOTS
-    }
+    if len(block.editable_slots) > 20:
+        raise ValueError("Curated block declares too many editable slots")
+
+    schema: dict[str, dict[str, Any]] = {}
+    for name, spec in block.editable_slots.items():
+        if not _SLOT.fullmatch(f"{{{name}}}"):
+            raise ValueError("Curated editable slot name is invalid")
+        if name in _RESERVED_SLOT_NAMES or name.startswith(_RESERVED_SLOT_PREFIXES):
+            raise ValueError("Curated editable slot overrides server context")
+        if not _slot_is_in_html_text_node(block.html, name):
+            raise ValueError("Curated editable slot must be a text-node placeholder")
+        schema[name] = {"type": spec.type, "max_length": spec.max_length}
+    return schema
 
 
 def list_kits() -> list[dict]:
@@ -85,6 +114,11 @@ def list_kits() -> list[dict]:
                 "description": kit.description,
                 "niches": kit.niches,
                 "blocks": [b.type for b in kit.blocks],
+                "block_slots": {
+                    block.type: block_slot_schema(kit.key, block.type)
+                    for block in kit.blocks
+                    if block.editable_slots
+                },
             }
         )
     return out

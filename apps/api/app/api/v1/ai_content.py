@@ -32,7 +32,7 @@ from app.services.ai_data_policy import public_fact_rows, safe_provider_context
 from app.services.ai_secrets import decrypt_provider_key
 from app.services.audit import append_audit
 from app.services.generation import create_page_draft
-from app.services.prompt_catalog import load_prompt
+from app.services.managed_prompts import active_prompt
 from fastapi import APIRouter, Depends, HTTPException
 from site_panel_blocks import block_slot_schema
 from sqlalchemy import select
@@ -184,7 +184,11 @@ async def _prepare_draft_context(
         raise HTTPException(status_code=422, detail={"code": "unsafe_ai_context"}) from exc
     if len(json.dumps(snapshot, ensure_ascii=False)) > 64_000:
         raise HTTPException(status_code=413, detail="Project context exceeds the AI request limit")
-    prompt = load_prompt("content/page-draft-copy.md")
+    prompt = await active_prompt(
+        db,
+        tenant_id=auth.tenant_id,
+        relative_path="content/page-draft-copy.md",
+    )
     user_prompt = json.dumps(snapshot, sort_keys=True, ensure_ascii=False)
     bounded_tokens = len(user_prompt.encode("utf-8")) + len(prompt.content.encode("utf-8"))
     estimated_cost = (
@@ -254,7 +258,11 @@ async def _prepare_seo_brief_context(
         "validated_geo": context["snapshot"]["validated_geo"],
         "site_policy": {"canonical_path": context["plan"].slug},
     }
-    prompt = load_prompt("seo/create-seo-brief.md")
+    prompt = await active_prompt(
+        db,
+        tenant_id=auth.tenant_id,
+        relative_path="seo/create-seo-brief.md",
+    )
     user_prompt = json.dumps(snapshot, sort_keys=True, ensure_ascii=False)
     pricing = context["pricing"]
     estimated_cost = (
@@ -921,7 +929,11 @@ async def _prepare_block_slot_context(
         "selected_keywords": context["snapshot"]["selected_keywords"],
         "validated_geo": context["snapshot"]["validated_geo"],
     }
-    prompt = load_prompt("content/block-slot-copy.md")
+    prompt = await active_prompt(
+        db,
+        tenant_id=auth.tenant_id,
+        relative_path="content/block-slot-copy.md",
+    )
     user_prompt = json.dumps(snapshot, sort_keys=True, ensure_ascii=False)
     pricing = context["pricing"]
     estimated_cost = (
@@ -1282,9 +1294,11 @@ async def create_draft_from_block_slot_proposal(
             status_code=409, detail="Block slot proposal is no longer valid"
         ) from exc
     manifest, input_snapshot, _ = create_page_draft(project=project, plan=plan, facts=facts)
-    if set(output["slots"]) != {"unique_core"}:
-        raise HTTPException(status_code=409, detail="Unsupported block slot contract")
-    manifest["unique_core"] = output["slots"]["unique_core"] or ""
+    block_slot_values = dict(manifest.get("block_slot_values") or {})
+    block_slot_values[block_id] = output["slots"]
+    manifest["block_slot_values"] = block_slot_values
+    if "unique_core" in output["slots"]:
+        manifest["unique_core"] = output["slots"]["unique_core"] or ""
     manifest["index_state"] = "noindex"
     latest = (
         await db.execute(
@@ -1311,6 +1325,11 @@ async def create_draft_from_block_slot_proposal(
         "generator_meta": generator_meta,
         "ai_provenance": {"fact_keys": output["fact_keys"], "block_slot_copy": generator_meta},
     }
+    block_slot_text = "\n".join(
+        str(value or "")
+        for selected_block in sorted((manifest.get("block_slot_values") or {}).values(), key=str)
+        for _, value in sorted(selected_block.items())
+    )
     content_hash = sha256_hex(
         "\n".join(
             [
@@ -1318,6 +1337,7 @@ async def create_draft_from_block_slot_proposal(
                 manifest["h1_template"],
                 manifest["meta_description_template"],
                 manifest.get("unique_core") or "",
+                block_slot_text,
             ]
         )
     )

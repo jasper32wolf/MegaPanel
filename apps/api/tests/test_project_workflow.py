@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 from app.api.v1 import projects
-from app.api.v1.projects import _project_site_or_409, _public_fact_values, _selection_snapshots
+from app.api.v1.projects import (
+    _project_site_or_409,
+    _public_fact_values,
+    _selection_snapshots,
+    _serialize_fact,
+)
 from app.main import app
 from app.schemas.workflow import (
     FactRevisionCreate,
@@ -20,6 +26,17 @@ from app.services.generation import create_page_draft
 from app.services.qa import run_page_qa
 from fastapi import HTTPException
 from pydantic import ValidationError
+
+
+def _private_lead_email_migration():
+    migration_path = (
+        Path(__file__).parents[1] / "alembic" / "versions" / "0022_encrypt_private_lead_email.py"
+    )
+    spec = importlib.util.spec_from_file_location("private_lead_email_migration", migration_path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class SelectionDatabase:
@@ -96,8 +113,78 @@ def test_legacy_fact_serialization_removes_protected_webhook_fields():
     assert facts["contacts"] == {"phone": "+79990000000"}
 
 
+def test_fact_revision_normalizes_the_public_business_profile():
+    revision = FactRevisionCreate(
+        facts={
+            "organization": "Тестовая организация",
+            "service": "Ремонт",
+            "contacts": {"phone": "+79990000000", "address": "Казань"},
+            "legal": {"operator": "ООО Тест"},
+            "company_history": "Проверенная история",
+        },
+        private_lead_email="leads@example.com",
+    )
+
+    assert revision.facts["legal"] == {"org": "ООО Тест"}
+    assert revision.facts["contacts"] == {"phone": "+79990000000", "address": "Казань"}
+    assert str(revision.private_lead_email) == "leads@example.com"
+
+
+@pytest.mark.parametrize("private_field", ["email", "private_lead_email"])
+def test_fact_revision_rejects_private_email_in_public_contacts(private_field: str):
+    with pytest.raises(ValidationError, match="private lead email"):
+        FactRevisionCreate(
+            facts={"service": "Ремонт", "contacts": {private_field: "leads@example.com"}}
+        )
+
+
+def test_fact_serialization_only_exposes_private_email_presence():
+    revision = SimpleNamespace(
+        id=uuid4(),
+        version=1,
+        state="draft",
+        facts={"service": "Ремонт", "contacts": {"phone": "+79990000000"}},
+        private_lead_email_enc="ciphertext",
+        source_notes=None,
+        facts_hash="a" * 64,
+        supersedes_id=None,
+        confirmed_at=None,
+        created_at=None,
+    )
+
+    payload = _serialize_fact(revision)
+
+    assert payload["has_private_lead_email"] is True
+    assert "private_lead_email" not in payload["facts"]
+    assert "ciphertext" not in str(payload)
+
+
+def test_private_lead_email_migration_adds_only_the_encrypted_column(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    migration = _private_lead_email_migration()
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def add_column(*args: object, **kwargs: object) -> None:
+        calls.append((args, kwargs))
+
+    monkeypatch.setattr(migration.op, "add_column", add_column)
+
+    migration.upgrade()
+
+    assert migration.down_revision == "0021_encrypt_legacy_webhook_secrets"
+    assert len(calls) == 1
+    args, _ = calls[0]
+    assert args[0] == "project_fact_revisions"
+    assert args[1].name == "private_lead_email_enc"
+    assert args[1].nullable is True
+
+
 def test_project_fact_revisions_route_is_registered():
-    assert "get" in app.openapi()["paths"]["/api/v1/projects/{project_id}/facts"]
+    paths = app.openapi()["paths"]
+
+    assert "get" in paths["/api/v1/projects/{project_id}/facts"]
+    assert "post" in paths["/api/v1/projects/{project_id}/commercial-page-plans"]
 
 
 def test_project_site_link_requires_matching_tenant_and_reciprocal_project():
@@ -242,6 +329,36 @@ def test_generation_uses_confirmed_snapshot_only():
     assert snapshot["facts"] == facts.facts
     assert page["slug"] == "/repair"
     assert snapshot["generator_meta"]["tokens"] == 0
+
+
+def test_commercial_generation_uses_only_the_bound_confirmed_fact() -> None:
+    project = SimpleNamespace(id=uuid4(), domain="example.test")
+    plan = SimpleNamespace(
+        slug="/mission",
+        kit_key="service-local-v1",
+        version=1,
+        source_refs={"commercial_fact_key": "mission"},
+        block_selection={"blocks": ["hero"]},
+        keyword_snapshot={"items": []},
+        geo_snapshot={"items": [{"geo_id": str(uuid4()), "name": "Казань", "role": "primary"}]},
+    )
+    facts = SimpleNamespace(
+        id=uuid4(),
+        facts_hash="d" * 64,
+        facts={
+            "service": "Ремонт техники",
+            "mission": "Помогать клиентам с подтверждённой услугой ремонта.",
+            "contacts": {"phone": "+79990000000"},
+        },
+    )
+
+    page, snapshot, content = create_page_draft(project=project, plan=plan, facts=facts)
+
+    assert page["h1_template"] == "Миссия компании"
+    assert page["unique_core"] == facts.facts["mission"]
+    assert page["meta_description_template"] == facts.facts["mission"]
+    assert snapshot["commercial_fact_key"] == "mission"
+    assert "Миссия компании" in content
 
 
 def test_generation_applies_approved_curated_block_selection() -> None:

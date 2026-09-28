@@ -128,6 +128,30 @@ jobs:
         run: |
           cd apps/api
           pytest tests/test_webhook_delivery.py tests/test_postgres_rls.py tests/test_ai_budget_reservation.py tests/test_leads_ab.py -q
+      - name: Worker production image liveness smoke
+        run: |
+          set -euo pipefail
+          image=site-panel-worker-ci:${GITHUB_SHA}
+          container=site-panel-worker-ci-${GITHUB_RUN_ID}
+          cleanup() {
+            docker rm --force "$container" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          docker build --tag "$image" --file infra/docker/Dockerfile.worker .
+          docker run --detach --rm --name "$container" --network host \
+            --env DATABASE_URL="$DATABASE_URL" \
+            --env REDIS_URL="$REDIS_URL" \
+            "$image"
+          for attempt in $(seq 1 45); do
+            if docker exec "$container" arq --check app.worker.WorkerSettings; then
+              break
+            fi
+            if [ "$attempt" -eq 45 ]; then
+              docker logs "$container"
+              exit 1
+            fi
+            sleep 1
+          done
       - name: API health smoke
         run: |
           cd apps/api
@@ -145,6 +169,215 @@ jobs:
             sleep 1
           done
           python -c 'import json; assert json.load(open("/tmp/site-panel-health.json"))["status"] == "ok"'
+
+
+  production-compose-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Chromium for Caddy browser smoke
+        run: |
+          cd apps/panel
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Start isolated production Compose stack
+        run: |
+          set -euo pipefail
+          cleanup() {
+            docker compose -f infra/docker/docker-compose.production.yml --env-file .env down --volumes --remove-orphans
+          }
+          trap cleanup EXIT
+          field_encryption_key="$(python3 -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())')"
+          cat >.env <<EOF
+          APP_ENV=production
+          POSTGRES_DB=site_panel
+          POSTGRES_USER=site_panel
+          POSTGRES_PASSWORD=site_panel-ci-password
+          APP_SECRET_KEY=ci-app-secret-key-with-at-least-thirty-two-characters
+          APP_PEPPER=ci-app-pepper-with-at-least-thirty-two-characters
+          BLIND_INDEX_PEPPER=ci-blind-index-pepper-with-at-least-thirty-two-characters
+          FIELD_ENCRYPTION_KEY=${field_encryption_key}
+          PANEL_DOMAIN=localhost
+          API_DOMAIN=api.localhost
+          PANEL_PUBLIC_URL=https://localhost
+          API_PUBLIC_URL=https://api.localhost
+          CORS_ORIGINS=https://localhost
+          CADDY_EMAIL=ci-operator@example.test
+          EOF
+          docker compose -f infra/docker/docker-compose.production.yml --env-file .env up --build --detach
+          for attempt in $(seq 1 90); do
+            if curl --insecure --fail --silent https://localhost/ >/tmp/site-panel-compose-index.html \
+              && curl --insecure --fail --silent https://localhost/api/v1/health/ready >/dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 90 ]; then
+              docker compose -f infra/docker/docker-compose.production.yml --env-file .env logs
+              exit 1
+            fi
+            sleep 1
+          done
+          grep --fixed-strings '<div id="root"></div>' /tmp/site-panel-compose-index.html
+          docker compose -f infra/docker/docker-compose.production.yml --env-file .env exec -T api python - <<'PY'
+          import asyncio
+          from pathlib import Path
+          from uuid import UUID
+
+          from app.db.session import open_db_session
+          from app.models import Site, Tenant
+          from app.services.caddy_client import CaddyClient
+
+          SITE_ID = UUID("20000000-0000-0000-0000-000000000001")
+          TENANT_ID = UUID("10000000-0000-0000-0000-000000000001")
+          LEAD_TOKEN = "compose-smoke-lead-token-00000001"
+
+
+          async def main() -> None:
+              root = Path("/app/dist/compose-smoke/current")
+              nested = root / "district"
+              nested.mkdir(parents=True, exist_ok=True)
+              (root / "index.html").write_text("compose smoke root", encoding="utf-8")
+              (nested / "index.html").write_text("compose smoke district", encoding="utf-8")
+              async with open_db_session() as db:
+                  db.add(Tenant(id=TENANT_ID, name="Compose smoke", slug="compose-smoke"))
+                  await db.flush()
+                  db.add(
+                      Site(
+                          id=SITE_ID,
+                          tenant_id=TENANT_ID,
+                          domain="site.localhost",
+                          lead_token=LEAD_TOKEN,
+                          manifest={},
+                      )
+                  )
+                  await db.commit()
+              result = await CaddyClient().upsert_site_vhost(
+                  "site.localhost", "/srv/sites/compose-smoke/current"
+              )
+              assert result["ok"], result
+
+
+          asyncio.run(main())
+          PY
+          for path in / /district/; do
+            curl --insecure --fail --silent --show-error \
+              --resolve site.localhost:443:127.0.0.1 \
+              "https://site.localhost${path}" >/tmp/site-panel-site${path//\//-}.html
+          done
+          grep --fixed-strings 'compose smoke root' /tmp/site-panel-site-.html
+          grep --fixed-strings 'compose smoke district' /tmp/site-panel-site-district-.html
+          lead_form_ts="$(python3 -c 'import time; print(time.time() - 5)')"
+          curl --insecure --fail --silent --show-error \
+            --resolve site.localhost:443:127.0.0.1 \
+            --header 'Content-Type: application/json' \
+            --data "{\"site_id\":\"20000000-0000-0000-0000-000000000001\",\"lead_token\":\"compose-smoke-lead-token-00000001\",\"phone\":\"+79990000000\",\"email\":\"lead@example.test\",\"name\":\"Compose client\",\"message\":\"Compose encrypted lead\",\"page_slug\":\"/district/\",\"form_ts\":${lead_form_ts},\"idempotency_key\":\"compose-smoke-lead-key-0001\",\"consent\":true}" \
+            https://site.localhost/api/v1/leads/public >/tmp/site-panel-compose-lead.json
+          python3 -c 'import json; result = json.load(open("/tmp/site-panel-compose-lead.json")); assert result["ok"] is True and result["delivery_status"] is None'
+          docker compose -f infra/docker/docker-compose.production.yml --env-file .env exec -T api python - <<'PY'
+          import asyncio
+          from uuid import UUID
+
+          from app.db.session import open_db_session
+          from datetime import UTC, datetime
+
+          from app.models.leads import Lead, WebhookDelivery, WebhookDeliveryAttempt
+          from app.services.leads import get_encryptor
+          from app.services.webhook_delivery import enqueue_delivery
+          from sqlalchemy import select
+
+          SITE_ID = UUID("20000000-0000-0000-0000-000000000001")
+
+
+          async def main() -> None:
+              async with open_db_session() as db:
+                  lead = (await db.execute(select(Lead).where(Lead.site_id == SITE_ID))).scalar_one()
+                  assert lead.phone_enc != "+79990000000"
+                  assert lead.message_enc != "Compose encrypted lead"
+                  encryptor = get_encryptor()
+                  assert encryptor.decrypt(lead.phone_enc) == "+79990000000"
+                  assert encryptor.decrypt(lead.message_enc) == "Compose encrypted lead"
+                  delivery = WebhookDelivery(
+                      tenant_id=lead.tenant_id,
+                      site_id=lead.site_id,
+                      lead_id=lead.id,
+                      target_key="compose-worker-smoke",
+                      target_url="https://receiver.example.test/leads",
+                      target_secret_enc=None,
+                      payload={"lead_id": str(lead.id)},
+                      idempotency_key="compose-worker-smoke-0001",
+                      status="queued",
+                      max_attempts=1,
+                      next_attempt_at=datetime.now(UTC),
+                  )
+                  db.add(delivery)
+                  await db.flush()
+                  delivery_id = delivery.id
+                  await db.commit()
+              assert await enqueue_delivery(delivery_id)
+              for _ in range(30):
+                  async with open_db_session() as db:
+                      delivery = await db.get(WebhookDelivery, delivery_id)
+                      attempts = list(
+                          (
+                              await db.execute(
+                                  select(WebhookDeliveryAttempt).where(
+                                      WebhookDeliveryAttempt.delivery_id == delivery_id
+                                  )
+                              )
+                          ).scalars()
+                      )
+                  if delivery and delivery.status == "dead_letter":
+                      assert delivery.attempt_count == 1
+                      assert delivery.last_error == "Webhook secret is not configured"
+                      assert len(attempts) == 1 and attempts[0].status == "dead_letter"
+                      return
+                  await asyncio.sleep(0.5)
+              raise AssertionError("worker did not process controlled delivery")
+
+
+          asyncio.run(main())
+          PY
+          printf '%s\n' 'production-compose-password' | docker compose -f infra/docker/docker-compose.production.yml --env-file .env exec -T api python /app/scripts/bootstrap_operator.py --email compose-e2e@example.com --password-stdin
+          curl --insecure --fail --silent --show-error \
+            --cookie-jar /tmp/site-panel-compose.cookies \
+            --header 'Content-Type: application/json' \
+            --data '{"email":"compose-e2e@example.com","password":"production-compose-password"}' \
+            https://localhost/api/v1/auth/login >/tmp/site-panel-compose-login.json
+          python3 -c 'import json; assert json.load(open("/tmp/site-panel-compose-login.json"))["email"] == "compose-e2e@example.com"'
+          curl --insecure --fail --silent --show-error \
+            --cookie /tmp/site-panel-compose.cookies \
+            https://localhost/api/v1/security/me >/tmp/site-panel-compose-me.json
+          python3 -c 'import json; assert json.load(open("/tmp/site-panel-compose-me.json"))["email"] == "compose-e2e@example.com"'
+          (
+            cd apps/panel
+            node --input-type=module - <<'NODE'
+            import { chromium } from "@playwright/test";
+
+            const browser = await chromium.launch({ headless: true });
+            try {
+              const context = await browser.newContext({
+                baseURL: "https://localhost",
+                ignoreHTTPSErrors: true,
+              });
+              const page = await context.newPage();
+              await page.goto("/", { waitUntil: "networkidle" });
+              await page.getByLabel("Email").fill("compose-e2e@example.com");
+              await page.getByLabel("Пароль").fill("production-compose-password");
+              await page.getByRole("button", { name: "Войти" }).click();
+              await page.waitForURL("https://localhost/");
+              await page.getByRole("heading", { name: "Обзор" }).waitFor();
+              await page.getByText("API: ok").waitFor();
+              await context.close();
+            } finally {
+              await browser.close();
+            }
+          NODE
+          )
+          docker compose -f infra/docker/docker-compose.production.yml --env-file .env exec -T worker arq --check app.worker.WorkerSettings
+          docker compose -f infra/docker/docker-compose.production.yml --env-file .env exec -T caddy wget -q -O - http://127.0.0.1:2019/config/ >/dev/null
 
 
   panel-e2e:
@@ -324,6 +557,15 @@ jobs:
             scripts/tests/test_release_manager.sh
           python3 scripts/validate_production_env.py --help >/dev/null
           bash scripts/tests/test_release_manager.sh
+      - name: Validate production Caddyfile
+        run: |
+          docker run --rm \
+            --env CADDY_EMAIL=ci-operator@example.test \
+            --env PANEL_DOMAIN=panel.example.test \
+            --env API_DOMAIN=api.example.test \
+            --volume "$PWD/infra/caddy/Caddyfile.production:/etc/caddy/Caddyfile:ro" \
+            caddy:2.8-alpine \
+            caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 
   panel:
     runs-on: ubuntu-latest

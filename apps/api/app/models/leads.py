@@ -70,7 +70,9 @@ class WebhookDelivery(Base):
         UUID(as_uuid=True), ForeignKey("leads.id", ondelete="CASCADE"), index=True
     )
     target_key: Mapped[str] = mapped_column(String(64), nullable=False)
-    target_url: Mapped[str] = mapped_column(Text, nullable=False)
+    channel: Mapped[str] = mapped_column(String(16), default="webhook", nullable=False)
+    target_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    target_recipient_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
     target_secret_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
     payload: Mapped[dict] = mapped_column(JSONB, default=dict)
     idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)

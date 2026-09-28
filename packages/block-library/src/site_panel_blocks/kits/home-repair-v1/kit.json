@@ -34,7 +34,17 @@
         "utp",
         "cta_above_fold",
         "trust_line"
-      ]
+      ],
+      "editable_slots": {
+        "unique_core": {
+          "type": "string",
+          "max_length": 8000
+        },
+        "hero_supporting_text": {
+          "type": "string",
+          "max_length": 280
+        }
+      }
     },
     {
       "type": "trust_bar",

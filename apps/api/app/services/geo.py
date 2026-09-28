@@ -20,6 +20,73 @@ async def get_or_compute_forms(session: AsyncSession, word: str) -> dict[str, st
     return forms
 
 
+_PARENT_KINDS = {
+    "country": set(),
+    "region": {"country"},
+    "city": {"country", "region"},
+    "district": {"city"},
+    "metro": {"city"},
+    "landmark": {"city", "district", "metro"},
+    "street": {"city", "district"},
+}
+
+
+async def validate_parent(
+    session: AsyncSession,
+    *,
+    kind: str,
+    parent_id: UUID | None,
+    child_id: UUID | None = None,
+) -> None:
+    allowed = _PARENT_KINDS[kind]
+    if not allowed:
+        if parent_id is not None:
+            raise ValueError(f"{kind} cannot have a parent")
+        return
+    if parent_id is None:
+        raise ValueError(f"{kind} requires a parent of type: {', '.join(sorted(allowed))}")
+    parent = await session.get(GeoPlace, parent_id)
+    if parent is None:
+        raise ValueError("Geography parent not found")
+    if parent.kind not in allowed:
+        raise ValueError(f"{kind} requires a parent of type: {', '.join(sorted(allowed))}")
+    if child_id is None:
+        return
+
+    visited: set[UUID] = set()
+    cursor = parent
+    while cursor is not None:
+        if cursor.id == child_id:
+            raise ValueError("Geography parent would create a cycle")
+        if cursor.id in visited:
+            raise ValueError("Existing geography hierarchy contains a cycle")
+        visited.add(cursor.id)
+        cursor = await session.get(GeoPlace, cursor.parent_id) if cursor.parent_id else None
+
+
+async def update_place(
+    session: AsyncSession,
+    *,
+    place: GeoPlace,
+    name: str | None = None,
+    parent_id: UUID | None = None,
+    parent_updated: bool = False,
+) -> GeoPlace:
+    if parent_updated:
+        await validate_parent(
+            session,
+            kind=place.kind,
+            parent_id=parent_id,
+            child_id=place.id,
+        )
+        place.parent_id = parent_id
+    if name is not None and name != place.name:
+        place.name = name
+        place.name_forms = await get_or_compute_forms(session, name)
+    await session.flush()
+    return place
+
+
 async def upsert_place(
     session: AsyncSession,
     *,
@@ -35,6 +102,7 @@ async def upsert_place(
     attrs: dict | None = None,
     compute_morph: bool = True,
 ) -> GeoPlace:
+    await validate_parent(session, kind=kind, parent_id=parent_id)
     if external_id:
         existing = await session.execute(
             select(GeoPlace).where(GeoPlace.kind == kind, GeoPlace.external_id == external_id)

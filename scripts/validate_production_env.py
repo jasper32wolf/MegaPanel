@@ -115,6 +115,29 @@ def validate(values: dict[str, str]) -> list[str]:
     if allowed_origins != [expected_origin]:
         errors.append("cors_origins_must_equal_panel_origin")
 
+    smtp_values = {
+        key: values.get(key, "").strip()
+        for key in ("SMTP_HOST", "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_FROM_EMAIL")
+    }
+    if any(smtp_values.values()):
+        if not smtp_values["SMTP_HOST"] or not smtp_values["SMTP_FROM_EMAIL"]:
+            errors.append("incomplete_SMTP_transport")
+        if bool(smtp_values["SMTP_USERNAME"]) != bool(smtp_values["SMTP_PASSWORD"]):
+            errors.append("incomplete_SMTP_credentials")
+        if not EMAIL_RE.fullmatch(smtp_values["SMTP_FROM_EMAIL"]):
+            errors.append("invalid_SMTP_FROM_EMAIL")
+        try:
+            smtp_port = int(values.get("SMTP_PORT", "587"))
+            if not 1 <= smtp_port <= 65535:
+                raise ValueError
+        except ValueError:
+            errors.append("invalid_SMTP_PORT")
+        if (
+            values.get("SMTP_USE_SSL", "false").lower() == "true"
+            and values.get("SMTP_STARTTLS", "true").lower() == "true"
+        ):
+            errors.append("conflicting_SMTP_TLS")
+
     for key in (
         "POSTGRES_PASSWORD",
         "APP_SECRET_KEY",

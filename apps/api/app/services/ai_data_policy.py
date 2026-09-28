@@ -10,7 +10,7 @@ _CREDENTIAL = re.compile(
     re.IGNORECASE,
 )
 _SENSITIVE_KEY = re.compile(
-    r"^(?:api[_-]?key|password|secret|token|access[_-]?token|email|phone|lead[_-]?id)$",
+    r"^(?:api[_-]?key|password|secret|token|access[_-]?token|email|phone|lead[_-]?id|private[_-]?lead[_-]?email)$",
     re.IGNORECASE,
 )
 

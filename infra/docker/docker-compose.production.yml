@@ -111,6 +111,28 @@ services:
     restart: unless-stopped
     networks: [internal]
 
+  caddy-state-init:
+    image: caddy:2.8-alpine
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command: "mkdir -p /data /config && chown -R 10001:10001 /data /config"
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, FOWNER, DAC_OVERRIDE]
+    tmpfs: [/tmp]
+    volumes:
+      - type: volume
+        source: caddy_data
+        target: /data
+        volume:
+          nocopy: true
+      - type: volume
+        source: caddy_config
+        target: /config
+        volume:
+          nocopy: true
+    networks: [internal]
+
   caddy:
     image: caddy:2.8-alpine
     user: "10001:10001"
@@ -123,6 +145,9 @@ services:
       PANEL_DOMAIN: ${PANEL_DOMAIN:?PANEL_DOMAIN is required}
       API_DOMAIN: ${API_DOMAIN:?API_DOMAIN is required}
       CADDY_EMAIL: ${CADDY_EMAIL:?CADDY_EMAIL is required}
+    depends_on:
+      caddy-state-init:
+        condition: service_completed_successfully
     volumes:
       - ./../caddy/Caddyfile.production:/etc/caddy/Caddyfile:ro
       - sites_data:/srv/sites:ro

@@ -64,7 +64,17 @@ def render_page(
 
     has_hero = any(block.type == "hero" for block in blocks)
     for block in blocks:
-        html = sanitize_html(fill_slots(block.html, {**ctx, "unique_core": page.unique_core or ""}))
+        slot_values = {
+            key: escape(str(value or ""))
+            for key, value in (page.block_slot_values.get(block.type) or {}).items()
+            if key not in ctx and key != "unique_core"
+        }
+        html = sanitize_html(
+            fill_slots(
+                block.html,
+                {**ctx, "unique_core": escape(page.unique_core or ""), **slot_values},
+            )
+        )
         body_parts.append(
             f'<section class="{escape(block.hash_class, quote=True)}" '
             f'data-block="{escape(block.type, quote=True)}">{html}</section>'

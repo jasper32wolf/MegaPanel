@@ -7,7 +7,7 @@ from app.db.session import get_db
 from app.models import CompetitorScan, KnowledgeDoc
 from app.schemas.phase3 import KnowledgeOut, ScanCreate, ScanOut
 from app.services.audit import append_audit
-from app.services.competitor import scan_competitor
+from app.services.competitor import scan_competitors
 from fastapi import APIRouter, Depends, HTTPException
 from site_panel_security import SSRFBlockedError
 from sqlalchemy import select
@@ -24,22 +24,28 @@ async def create_scan(
 ) -> CompetitorScan:
     if not auth.tenant_id:
         raise HTTPException(status_code=403, detail="Tenant required")
+    if not body.terms_acknowledged:
+        raise HTTPException(
+            status_code=400, detail="Confirm responsibility for the supplied public URLs"
+        )
+    manual_urls = [str(url) for url in body.urls]
     scan = CompetitorScan(
         tenant_id=auth.tenant_id,
-        seed_url=str(body.seed_url),
+        seed_url=manual_urls[0],
+        urls=manual_urls,
         status="running",
     )
     db.add(scan)
     await db.flush()
     try:
-        result = await scan_competitor(str(body.seed_url), max_pages=body.max_pages)
+        result = await scan_competitors(manual_urls)
         scan.urls = result["urls"]
         scan.extracted = result["extracted"]
         scan.skeleton = result["skeleton"]
         scan.status = "done"
         doc = KnowledgeDoc(
             tenant_id=auth.tenant_id,
-            title=f"Skeleton from {body.seed_url}",
+            title=f"Manual competitor research ({len(manual_urls)} URLs)",
             kind="skeleton",
             content=result["skeleton"],
             source_scan_id=scan.id,
@@ -48,14 +54,14 @@ async def create_scan(
     except SSRFBlockedError as exc:
         scan.status = "blocked"
         scan.error = str(exc)
-    except Exception as exc:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         scan.status = "failed"
-        scan.error = str(exc)
+        scan.error = "Competitor research failed"
 
     await append_audit(
         db,
         action="competitor.scan",
-        payload={"seed_url": str(body.seed_url), "status": scan.status},
+        payload={"url_count": len(manual_urls), "status": scan.status},
         tenant_id=auth.tenant_id,
         actor_id=auth.user.id,
     )

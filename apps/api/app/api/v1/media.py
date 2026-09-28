@@ -1,17 +1,20 @@
 from __future__ import annotations
 
+import hashlib
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 from app.api.deps import AuthContext, require_roles
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.models import MediaAsset
-from app.schemas.phase3 import MediaOut
+from app.schemas.phase3 import ManualAssetProvenance, MediaOut
 from app.services.audit import append_audit
 from app.services.media_normalize import average_hash, decode_image, save_normalized
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +26,7 @@ MAX_BYTES = 8 * 1024 * 1024
 
 
 def _asset_out(asset: MediaAsset) -> dict:
+    meta = getattr(asset, "meta", None) or {}
     return {
         "id": asset.id,
         "tenant_id": asset.tenant_id,
@@ -34,6 +38,8 @@ def _asset_out(asset: MediaAsset) -> dict:
         "phash": asset.phash,
         "normalized": asset.normalized,
         "tags": asset.tags,
+        "provenance": meta.get("provenance") or {},
+        "hashes": meta.get("hashes") or {},
     }
 
 
@@ -52,8 +58,13 @@ def _asset_path(asset: MediaAsset) -> Path:
 @router.post("", response_model=MediaOut, status_code=201)
 async def upload_media(
     file: UploadFile = File(...),
-    license: str = Form("own"),
-    source: str = Form(""),
+    rights_basis: str = Form("own"),
+    rights_confirmed: bool = Form(False),
+    source_url: str = Form(""),
+    source_reference: str = Form(""),
+    license_name: str = Form(""),
+    license_url: str = Form(""),
+    license_expires_at: str = Form(""),
     author: str = Form(""),
     normalize: bool = Form(False),
     auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor")),
@@ -61,7 +72,20 @@ async def upload_media(
 ) -> dict:
     if not auth.tenant_id:
         raise HTTPException(status_code=403, detail="Tenant required")
-    if normalize and license != "own":
+    try:
+        provenance = ManualAssetProvenance(
+            rights_basis=rights_basis,
+            rights_confirmed=rights_confirmed,
+            source_url=source_url or None,
+            source_reference=source_reference or None,
+            license_name=license_name or None,
+            license_url=license_url or None,
+            license_expires_at=license_expires_at or None,
+            author=author or None,
+        )
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors()) from exc
+    if normalize and provenance.rights_basis != "own":
         raise HTTPException(
             status_code=400, detail="Normalization is only available for owned media"
         )
@@ -71,6 +95,7 @@ async def upload_media(
     raw = await file.read()
     if len(raw) > MAX_BYTES:
         raise HTTPException(status_code=400, detail="File too large")
+    original_sha256 = hashlib.sha256(raw).hexdigest()
 
     out_dir = Path(settings.uploads_root) / str(auth.tenant_id) / "media"
     name = f"{uuid.uuid4().hex}.webp"
@@ -91,27 +116,49 @@ async def upload_media(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid image") from exc
 
+    stored_sha256 = hashlib.sha256(out_path.read_bytes()).hexdigest()
+    provenance_meta = {
+        **provenance.model_dump(mode="json"),
+        "declared_at": datetime.now(UTC).isoformat(),
+        "declared_by_user_id": str(auth.user.id),
+    }
     asset = MediaAsset(
         tenant_id=auth.tenant_id,
         path=str(out_path),
         content_type="image/webp",
-        source=source or None,
-        license=license,
-        author=author or None,
+        source=str(provenance.source_url or provenance.source_reference or "") or None,
+        license=provenance.license_name or provenance.rights_basis,
+        author=provenance.author,
         phash=phash,
         normalized=normalized,
         tags=[],
+        meta={
+            "provenance": provenance_meta,
+            "hashes": {"original_sha256": original_sha256, "stored_sha256": stored_sha256},
+        },
     )
-    db.add(asset)
-    await db.flush()
-    await append_audit(
-        db,
-        action="media.upload",
-        payload={"asset_id": str(asset.id), "phash": phash, "license": license},
-        tenant_id=auth.tenant_id,
-        actor_id=auth.user.id,
-    )
-    await db.commit()
+    try:
+        db.add(asset)
+        await db.flush()
+        await append_audit(
+            db,
+            action="media.upload",
+            payload={
+                "asset_id": str(asset.id),
+                "phash": phash,
+                "rights_basis": provenance.rights_basis,
+                "rights_confirmed": True,
+                "original_sha256": original_sha256,
+                "stored_sha256": stored_sha256,
+            },
+            tenant_id=auth.tenant_id,
+            actor_id=auth.user.id,
+        )
+        await db.commit()
+    except Exception:
+        out_path.unlink(missing_ok=True)
+        await db.rollback()
+        raise
     await db.refresh(asset)
     return _asset_out(asset)
 

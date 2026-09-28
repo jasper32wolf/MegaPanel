@@ -9,6 +9,13 @@ from site_panel_shared.manifests import PageManifest
 
 GENERATOR_VERSION = "deterministic-v1"
 
+_COMMERCIAL_FACT_TITLES = {
+    "company_history": "О компании",
+    "mission": "Миссия компании",
+    "legal_entities": "Услуги для юридических лиц",
+    "payment_terms": "Оплата и условия",
+}
+
 
 def _service_from_facts(facts: dict[str, Any]) -> str:
     service = facts.get("service")
@@ -57,15 +64,27 @@ def create_page_draft(
         ]
     city_prep = (primary_geo.get("forms") or {}).get("prep") or city
     title = f"{service} в {city_prep}".strip() if city else service
+    commercial_fact_key = (getattr(plan, "source_refs", None) or {}).get("commercial_fact_key")
+    commercial_copy = str(fact_values.get(commercial_fact_key) or "").strip()
+    commercial_title = _COMMERCIAL_FACT_TITLES.get(commercial_fact_key or "")
+    title_template = (
+        f"{commercial_title} — {{domain}}"
+        if commercial_title
+        else "{service} в {city_prep} — {domain}"
+    )
+    h1_template = commercial_title or "{service} в {city_prep}"
+    meta_description_template = (
+        commercial_copy[:170] if commercial_title else "{service} в {city_prep}. Контакты: {phone}"
+    )
     manifest = PageManifest(
         slug=plan.slug,
-        title_template="{service} в {city_prep} — {domain}",
-        h1_template="{service} в {city_prep}",
-        meta_description_template="{service} в {city_prep}. Контакты: {phone}",
+        title_template=title_template,
+        h1_template=h1_template,
+        meta_description_template=meta_description_template,
         service=service or "Услуги",
         geo_id=UUID(primary_geo["geo_id"]) if primary_geo.get("geo_id") else None,
         blocks=blocks,
-        unique_core=str(fact_values.get("unique_core") or ""),
+        unique_core=commercial_copy or str(fact_values.get("unique_core") or ""),
         seed=plan.version,
     )
     input_snapshot = {
@@ -78,6 +97,7 @@ def create_page_draft(
         "geo_snapshot": plan.geo_snapshot or {},
         "kit_key": plan.kit_key,
         "plan_version": plan.version,
+        "commercial_fact_key": commercial_fact_key,
     }
     generator_meta = {
         "generator_version": GENERATOR_VERSION,

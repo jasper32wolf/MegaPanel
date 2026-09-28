@@ -38,6 +38,15 @@ class Settings(BaseSettings):
     github_control_token: str = ""
     github_api_url: str = "https://api.github.com"
 
+    # Optional private lead-email transport. All recipient addresses remain encrypted in PostgreSQL.
+    smtp_host: str = ""
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from_email: str = ""
+    smtp_use_ssl: bool = False
+    smtp_starttls: bool = True
+
     access_token_ttl_minutes: int = 15
     refresh_token_ttl_days: int = 14
 
@@ -59,8 +68,22 @@ class Settings(BaseSettings):
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
+    @property
+    def smtp_configured(self) -> bool:
+        return bool(self.smtp_host and self.smtp_from_email)
+
     @model_validator(mode="after")
     def validate_production_settings(self) -> Settings:
+        smtp_values = (self.smtp_host, self.smtp_username, self.smtp_password, self.smtp_from_email)
+        if any(smtp_values):
+            if not self.smtp_configured:
+                raise ValueError("SMTP_HOST and SMTP_FROM_EMAIL must be configured together")
+            if bool(self.smtp_username) != bool(self.smtp_password):
+                raise ValueError("SMTP_USERNAME and SMTP_PASSWORD must be configured together")
+            if "@" not in self.smtp_from_email:
+                raise ValueError("SMTP_FROM_EMAIL must be a valid email address")
+            if self.smtp_use_ssl and self.smtp_starttls:
+                raise ValueError("SMTP_USE_SSL and SMTP_STARTTLS cannot both be enabled")
         if self.app_env.lower() != "production":
             return self
 

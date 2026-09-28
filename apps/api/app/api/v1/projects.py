@@ -47,6 +47,7 @@ from app.services.caddy_client import CaddyClient
 from app.services.domain_health import domain_probe
 from app.services.generation import create_page_draft
 from app.services.indexnow import new_indexnow_key
+from app.services.leads import get_blind, get_encryptor
 from app.services.qa import run_page_qa
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
@@ -112,8 +113,13 @@ def _serialize_project(project: Project) -> dict:
     }
 
 
-def _facts_hash(facts: dict) -> str:
-    return sha256_hex(json.dumps(facts, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+def _facts_hash(facts: dict, private_lead_email: str | None = None) -> str:
+    payload = dict(facts)
+    if private_lead_email:
+        payload["private_lead_email_blind"] = get_blind().index(private_lead_email)
+    return sha256_hex(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    )
 
 
 def _public_fact_values(facts: dict) -> dict:
@@ -121,8 +127,11 @@ def _public_fact_values(facts: dict) -> dict:
     contacts = values.get("contacts")
     if isinstance(contacts, dict):
         values["contacts"] = {
-            key: value for key, value in contacts.items() if key not in PROTECTED_CONTACT_FIELDS
+            key: value
+            for key, value in contacts.items()
+            if key not in PROTECTED_CONTACT_FIELDS | {"email", "private_lead_email"}
         }
+    values.pop("private_lead_email", None)
     return values
 
 
@@ -132,6 +141,7 @@ def _serialize_fact(revision: ProjectFactRevision) -> dict:
         "version": revision.version,
         "state": revision.state,
         "facts": _public_fact_values(revision.facts or {}),
+        "has_private_lead_email": bool(getattr(revision, "private_lead_email_enc", None)),
         "source_notes": revision.source_notes,
         "facts_hash": revision.facts_hash,
         "supersedes_id": str(revision.supersedes_id) if revision.supersedes_id else None,
@@ -410,14 +420,18 @@ async def create_fact_revision(
             .limit(1)
         )
     ).scalar_one_or_none()
+    private_lead_email = str(body.private_lead_email) if body.private_lead_email else None
     revision = ProjectFactRevision(
         project_id=project.id,
         tenant_id=project.tenant_id,
         supersedes_id=previous.id if previous else None,
         version=(previous.version if previous else 0) + 1,
         facts=body.facts,
+        private_lead_email_enc=get_encryptor().encrypt(private_lead_email)
+        if private_lead_email
+        else None,
         source_notes=body.source_notes.strip() if body.source_notes else None,
-        facts_hash=_facts_hash(body.facts),
+        facts_hash=_facts_hash(body.facts, private_lead_email),
         created_by=auth.user.id,
     )
     db.add(revision)
@@ -512,6 +526,7 @@ async def restore_fact_revision(
         supersedes_id=source.id,
         version=(latest.version if latest else 0) + 1,
         facts=dict(source.facts or {}),
+        private_lead_email_enc=getattr(source, "private_lead_email_enc", None),
         source_notes=source.source_notes,
         facts_hash=source.facts_hash,
         created_by=auth.user.id,
@@ -696,6 +711,74 @@ async def list_page_plans(
         .scalars()
         .all()
     )
+    return [_serialize_plan(plan) for plan in plans]
+
+
+_COMMERCIAL_PAGE_RECIPES = (
+    ("/about", "О компании", "company_history"),
+    ("/history", "История компании", "company_history"),
+    ("/mission", "Миссия компании", "mission"),
+    ("/business", "Услуги для юридических лиц", "legal_entities"),
+    ("/payment", "Оплата и условия", "payment_terms"),
+)
+
+
+@router.post("/{project_id}/commercial-page-plans", status_code=status.HTTP_201_CREATED)
+async def create_commercial_page_plans(
+    project_id: UUID,
+    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor")),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    project = await _project_or_404(db, project_id, auth)
+    facts = await _confirmed_facts(db, project)
+    values = _public_fact_values(facts.facts or {})
+    service = str(values.get("service") or "Услуги")
+    existing = list(
+        (
+            await db.execute(
+                select(PagePlan).where(
+                    PagePlan.project_id == project.id,
+                    PagePlan.slug.in_([recipe[0] for recipe in _COMMERCIAL_PAGE_RECIPES]),
+                    PagePlan.state.in_(("draft", "review", "approved")),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    existing_slugs = {plan.slug for plan in existing}
+    plans = []
+    for slug, title, fact_key in _COMMERCIAL_PAGE_RECIPES:
+        if slug in existing_slugs or not str(values.get(fact_key) or "").strip():
+            continue
+        plan = PagePlan(
+            project_id=project.id,
+            tenant_id=project.tenant_id,
+            version=1,
+            slug=slug,
+            objective=f"{title}: подтверждённые facts для {service}",
+            intent="commercial",
+            risk_notes=(
+                "Создано из подтверждённых business facts; до публикации требуется "
+                "review, QA и candidate preview."
+            ),
+            kit_key="service-local-v1",
+            block_selection={
+                "blocks": ["hero", "trust_bar", "faq", "contacts", "lead_form", "footer"]
+            },
+            source_refs={"commercial_fact_key": fact_key, "fact_revision_id": str(facts.id)},
+        )
+        db.add(plan)
+        plans.append(plan)
+    await db.flush()
+    await append_audit(
+        db,
+        action="project.commercial_page_plans.create",
+        payload={"project_id": str(project.id), "page_plan_ids": [str(plan.id) for plan in plans]},
+        tenant_id=project.tenant_id,
+        actor_id=auth.user.id,
+    )
+    await db.commit()
     return [_serialize_plan(plan) for plan in plans]
 
 
@@ -1097,6 +1180,13 @@ async def run_draft_qa(
                 str((item.page_manifest or {}).get("title_template") or ""),
                 str((item.page_manifest or {}).get("h1_template") or ""),
                 str((item.page_manifest or {}).get("unique_core") or ""),
+                *[
+                    str(value or "")
+                    for block_values in (
+                        (item.page_manifest or {}).get("block_slot_values") or {}
+                    ).values()
+                    for value in block_values.values()
+                ],
             ]
         )
         for item in other_drafts

@@ -59,6 +59,7 @@ class ProjectFactRevision(Base):
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     state: Mapped[str] = mapped_column(String(16), default="draft", index=True)
     facts: Mapped[dict] = mapped_column(JSONB, default=dict)
+    private_lead_email_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     facts_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)

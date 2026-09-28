@@ -4,7 +4,7 @@ import re
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 ProjectStatus = Literal["draft", "active", "archived"]
 FactState = Literal["draft", "confirmed"]
@@ -40,8 +40,65 @@ class ProjectUpdate(BaseModel):
     version: int = Field(ge=1)
 
 
+class PublicContacts(BaseModel):
+    phone: str | None = Field(default=None, min_length=5, max_length=64)
+    address: str | None = Field(default=None, max_length=500)
+    work_hours: str | None = Field(default=None, max_length=500)
+
+
+class LegalProfile(BaseModel):
+    org: str | None = Field(default=None, max_length=255)
+    inn: str | None = Field(default=None, max_length=32)
+    ogrn: str | None = Field(default=None, max_length=32)
+    address: str | None = Field(default=None, max_length=500)
+    jurisdiction: str | None = Field(default=None, max_length=128)
+
+
+class BusinessProfile(BaseModel):
+    organization: str | None = Field(default=None, max_length=255)
+    brand: str | None = Field(default=None, max_length=255)
+    service: str | None = Field(default=None, max_length=255)
+    services: list[str] = Field(default_factory=list, max_length=30)
+    contacts: PublicContacts = Field(default_factory=PublicContacts)
+    legal: LegalProfile = Field(default_factory=LegalProfile)
+    company_history: str | None = Field(default=None, max_length=4000)
+    mission: str | None = Field(default=None, max_length=2000)
+    legal_entities: str | None = Field(default=None, max_length=2000)
+    payment_terms: str | None = Field(default=None, max_length=2000)
+    allowed_claims: list[str] = Field(default_factory=list, max_length=100)
+    unique_core: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("services", "allowed_claims")
+    @classmethod
+    def normalize_text_list(cls, value: list[str]) -> list[str]:
+        return [item.strip() for item in value if item.strip()]
+
+
+def normalize_business_profile(value: dict) -> dict:
+    facts = dict(value or {})
+    contacts = dict(facts.get("contacts") or {})
+    if PROTECTED_CONTACT_FIELDS.intersection(contacts):
+        raise ValueError("Configure webhook credentials through site webhook settings")
+    if {"email", "private_lead_email"}.intersection(contacts):
+        raise ValueError("Configure the private lead email separately from public contacts")
+    legal = dict(facts.get("legal") or {})
+    if legal.get("operator") and not legal.get("org"):
+        legal["org"] = legal["operator"]
+    facts["contacts"] = contacts
+    facts["legal"] = legal
+    profile = BusinessProfile.model_validate(facts)
+    normalized = profile.model_dump(mode="json", exclude_none=True)
+    return {
+        **facts,
+        **normalized,
+        "contacts": normalized.get("contacts", {}),
+        "legal": normalized.get("legal", {}),
+    }
+
+
 class FactRevisionCreate(BaseModel):
     facts: dict = Field(default_factory=dict)
+    private_lead_email: EmailStr | None = None
     source_notes: str | None = Field(default=None, max_length=4000)
 
     @field_validator("facts")
@@ -49,10 +106,7 @@ class FactRevisionCreate(BaseModel):
     def require_business_facts(cls, value: dict) -> dict:
         if not value:
             raise ValueError("Provide confirmed business facts")
-        contacts = value.get("contacts")
-        if isinstance(contacts, dict) and PROTECTED_CONTACT_FIELDS.intersection(contacts):
-            raise ValueError("Configure webhook credentials through site webhook settings")
-        return value
+        return normalize_business_profile(value)
 
 
 class ProjectKeywordIn(BaseModel):

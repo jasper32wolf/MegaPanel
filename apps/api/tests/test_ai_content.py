@@ -34,7 +34,10 @@ def test_ai_page_copy_validates_plain_text_and_fact_provenance() -> None:
 def block_slot_copy() -> dict:
     return {
         "block_id": "hero",
-        "slots": {"unique_core": "Подтверждённая услуга ремонта техники."},
+        "slots": {
+            "unique_core": "Подтверждённая услуга ремонта техники.",
+            "hero_supporting_text": "Условия согласуем до начала работ.",
+        },
         "fact_keys": ["service"],
         "warnings": [],
     }
@@ -44,7 +47,10 @@ def test_block_slot_copy_requires_exact_server_slot_contract_and_provenance() ->
     result = _validate_block_slot_copy(
         block_slot_copy(),
         block_id="hero",
-        slot_schema={"unique_core": {"type": "string", "max_length": 8000}},
+        slot_schema={
+            "unique_core": {"type": "string", "max_length": 8000},
+            "hero_supporting_text": {"type": "string", "max_length": 280},
+        },
         fact_keys={"service"},
     )
     assert result["slots"]["unique_core"].startswith("Подтверждённая")
@@ -66,7 +72,10 @@ def test_block_slot_copy_rejects_untrusted_or_unproven_output(candidate: dict) -
         _validate_block_slot_copy(
             candidate,
             block_id="hero",
-            slot_schema={"unique_core": {"type": "string", "max_length": 8000}},
+            slot_schema={
+                "unique_core": {"type": "string", "max_length": 8000},
+                "hero_supporting_text": {"type": "string", "max_length": 280},
+            },
             fact_keys={"service"},
         )
 
@@ -409,6 +418,8 @@ def test_approved_block_slot_copy_creates_noindex_draft_once(monkeypatch) -> Non
     assert draft["state"] == "draft"
     assert draft["page_manifest"]["index_state"] == "noindex"
     assert draft["page_manifest"]["unique_core"] == block_slot_copy()["slots"]["unique_core"]
+    assert draft["page_manifest"]["block_slot_values"] == {"hero": block_slot_copy()["slots"]}
+    assert draft["content_hash"]
     assert draft["generator_meta"]["block_slot_copy_run_id"] == str(run_id)
     assert db.objects[0].input_snapshot["ai_provenance"]["fact_keys"] == ["service"]
 

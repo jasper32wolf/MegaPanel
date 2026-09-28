@@ -22,11 +22,11 @@ from app.services.leads import (
     get_encryptor,
     qualify_lead_local,
 )
-from app.services.webhook_delivery import create_lead_delivery, enqueue_delivery, resend_delivery
+from app.services.webhook_delivery import create_lead_deliveries, enqueue_delivery, resend_delivery
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -90,6 +90,39 @@ def _csv_cell(value: object | None) -> str:
 def require_lead_owner(auth: AuthContext, lead: Lead) -> None:
     if auth.role != "superadmin" and lead.tenant_id != auth.tenant_id:
         raise HTTPException(status_code=403, detail="Forbidden")
+
+
+def _delivery_status(deliveries: list[WebhookDelivery]) -> str | None:
+    if not deliveries:
+        return None
+    statuses = {delivery.status for delivery in deliveries}
+    if "dead_letter" in statuses:
+        return "dead_letter"
+    if statuses == {"delivered"}:
+        return "delivered"
+    if "retrying" in statuses:
+        return "retrying"
+    if "processing" in statuses:
+        return "processing"
+    return "queued"
+
+
+def _delivery_status_query():
+    return (
+        select(
+            case(
+                (func.bool_or(WebhookDelivery.status == "dead_letter"), "dead_letter"),
+                (func.bool_or(WebhookDelivery.status == "retrying"), "retrying"),
+                (func.bool_or(WebhookDelivery.status == "processing"), "processing"),
+                (func.bool_or(WebhookDelivery.status == "queued"), "queued"),
+                (func.bool_or(WebhookDelivery.status == "delivered"), "delivered"),
+                else_=None,
+            )
+        )
+        .where(WebhookDelivery.lead_id == Lead.id)
+        .correlate(Lead)
+        .scalar_subquery()
+    )
 
 
 @router.post("/public", status_code=201)
@@ -184,9 +217,9 @@ async def create_public_lead(
             purposes={"lead": True},
         )
     )
-    delivery = None
+    deliveries: list[WebhookDelivery] = []
     if status != "spam":
-        delivery = await create_lead_delivery(db, lead=lead, site=site)
+        deliveries = await create_lead_deliveries(db, lead=lead, site=site)
 
     await append_audit(
         db,
@@ -194,18 +227,19 @@ async def create_public_lead(
         payload={
             "lead_id": str(lead.id),
             "status": lead.status,
-            "delivery_id": str(delivery.id) if delivery else None,
+            "delivery_ids": [str(delivery.id) for delivery in deliveries],
         },
         tenant_id=site.tenant_id,
     )
     await db.commit()
-    if delivery and delivery.status == "queued":
-        await enqueue_delivery(delivery.id)
+    for delivery in deliveries:
+        if delivery.status == "queued":
+            await enqueue_delivery(delivery.id)
     return {
         "ok": True,
         "id": str(lead.id),
         "status": lead.status,
-        "delivery_status": delivery.status if delivery else None,
+        "delivery_status": _delivery_status(deliveries),
     }
 
 
@@ -343,10 +377,8 @@ async def lead_inbox(
     if not auth.tenant_id and auth.role != "superadmin":
         raise HTTPException(status_code=403, detail="Tenant required")
     predicates = _lead_predicates(auth, status=status, site_id=site_id, q=q)
-    statement = (
-        select(Lead, Site.domain, WebhookDelivery.status)
-        .join(Site, Site.id == Lead.site_id)
-        .outerjoin(WebhookDelivery, WebhookDelivery.lead_id == Lead.id)
+    statement = select(Lead, Site.domain, _delivery_status_query().label("delivery_status")).join(
+        Site, Site.id == Lead.site_id
     )
     total_statement = select(func.count()).select_from(Lead).join(Site, Site.id == Lead.site_id)
     if predicates:
@@ -389,9 +421,8 @@ async def export_leads(
         raise HTTPException(status_code=403, detail="Tenant required")
     predicates = _lead_predicates(auth, status=body.status, site_id=body.site_id, q=body.q)
     statement = (
-        select(Lead, Site.domain, WebhookDelivery.status)
+        select(Lead, Site.domain, _delivery_status_query().label("delivery_status"))
         .join(Site, Site.id == Lead.site_id)
-        .outerjoin(WebhookDelivery, WebhookDelivery.lead_id == Lead.id)
         .order_by(Lead.created_at.desc(), Lead.id.desc())
     )
     if predicates:
@@ -478,9 +509,7 @@ async def lead_detail(
         "qualification": lead.qualification,
         "crm_status": lead.crm_status,
         "delivery_status": (
-            await db.execute(
-                select(WebhookDelivery.status).where(WebhookDelivery.lead_id == lead.id)
-            )
+            await db.execute(select(_delivery_status_query()).where(Lead.id == lead.id))
         ).scalar_one_or_none(),
         "utm": lead.utm or {},
         "notes": (lead.meta or {}).get("notes"),
@@ -516,6 +545,22 @@ async def reveal_lead_pii(
     }
 
 
+def _serialize_delivery(delivery: WebhookDelivery) -> dict:
+    return {
+        "id": str(delivery.id),
+        "channel": delivery.channel,
+        "target": delivery.target_url if delivery.channel == "webhook" else "private_email",
+        "status": delivery.status,
+        "attempt_count": delivery.attempt_count,
+        "max_attempts": delivery.max_attempts,
+        "next_attempt_at": (
+            delivery.next_attempt_at.isoformat() if delivery.next_attempt_at else None
+        ),
+        "last_error": delivery.last_error,
+        "last_http_status": delivery.last_http_status,
+    }
+
+
 @router.get("/{lead_id}/delivery")
 async def lead_delivery(
     lead_id: UUID,
@@ -526,53 +571,58 @@ async def lead_delivery(
     if not lead:
         raise HTTPException(status_code=404, detail="Not found")
     require_lead_owner(auth, lead)
-    delivery = (
-        await db.execute(select(WebhookDelivery).where(WebhookDelivery.lead_id == lead.id))
-    ).scalar_one_or_none()
-    if not delivery:
-        return {"delivery": None, "attempts": []}
-    attempts = list(
+    deliveries = list(
         (
             await db.execute(
-                select(WebhookDeliveryAttempt)
-                .where(WebhookDeliveryAttempt.delivery_id == delivery.id)
-                .order_by(WebhookDeliveryAttempt.sequence)
+                select(WebhookDelivery)
+                .where(WebhookDelivery.lead_id == lead.id)
+                .order_by(WebhookDelivery.created_at, WebhookDelivery.id)
             )
         )
         .scalars()
         .all()
     )
-    return {
-        "delivery": {
-            "id": str(delivery.id),
-            "target": delivery.target_url,
-            "status": delivery.status,
-            "attempt_count": delivery.attempt_count,
-            "max_attempts": delivery.max_attempts,
-            "next_attempt_at": delivery.next_attempt_at.isoformat()
-            if delivery.next_attempt_at
-            else None,
-            "last_error": delivery.last_error,
-            "last_http_status": delivery.last_http_status,
-        },
-        "attempts": [
+    histories = []
+    for delivery in deliveries:
+        attempts = list(
+            (
+                await db.execute(
+                    select(WebhookDeliveryAttempt)
+                    .where(WebhookDeliveryAttempt.delivery_id == delivery.id)
+                    .order_by(WebhookDeliveryAttempt.sequence)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        histories.append(
             {
-                "sequence": attempt.sequence,
-                "trigger": attempt.trigger,
-                "status": attempt.status,
-                "http_status": attempt.http_status,
-                "error": attempt.error,
-                "started_at": attempt.started_at.isoformat() if attempt.started_at else None,
-                "finished_at": attempt.finished_at.isoformat() if attempt.finished_at else None,
+                "delivery": _serialize_delivery(delivery),
+                "attempts": [
+                    {
+                        "sequence": attempt.sequence,
+                        "trigger": attempt.trigger,
+                        "status": attempt.status,
+                        "http_status": attempt.http_status,
+                        "error": attempt.error,
+                        "started_at": (
+                            attempt.started_at.isoformat() if attempt.started_at else None
+                        ),
+                        "finished_at": (
+                            attempt.finished_at.isoformat() if attempt.finished_at else None
+                        ),
+                    }
+                    for attempt in attempts
+                ],
             }
-            for attempt in attempts
-        ],
-    }
+        )
+    return {"deliveries": histories}
 
 
-@router.post("/{lead_id}/delivery/resend", status_code=202)
+@router.post("/{lead_id}/delivery/{delivery_id}/resend", status_code=202)
 async def resend_lead_delivery(
     lead_id: UUID,
+    delivery_id: UUID,
     auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager")),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -582,19 +632,25 @@ async def resend_lead_delivery(
     require_lead_owner(auth, lead)
     delivery = (
         await db.execute(
-            select(WebhookDelivery).where(WebhookDelivery.lead_id == lead.id).with_for_update()
+            select(WebhookDelivery)
+            .where(WebhookDelivery.lead_id == lead.id, WebhookDelivery.id == delivery_id)
+            .with_for_update()
         )
     ).scalar_one_or_none()
     if not delivery:
-        raise HTTPException(status_code=409, detail="No webhook delivery is configured")
+        raise HTTPException(status_code=404, detail="Delivery not found")
     try:
         await resend_delivery(db, delivery)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     await append_audit(
         db,
-        action="lead.webhook.resend",
-        payload={"lead_id": str(lead.id), "delivery_id": str(delivery.id)},
+        action="lead.delivery.resend",
+        payload={
+            "lead_id": str(lead.id),
+            "delivery_id": str(delivery.id),
+            "channel": delivery.channel,
+        },
         tenant_id=lead.tenant_id,
         actor_id=auth.user.id,
     )

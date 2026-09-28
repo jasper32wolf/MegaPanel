@@ -57,6 +57,41 @@ export function StatusPill({
   return <span className={cls}>{children}</span>;
 }
 
+export function HelpTip({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <details className="help-tip">
+      <summary aria-label={`Справка: ${label}`}>?</summary>
+      <div role="note">
+        <strong>{label}</strong>
+        <div>{children}</div>
+      </div>
+    </details>
+  );
+}
+
+export function InlineAlert({
+  severity,
+  title,
+  children,
+}: {
+  severity: "info" | "warning" | "critical";
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className={`inline-alert inline-alert-${severity}`} role={severity === "critical" ? "alert" : "status"}>
+      <strong>{title}</strong>
+      <div>{children}</div>
+    </div>
+  );
+}
+
 export function EmptyState({ title, hint }: { title: string; hint?: string }) {
   return (
     <div className="empty">

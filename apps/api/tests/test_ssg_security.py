@@ -16,6 +16,32 @@ def test_fill_slots():
     assert fill_slots("в {city_prep}", {"city_prep": "Москве"}) == "в Москве"
 
 
+def test_render_page_renders_block_slots_only_for_matching_block():
+    site = SiteManifest(
+        site_id=uuid4(),
+        tenant_id=uuid4(),
+        domain="example.test",
+        pages=[],
+        contacts={},
+    )
+    page = PageManifest(
+        slug="/",
+        title_template="Ремонт",
+        h1_template="Ремонт",
+        service="Ремонт",
+        blocks=[
+            BlockDef(type="hero", hash_class="hero", html="<p>{hero_supporting_text}</p>", order=0),
+            BlockDef(type="faq", hash_class="faq", html="<p>{hero_supporting_text}</p>", order=1),
+        ],
+        block_slot_values={"hero": {"hero_supporting_text": "<b>Только hero</b>"}},
+    )
+
+    html = render_page(site, page)
+
+    assert html.count("&lt;b&gt;Только hero&lt;/b&gt;") == 1
+    assert '<section class="faq" data-block="faq"><p></p></section>' in html
+
+
 def test_render_page_canonical():
     site = SiteManifest(
         site_id=uuid4(),

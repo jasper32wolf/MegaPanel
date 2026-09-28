@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
+import smtplib
+import ssl
 from datetime import UTC, datetime, timedelta
+from email.message import EmailMessage
 from uuid import UUID
 
 from app.core.config import get_settings
-from app.models import Site
+from app.models import Project, Site
 from app.models.leads import Lead, WebhookDelivery, WebhookDeliveryAttempt
+from app.models.project import ProjectFactRevision
 from app.services.leads import dispatch_webhook, get_encryptor
 from arq import create_pool
 from arq.connections import RedisSettings
@@ -29,7 +34,14 @@ def _error(result: dict) -> str | None:
 
 
 def _retryable(result: dict) -> bool:
-    if result.get("error") == "Webhook secret cannot be decrypted":
+    if "retryable" in result:
+        return bool(result["retryable"])
+    if result.get("error") in {
+        "Webhook secret cannot be decrypted",
+        "SMTP recipient cannot be decrypted",
+        "SMTP transport is not configured",
+        "Unsupported delivery channel",
+    }:
         return False
     status = result.get("status")
     return status is None or status == 408 or status == 429 or status >= 500
@@ -40,11 +52,15 @@ def _next_attempt(attempt_count: int) -> datetime:
     return _now() + timedelta(seconds=delay)
 
 
-def _decrypt_secret(value: str) -> str | None:
+def _decrypt(value: str) -> str | None:
     try:
         return get_encryptor().decrypt(value)
     except Exception:  # noqa: BLE001
         return None
+
+
+def _decrypt_secret(value: str) -> str | None:
+    return _decrypt(value)
 
 
 def wire_payload(delivery: WebhookDelivery, lead: Lead) -> dict:
@@ -58,6 +74,17 @@ def wire_payload(delivery: WebhookDelivery, lead: Lead) -> dict:
     }
 
 
+def _delivery_payload(lead: Lead, site: Site) -> dict:
+    return {
+        "lead_id": str(lead.id),
+        "site_id": str(site.id),
+        "domain": site.domain,
+        "page_slug": lead.page_slug,
+        "qualification": lead.qualification,
+        "idempotency_key": lead.idempotency_key or str(lead.id),
+    }
+
+
 async def create_lead_delivery(
     db: AsyncSession, *, lead: Lead, site: Site
 ) -> WebhookDelivery | None:
@@ -66,19 +93,13 @@ async def create_lead_delivery(
     if not url:
         return None
     target_secret_enc = str(contacts.get("webhook_secret_enc") or "") or None
-    payload = {
-        "lead_id": str(lead.id),
-        "site_id": str(site.id),
-        "domain": site.domain,
-        "page_slug": lead.page_slug,
-        "qualification": lead.qualification,
-        "idempotency_key": lead.idempotency_key or str(lead.id),
-    }
+    payload = _delivery_payload(lead, site)
     delivery = WebhookDelivery(
         tenant_id=lead.tenant_id,
         site_id=site.id,
         lead_id=lead.id,
-        target_key="site_contacts",
+        target_key="site_webhook",
+        channel="webhook",
         target_url=url,
         target_secret_enc=target_secret_enc,
         payload=payload,
@@ -93,6 +114,64 @@ async def create_lead_delivery(
     if not target_secret_enc:
         lead.crm_status = "dead_letter"
     return delivery
+
+
+async def _private_lead_email_enc(db: AsyncSession, site: Site) -> str | None:
+    if not site.project_id:
+        return None
+    return (
+        await db.execute(
+            select(ProjectFactRevision.private_lead_email_enc)
+            .join(Project, Project.current_fact_revision_id == ProjectFactRevision.id)
+            .where(
+                Project.id == site.project_id,
+                Project.tenant_id == site.tenant_id,
+                ProjectFactRevision.project_id == Project.id,
+                ProjectFactRevision.state == "confirmed",
+            )
+        )
+    ).scalar_one_or_none()
+
+
+def create_smtp_delivery(
+    db: AsyncSession, *, lead: Lead, site: Site, recipient_enc: str
+) -> WebhookDelivery:
+    payload = _delivery_payload(lead, site)
+    configured = get_settings().smtp_configured
+    delivery = WebhookDelivery(
+        tenant_id=lead.tenant_id,
+        site_id=site.id,
+        lead_id=lead.id,
+        target_key="private_email",
+        channel="email",
+        target_recipient_enc=recipient_enc,
+        payload=payload,
+        idempotency_key=payload["idempotency_key"],
+        status="queued" if configured else "dead_letter",
+        max_attempts=MAX_ATTEMPTS,
+        next_attempt_at=_now() if configured else None,
+        last_error=None if configured else "SMTP transport is not configured",
+        dead_lettered_at=None if configured else _now(),
+    )
+    db.add(delivery)
+    if not configured:
+        lead.crm_status = "dead_letter"
+    return delivery
+
+
+async def create_lead_deliveries(
+    db: AsyncSession, *, lead: Lead, site: Site
+) -> list[WebhookDelivery]:
+    deliveries = []
+    webhook = await create_lead_delivery(db, lead=lead, site=site)
+    if webhook:
+        deliveries.append(webhook)
+    recipient_enc = await _private_lead_email_enc(db, site)
+    if recipient_enc:
+        deliveries.append(
+            create_smtp_delivery(db, lead=lead, site=site, recipient_enc=recipient_enc)
+        )
+    return deliveries
 
 
 async def enqueue_delivery(delivery_id: UUID, *, trigger: str = "automatic") -> bool:
@@ -144,6 +223,74 @@ async def recover_expired_leases(db: AsyncSession) -> int:
     return len(rows)
 
 
+def _smtp_message(payload: dict, sender: str, recipient: str) -> EmailMessage:
+    message = EmailMessage()
+    message["Subject"] = f"Новая заявка с сайта {payload.get('domain') or 'Site Panel'}"
+    message["From"] = sender
+    message["To"] = recipient
+    message.set_content(
+        "\n".join(
+            [
+                "Новая заявка",
+                f"Сайт: {payload.get('domain') or '—'}",
+                f"Страница: {payload.get('page_slug') or '—'}",
+                f"Телефон: {payload.get('phone') or '—'}",
+                f"Email: {payload.get('email') or '—'}",
+                f"Имя: {payload.get('name') or '—'}",
+                "",
+                "Сообщение:",
+                str(payload.get("message") or "—"),
+            ]
+        )
+    )
+    return message
+
+
+def _send_smtp_message(payload: dict, recipient: str) -> None:
+    settings = get_settings()
+    message = _smtp_message(payload, settings.smtp_from_email, recipient)
+    client_class = smtplib.SMTP_SSL if settings.smtp_use_ssl else smtplib.SMTP
+    with client_class(settings.smtp_host, settings.smtp_port, timeout=10) as client:
+        client.ehlo()
+        if settings.smtp_starttls:
+            client.starttls(context=ssl.create_default_context())
+            client.ehlo()
+        if settings.smtp_username:
+            client.login(settings.smtp_username, settings.smtp_password)
+        client.send_message(message, from_addr=settings.smtp_from_email, to_addrs=[recipient])
+
+
+async def dispatch_smtp(recipient: str, payload: dict) -> dict:
+    if not get_settings().smtp_configured:
+        return {"ok": False, "error": "SMTP transport is not configured", "retryable": False}
+    try:
+        await asyncio.to_thread(_send_smtp_message, payload, recipient)
+    except Exception:  # SMTP details can contain sensitive infrastructure context.
+        return {"ok": False, "error": "SMTP delivery failed", "retryable": True}
+    return {"ok": True}
+
+
+async def _dispatch_delivery(delivery: WebhookDelivery, lead: Lead) -> dict:
+    channel = getattr(delivery, "channel", "webhook")
+    if channel == "webhook":
+        if not delivery.target_secret_enc:
+            return {"ok": False, "error": "Webhook secret is not configured", "retryable": False}
+        secret = _decrypt_secret(delivery.target_secret_enc)
+        return (
+            await dispatch_webhook(delivery.target_url or "", wire_payload(delivery, lead), secret)
+            if secret is not None
+            else {"ok": False, "error": "Webhook secret cannot be decrypted", "retryable": False}
+        )
+    if channel == "email":
+        recipient = _decrypt(delivery.target_recipient_enc or "")
+        return (
+            await dispatch_smtp(recipient, wire_payload(delivery, lead))
+            if recipient
+            else {"ok": False, "error": "SMTP recipient cannot be decrypted", "retryable": False}
+        )
+    return {"ok": False, "error": "Unsupported delivery channel", "retryable": False}
+
+
 async def process_delivery(
     db: AsyncSession, delivery_id: UUID, *, trigger: str = "automatic"
 ) -> dict:
@@ -184,17 +331,9 @@ async def process_delivery(
     db.add(attempt)
     await db.commit()
 
-    if not delivery.target_secret_enc:
-        result = {"ok": False, "error": "Webhook secret is not configured"}
-    else:
-        lead = await db.get(Lead, delivery.lead_id)
-        assert lead is not None
-        secret = _decrypt_secret(delivery.target_secret_enc)
-        result = (
-            await dispatch_webhook(delivery.target_url, wire_payload(delivery, lead), secret)
-            if secret is not None
-            else {"ok": False, "error": "Webhook secret cannot be decrypted"}
-        )
+    lead = await db.get(Lead, delivery.lead_id)
+    assert lead is not None
+    result = await _dispatch_delivery(delivery, lead)
 
     delivery = (
         await db.execute(

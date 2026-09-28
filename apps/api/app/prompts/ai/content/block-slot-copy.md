@@ -1,7 +1,7 @@
 # Curated block slot copy
 
 - **ID:** `content.block-slot-copy`
-- **Version:** `1.0.0`
+- **Version:** `1.1.0`
 - **Approval boundary:** output is an unapproved text-slot proposal; it cannot change PageDraft or publish state by itself.
 - **Evaluation fixtures:** `../evals/content/block-slot-copy.jsonl`
 
@@ -22,7 +22,7 @@ Preserve the approved block ID and every declared slot name. Populate only suppl
 ```json
 {
   "approved_page_plan": {"slug":"/", "kit_key":"", "block_selection":{"blocks":[]}},
-  "block": {"id":"hero", "slot_schema":{"unique_core":{"type":"string","max_length":8000}}},
+  "block": {"id":"hero", "slot_schema":{"unique_core":{"type":"string","max_length":8000},"hero_supporting_text":{"type":"string","max_length":280}}},
   "confirmed_facts": [{"fact_key":"", "value":""}],
   "selected_keywords": [],
   "validated_geo": []
@@ -45,7 +45,7 @@ Do not output any key not present in `slot_schema`. An empty `slots` object is v
 ## Example
 
 ```json
-{"block_id":"hero","slots":{"headline":"Подтверждённая услуга"},"fact_keys":["service"],"warnings":[]}
+{"block_id":"hero","slots":{"unique_core":"Подтверждённая услуга","hero_supporting_text":"Условия согласуем до начала работ"},"fact_keys":["service"],"warnings":[]}
 ```
 
 ## Human decision

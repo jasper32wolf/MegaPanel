@@ -12,6 +12,7 @@ WORKER_DOCKERFILE_PATH = ROOT / "infra" / "docker" / "Dockerfile.worker"
 PROVISIONER_PATH = ROOT / "scripts" / "install-production-vps.sh"
 DEV_INSTALLER_PATH = ROOT / "scripts" / "install.sh"
 CI_PATH = ROOT / ".github" / "workflows" / "ci.yml"
+PANEL_ROOT = ROOT / "apps" / "panel"
 
 
 def production_compose() -> dict:
@@ -49,6 +50,17 @@ def test_panel_e2e_always_uploads_playwright_diagnostics():
     )
 
 
+def test_panel_uses_bundled_logo_and_favicon():
+    index = (PANEL_ROOT / "index.html").read_text(encoding="utf-8")
+    shell = (PANEL_ROOT / "src" / "components" / "Shell.tsx").read_text(encoding="utf-8")
+    login = (PANEL_ROOT / "src" / "pages" / "LoginPage.tsx").read_text(encoding="utf-8")
+
+    assert (PANEL_ROOT / "public" / "site-panel-mark.svg").is_file()
+    assert 'rel="icon" type="image/svg+xml" href="/site-panel-mark.svg"' in index
+    assert 'src="/site-panel-mark.svg"' in shell
+    assert 'src="/site-panel-mark.svg"' in login
+
+
 def test_production_compose_exposes_only_caddy_http_ports():
     services = production_compose()["services"]
 
@@ -79,6 +91,25 @@ def test_production_api_and_worker_are_hardened():
         assert service["read_only"] is True
         assert service["cap_drop"] == ["ALL"]
         assert service["tmpfs"] == ["/tmp"]
+
+
+def test_caddy_state_volumes_are_prepared_before_non_root_caddy_starts():
+    services = production_compose()["services"]
+    state_init = services["caddy-state-init"]
+    caddy = services["caddy"]
+
+    assert state_init["user"] == "0:0"
+    assert state_init["read_only"] is True
+    assert state_init["cap_drop"] == ["ALL"]
+    assert state_init["cap_add"] == ["CHOWN", "FOWNER", "DAC_OVERRIDE"]
+    assert state_init["entrypoint"] == ["/bin/sh", "-ec"]
+    assert state_init["command"] == "mkdir -p /data /config && chown -R 10001:10001 /data /config"
+    assert {volume["target"] for volume in state_init["volumes"]} == {"/data", "/config"}
+    assert all(volume["volume"] == {"nocopy": True} for volume in state_init["volumes"])
+    assert caddy["user"] == "10001:10001"
+    assert caddy["depends_on"]["caddy-state-init"] == {
+        "condition": "service_completed_successfully"
+    }
 
 
 def test_worker_healthcheck_uses_arq_liveness_key():
@@ -117,12 +148,92 @@ def test_caddy_fallback_never_serves_candidate_release_volume():
         assert 'respond "Not found" 404' in config
 
 
+def test_ci_validates_production_caddyfile_with_caddy_binary():
+    workflow = yaml.safe_load(CI_PATH.read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["release-automation"]["steps"]
+    command = next(
+        step["run"] for step in steps if step.get("name") == "Validate production Caddyfile"
+    )
+
+    assert "caddy:2.8-alpine" in command
+    assert "Caddyfile.production:/etc/caddy/Caddyfile:ro" in command
+    assert "caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile" in command
+    for name in ("CADDY_EMAIL", "PANEL_DOMAIN", "API_DOMAIN"):
+        assert f"--env {name}=" in command
+
+
 def test_worker_image_uses_the_api_owned_delivery_registry():
     dockerfile = WORKER_DOCKERFILE_PATH.read_text(encoding="utf-8")
 
     assert "COPY apps/api /app/apps/api" in dockerfile
     assert "WORKDIR /app/apps/api" in dockerfile
     assert 'CMD ["arq", "app.worker.WorkerSettings"]' in dockerfile
+
+
+def test_ci_runs_worker_production_image_liveness_smoke():
+    workflow = yaml.safe_load(CI_PATH.read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["integration-services"]["steps"]
+    command = next(
+        step["run"]
+        for step in steps
+        if step.get("name") == "Worker production image liveness smoke"
+    )
+
+    assert "docker build" in command
+    assert "infra/docker/Dockerfile.worker" in command
+    assert "docker run --detach --rm" in command
+    assert "--network host" in command
+    assert "arq --check app.worker.WorkerSettings" in command
+    assert "docker rm --force" in command
+
+
+def test_ci_runs_authenticated_production_compose_smoke_through_caddy():
+    workflow = yaml.safe_load(CI_PATH.read_text(encoding="utf-8"))
+    job = workflow["jobs"]["production-compose-smoke"]
+    command = next(
+        step["run"]
+        for step in job["steps"]
+        if step.get("name") == "Start isolated production Compose stack"
+    )
+
+    assert job["runs-on"] == "ubuntu-latest"
+    assert job["timeout-minutes"] == 20
+    assert any(step.get("uses") == "actions/setup-node@v4" for step in job["steps"])
+    browser_setup = next(
+        step["run"]
+        for step in job["steps"]
+        if step.get("name") == "Install Chromium for Caddy browser smoke"
+    )
+    assert "npm ci" in browser_setup
+    assert "npx playwright install --with-deps chromium" in browser_setup
+    assert "APP_ENV=production" in command
+    assert "PANEL_DOMAIN=localhost" in command
+    assert "API_DOMAIN=api.localhost" in command
+    assert "docker compose -f infra/docker/docker-compose.production.yml" in command
+    assert "up --build --detach" in command
+    assert "https://localhost/" in command
+    assert '<div id="root"></div>' in command
+    assert "CaddyClient().upsert_site_vhost(" in command
+    assert '"site.localhost", "/srv/sites/compose-smoke/current"' in command
+    assert "https://site.localhost${path}" in command
+    assert "https://site.localhost/api/v1/leads/public" in command
+    assert "compose-smoke-lead-token-00000001" in command
+    assert "Compose encrypted lead" in command
+    assert 'lead.phone_enc != "+79990000000"' in command
+    assert 'lead.message_enc != "Compose encrypted lead"' in command
+    assert 'target_key="compose-worker-smoke"' in command
+    assert "target_secret_enc=None" in command
+    assert "assert await enqueue_delivery(delivery_id)" in command
+    assert 'delivery.status == "dead_letter"' in command
+    assert "https://localhost/api/v1/auth/login" in command
+    assert "https://localhost/api/v1/security/me" in command
+    assert "chromium.launch" in command
+    assert 'baseURL: "https://localhost"' in command
+    assert 'getByRole("heading", { name: "Обзор" })' in command
+    assert 'getByText("API: ok")' in command
+    assert "exec -T worker arq --check app.worker.WorkerSettings" in command
+    assert "exec -T caddy wget" in command
+    assert "down --volumes --remove-orphans" in command
 
 
 def test_vps_provisioner_uses_immutable_production_release_path():

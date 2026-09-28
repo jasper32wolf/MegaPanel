@@ -18,8 +18,9 @@ type Inbox = { items: Lead[]; offset: number; limit: number; total: number };
 type LeadDetail = Lead & { notes: string | null; utm: Record<string, unknown> };
 type LeadPii = { id: string; phone: string | null; email: string | null; name: string | null; message: string | null };
 type DeliveryAttempt = { sequence: number; trigger: string; status: string; http_status: number | null; error: string | null; started_at: string | null; finished_at: string | null };
-type Delivery = { id: string; target: string; status: string; attempt_count: number; max_attempts: number; next_attempt_at: string | null; last_error: string | null; last_http_status: number | null };
-type DeliveryHistory = { delivery: Delivery | null; attempts: DeliveryAttempt[] };
+type Delivery = { id: string; channel: "webhook" | "email"; target: string | null; status: string; attempt_count: number; max_attempts: number; next_attempt_at: string | null; last_error: string | null; last_http_status: number | null };
+type DeliveryRecord = { delivery: Delivery; attempts: DeliveryAttempt[] };
+type DeliveryHistory = { deliveries: DeliveryRecord[] };
 type LeadOutcome = { id: string; outcome: string; reason: string | null; note: string | null; created_at: string | null };
 type LeadAnalysis = { total: number; evaluated: number; unassessed: number; by_outcome: Record<string, number>; by_page: Record<string, number> };
 
@@ -139,12 +140,12 @@ export function LeadsPage() {
     }
   }
 
-  async function resendDelivery() {
-    if (!detail || !delivery?.delivery) return;
-    setBusy(`resend:${detail.id}`);
+  async function resendDelivery(item: Delivery) {
+    if (!detail) return;
+    setBusy(`resend:${item.id}`);
     setError(null);
     try {
-      await api(`/api/v1/leads/${detail.id}/delivery/resend`, { method: "POST" }, token);
+      await api(`/api/v1/leads/${detail.id}/delivery/${item.id}/resend`, { method: "POST" }, token);
       await load();
       setDelivery(await api<DeliveryHistory>(`/api/v1/leads/${detail.id}/delivery`, {}, token));
     } catch (cause) {
@@ -285,7 +286,28 @@ export function LeadsPage() {
       {exportConfirmation && <Surface title="Экспортировать лиды"><p className="muted">CSV содержит контактные данные и сообщение всех {total} лидов из текущей выборки. Файл нельзя безопасно передавать третьим лицам. Экспорт будет записан в audit log.</p><div className="row"><button className="btn" type="button" disabled={busy !== null} onClick={exportLeads}>{busy === "export" ? "Подготовка…" : "Подтвердить экспорт"}</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => setExportConfirmation(false)}>Отмена</button></div></Surface>}
       {detail && <Surface title="Карточка лида"><div className="detail-grid"><div><strong>Сайт</strong><p>{detail.site_domain}</p></div><div><strong>Статус</strong><p>{detail.status}</p></div><div><strong>Страница</strong><p>{detail.page_slug || "—"}</p></div><div><strong>CRM</strong><p>{detail.crm_status || "—"}</p></div></div>{pii ? <><div className="detail-grid"><div><strong>Телефон</strong><p>{pii.phone || "—"}</p></div><div><strong>Email</strong><p>{pii.email || "—"}</p></div><div><strong>Имя</strong><p>{pii.name || "—"}</p></div></div><div><strong>Сообщение</strong><p>{pii.message || "—"}</p></div></> : <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={revealPii}>{busy === `reveal:${detail.id}` ? "Раскрытие…" : "Раскрыть контакты и сообщение"}</button>}<label className="field" style={{ marginTop: "1rem" }}>Заметка<textarea value={notes} onChange={(event) => setNotes(event.target.value)} maxLength={4000} rows={4} /></label><div className="row"><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={saveNotes}>{busy === `notes:${detail.id}` ? "Сохранение…" : "Сохранить заметку"}</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={loadDelivery}>{busy === `delivery:${detail.id}` ? "Загрузка…" : "История доставки"}</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => { setDetail(null); setDelivery(null); setPii(null); setNotes(""); }}>Закрыть карточку</button></div></Surface>}
       {detail && <Surface title="Исход лида"><form className="stack" onSubmit={recordOutcome}><p className="muted" style={{ margin: 0 }}>Зафиксируйте результат общения отдельно от статуса inbox и технической доставки webhook.</p><label className="field">Исход<select value={outcome} onChange={(event) => setOutcome(event.target.value)}>{outcomes.map((item) => <option key={item} value={item}>{item}</option>)}</select></label><label className="field">Причина<select value={outcomeReason} onChange={(event) => setOutcomeReason(event.target.value)}><option value="">Не указана</option>{outcomeReasons.map((item) => <option key={item} value={item}>{item}</option>)}</select></label><label className="field">Заметка об исходе<textarea value={outcomeNote} onChange={(event) => setOutcomeNote(event.target.value)} maxLength={4000} rows={3} /></label><button className="btn btn-ghost" type="submit" disabled={busy !== null}>{busy === `outcome:${detail.id}` ? "Сохранение…" : "Сохранить исход"}</button></form>{outcomesHistory.length === 0 ? <EmptyState title="Исходы ещё не зафиксированы" /> : <DataTable headers={["Исход", "Причина", "Заметка", "Когда"]}>{outcomesHistory.map((item) => <tr key={item.id}><td><StatusPill tone={toneOutcome(item.outcome)}>{item.outcome}</StatusPill></td><td>{item.reason || "—"}</td><td className="muted">{item.note || "—"}</td><td className="muted">{item.created_at?.slice(0, 19) || "—"}</td></tr>)}</DataTable>}</Surface>}
-      {detail && delivery && <Surface title="Доставка webhook"><div className="detail-grid"><div><strong>Статус</strong><p><StatusPill tone={delivery.delivery?.status === "delivered" ? "ok" : delivery.delivery?.status === "dead_letter" ? "danger" : "warn"}>{delivery.delivery?.status || "не настроена"}</StatusPill></p></div>{delivery.delivery && <><div><strong>Попытки</strong><p>{delivery.delivery.attempt_count} / {delivery.delivery.max_attempts}</p></div><div><strong>Следующая попытка</strong><p>{delivery.delivery.next_attempt_at?.slice(0, 19) || "—"}</p></div><div><strong>Последний ответ</strong><p>{delivery.delivery.last_http_status || "—"}</p></div></>}</div>{delivery.delivery?.last_error && <p className="error">{delivery.delivery.last_error}</p>}{delivery.delivery?.status === "dead_letter" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={resendDelivery}>{busy === `resend:${detail.id}` ? "Запуск…" : "Повторить доставку"}</button>}<DataTable headers={["#", "Тип", "Статус", "HTTP", "Ошибка", "Когда"]}>{delivery.attempts.map((attempt) => <tr key={attempt.sequence}><td>{attempt.sequence}</td><td>{attempt.trigger}</td><td><StatusPill tone={attempt.status === "delivered" ? "ok" : attempt.status === "dead_letter" ? "danger" : "warn"}>{attempt.status}</StatusPill></td><td>{attempt.http_status || "—"}</td><td className="muted">{attempt.error || "—"}</td><td className="muted">{attempt.started_at?.slice(0, 19) || "—"}</td></tr>)}{delivery.attempts.length === 0 && <tr><td colSpan={6}><EmptyState title="Попыток пока нет" /></td></tr>}</DataTable></Surface>}
+      {detail && delivery && <Surface title="Доставка заявок">
+        <p className="muted">Получатель private email намеренно не раскрывается в панели, API и audit log. Для SMTP показан только канал доставки.</p>
+        {delivery.deliveries.length === 0 && <EmptyState title="Доставка не настроена" hint="Настройте webhook либо сохраните private recipient в подтверждённых facts проекта и SMTP transport в VPS environment." />}
+        {delivery.deliveries.map(({ delivery: item, attempts }) => (
+          <section key={item.id} className="stack" style={{ borderTop: "1px solid var(--border)", paddingTop: "1rem", marginTop: "1rem" }}>
+            <div className="detail-grid">
+              <div><strong>Канал</strong><p>{item.channel === "email" ? "Private email" : "Webhook"}</p></div>
+              <div><strong>Статус</strong><p><StatusPill tone={item.status === "delivered" ? "ok" : item.status === "dead_letter" ? "danger" : "warn"}>{item.status}</StatusPill></p></div>
+              <div><strong>Попытки</strong><p>{item.attempt_count} / {item.max_attempts}</p></div>
+              <div><strong>Следующая попытка</strong><p>{item.next_attempt_at?.slice(0, 19) || "—"}</p></div>
+              {item.channel === "webhook" && <div><strong>Цель</strong><p>{item.target || "—"}</p></div>}
+              {item.channel === "webhook" && <div><strong>Последний HTTP-ответ</strong><p>{item.last_http_status || "—"}</p></div>}
+            </div>
+            {item.last_error && <p className="error">{item.last_error}</p>}
+            {item.status === "dead_letter" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => resendDelivery(item)}>{busy === `resend:${item.id}` ? "Запуск…" : "Повторить доставку"}</button>}
+            <DataTable headers={["#", "Тип", "Статус", "HTTP", "Ошибка", "Когда"]}>
+              {attempts.map((attempt) => <tr key={attempt.sequence}><td>{attempt.sequence}</td><td>{attempt.trigger}</td><td><StatusPill tone={attempt.status === "delivered" ? "ok" : attempt.status === "dead_letter" ? "danger" : "warn"}>{attempt.status}</StatusPill></td><td>{attempt.http_status || "—"}</td><td className="muted">{attempt.error || "—"}</td><td className="muted">{attempt.started_at?.slice(0, 19) || "—"}</td></tr>)}
+              {attempts.length === 0 && <tr><td colSpan={6}><EmptyState title="Попыток пока нет" /></td></tr>}
+            </DataTable>
+          </section>
+        ))}
+      </Surface>}
     </div>
   );
 }

@@ -128,6 +128,35 @@ class AIBlockSlotCopyRequest(AIDraftGenerationRequest):
     block_id: str = Field(min_length=1, max_length=128)
 
 
+class GeoAIProposalRequest(AIDraftGenerationRequest):
+    city_id: UUID
+    max_places: int = Field(default=20, ge=1, le=50)
+    operator_guidance: list[str] = Field(default_factory=list, max_length=20)
+
+
+class GeoAIProposalNode(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    key: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9-]+$")
+    kind: Literal["district", "metro", "landmark"]
+    name: str = Field(min_length=1, max_length=255)
+    parent_key: str = Field(min_length=1, max_length=64, pattern=r"^(city|[a-z0-9-]+)$")
+    notes: list[str] = Field(default_factory=list, max_length=10)
+
+
+class GeoAIProposalOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    nodes: list[GeoAIProposalNode] = Field(default_factory=list, max_length=50)
+    warnings: list[str] = Field(default_factory=list, max_length=20)
+
+
+class GeoAIProposalApply(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    nodes: list[GeoAIProposalNode] | None = Field(default=None, max_length=50)
+
+
 class AIBlockSlotCopyOut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

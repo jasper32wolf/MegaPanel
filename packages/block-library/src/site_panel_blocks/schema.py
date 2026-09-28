@@ -24,12 +24,18 @@ class ThemeProfile(BaseModel):
     font_pair: FontPair = "sans"
 
 
+class EditableSlotSpec(BaseModel):
+    type: Literal["string"] = "string"
+    max_length: int = Field(ge=1, le=8000)
+
+
 class BlockSpec(BaseModel):
     type: str
     name: str
     html: str
     css: str = ""
     props: dict[str, Any] = Field(default_factory=dict)
+    editable_slots: dict[str, EditableSlotSpec] = Field(default_factory=dict)
     cro: list[str] = Field(default_factory=list)
 
 

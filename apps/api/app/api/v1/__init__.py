@@ -7,6 +7,7 @@ from app.api.v1 import (
     auth,
     blocks,
     bulk,
+    competitors,
     domains,
     geo,
     health,
@@ -15,6 +16,7 @@ from app.api.v1 import (
     media,
     panel,
     projects,
+    prompts,
     security_ops,
     sites,
     system,
@@ -31,6 +33,7 @@ api_router.include_router(geo.router, prefix="/geo", tags=["geo"])
 api_router.include_router(blocks.router, prefix="/blocks", tags=["blocks"])
 api_router.include_router(media.router, prefix="/media", tags=["media"])
 api_router.include_router(domains.router, prefix="/domains", tags=["domains"])
+api_router.include_router(competitors.router, prefix="/competitors", tags=["competitors"])
 api_router.include_router(bulk.router, prefix="/bulk", tags=["bulk"])
 api_router.include_router(leads.router, prefix="/leads", tags=["leads"])
 api_router.include_router(panel.router, prefix="/panel", tags=["panel"])
@@ -38,4 +41,5 @@ api_router.include_router(projects.router, prefix="/projects", tags=["projects"]
 api_router.include_router(ai_content.router, prefix="/projects", tags=["ai-content"])
 api_router.include_router(system.router, prefix="/system", tags=["system"])
 api_router.include_router(ai_workspace.router, prefix="/ai", tags=["ai-workspace"])
+api_router.include_router(prompts.router, prefix="/ai/prompts", tags=["ai-prompts"])
 api_router.include_router(ai_providers.router, prefix="/ai/providers", tags=["ai-providers"])

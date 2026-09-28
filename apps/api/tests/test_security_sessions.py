@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -15,6 +16,29 @@ class QueryResult:
 
     def scalar_one_or_none(self) -> object:
         return self.value
+
+
+class SessionRows:
+    def __init__(self, items: list[object]) -> None:
+        self.items = items
+
+    def scalars(self) -> SessionRows:
+        return self
+
+    def all(self) -> list[object]:
+        return self.items
+
+
+class SessionListDatabase:
+    def __init__(self, active: list[object], recent: list[object], total: int) -> None:
+        self.rows = [SessionRows(active), SessionRows(recent)]
+        self.total = total
+
+    async def execute(self, _statement: object) -> SessionRows:
+        return self.rows.pop(0)
+
+    async def scalar(self, _statement: object) -> int:
+        return self.total
 
 
 class SecurityDatabase:
@@ -92,6 +116,49 @@ def test_totp_confirmation_rejects_an_invalid_code(monkeypatch):
     assert user.totp_secret is None
     assert user.mfa_enabled is False
     assert database.commits == 0
+
+
+def test_session_summary_keeps_all_active_and_limits_recent_rows():
+    now = datetime.now(UTC)
+    user = SimpleNamespace(id=uuid4(), tenant_id=uuid4())
+    current = SimpleNamespace(
+        id=uuid4(),
+        created_at=now,
+        expires_at=now + timedelta(days=1),
+        revoked_at=None,
+    )
+    active = SimpleNamespace(
+        id=uuid4(),
+        created_at=now - timedelta(hours=1),
+        expires_at=now + timedelta(days=1),
+        revoked_at=None,
+    )
+    recent = SimpleNamespace(
+        id=uuid4(),
+        created_at=now - timedelta(days=1),
+        expires_at=now - timedelta(hours=1),
+        revoked_at=now - timedelta(hours=2),
+    )
+
+    payload = asyncio.run(
+        security_ops.list_sessions(
+            auth_context(user, current.id),
+            SessionListDatabase([current, active], [recent], 12),
+        )
+    )
+
+    assert [item["id"] for item in payload["active"]] == [str(current.id), str(active.id)]
+    assert payload["active"][0]["current"] is True
+    assert payload["recent"] == [
+        {
+            "id": str(recent.id),
+            "current": False,
+            "created_at": recent.created_at.isoformat(),
+            "expires_at": recent.expires_at.isoformat(),
+            "revoked_at": recent.revoked_at.isoformat(),
+        }
+    ]
+    assert payload["history_total"] == 12
 
 
 def test_session_revoke_marks_only_a_noncurrent_session(monkeypatch):

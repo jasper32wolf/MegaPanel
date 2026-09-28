@@ -221,14 +221,19 @@ def test_unready_generation_apis_are_not_exposed():
 
     assert "/api/v1/ai/micro-infill" not in paths
     assert "/api/v1/ai/prompts/seed" not in paths
-    assert "/api/v1/competitors/scan" not in paths
-    assert "/api/v1/competitors/scans" not in paths
 
     with TestClient(app) as client:
         assert client.post("/api/v1/ai/micro-infill", json={}).status_code == 404
         assert client.post("/api/v1/ai/prompts/seed", json={}).status_code == 404
-        assert client.post("/api/v1/competitors/scan", json={}).status_code == 404
-        assert client.get("/api/v1/competitors/scans").status_code == 404
+
+
+def test_manual_competitor_research_routes_are_private_operator_apis():
+    paths = app.openapi()["paths"]
+
+    assert "post" in paths["/api/v1/competitors/scan"]
+    assert "get" in paths["/api/v1/competitors/scans"]
+    assert "security" in paths["/api/v1/competitors/scan"]["post"]
+    assert "security" in paths["/api/v1/competitors/scans"]["get"]
 
 
 def test_unready_custom_block_apis_are_not_exposed():
