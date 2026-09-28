@@ -35,11 +35,16 @@
 - **Run:** не указан
 - **Commit:** не указан
 - **Статус:** `investigating`
-- **Первый полезный error:** пока не получен.
-- **Полученный фрагмент:** PostgreSQL и Redis успешно инициализированы; затем GitHub cleanup остановил все Compose services и удалил volumes. В выводе нет лога `migrate`, `api`, `worker`, `caddy`, строки `API health smoke timed out` или исходной команды, завершившейся с ненулевым status. Поэтому PostgreSQL locale warning и Redis host warning не считаются причиной job failure.
-- **Локальное воспроизведение:** не выполнено — Docker CLI в текущем окружении недоступен.
-- **Локальное исправление:** production Compose теперь строит Python dependencies только один раз в `site-panel-api:local`; `migrate`, `api` и `worker` запускаются из этого image разными командами. Это убирает три параллельных `pip install`/image build из hosted job и уменьшает вероятность timeout/resource failure.
-- **Следующий шаг:** новый hosted run на commit с single-image Compose. Если он всё ещё упадёт, artifact `production-compose-diagnostics` содержит bounded build/ps/services logs с первичной ошибкой.
+- **Первый полезный error:**
+  ```text
+  caddy-state-init | Usage: chown [-RhLHPcvf]... USER[:[GRP]] FILE...
+  service "caddy-state-init" didn't complete successfully: exit 1
+  ```
+- **Подтверждённая причина:** Compose shell-form `command: "chown 10001:10001 /data /config"` передавал `chown` как отдельную программу для `sh -ec`, а ownership operands становились shell positional parameters. BusyBox запускал `chown` без файлов и печатал usage.
+- **Исправление:** `command` заменена на argv-массив `["chown 10001:10001 /data /config"]`; вся shell command передаётся одним аргументом после `-c`.
+- **Дополнительное улучшение:** Python dependencies production image теперь собираются один раз в `site-panel-api:local`, а `migrate` и `worker` используют тот же image. CI сохраняет bounded build/ps/service logs в artifact `production-compose-diagnostics` при любой следующей ошибке.
+- **Локальная проверка:** production Compose contract tests — 18 passed; Compose YAML parse passed. Docker runtime локально недоступен.
+- **Hosted verification:** требуется новый run на commit с argv fix.
 
 ### 2026-09-28 — `panel-e2e` / candidate workflow
 
@@ -50,8 +55,8 @@
   ```text
   strict mode violation: getByText('E2E город …') resolved to 2 elements
   ```
-- **Причина:** после создания города одинаковый текст присутствует в option выбора AI-географии и в strong таблицы иерархии. E2E ожидал неуточнённый text locator.
-- **Изменение:** assertion заменён на `getByRole("strong", { name: city, exact: true })`, то есть проверяет именно созданную запись таблицы.
+- **Причина:** первая замена на `getByRole("strong", ...)` оказалась неверной: HTML-тег `strong` не является стабильной ARIA role и locator не находил элемент.
+- **Изменение:** E2E находит единственную строку `tbody tr` с именем города и ожидает видимую кнопку «Изменить» внутри неё. Это проверяет созданную запись иерархии без зависимости от duplicate option или несуществующей role.
 - **Локальная проверка:** `npm --prefix apps/panel run build` и `npx playwright test --list` проходят. Полный browser scenario требует controlled API/PostgreSQL/Redis stack и здесь не запускался.
 - **Hosted verification:** не выполнена; нужен новый GitHub run на commit с исправлением.
 
