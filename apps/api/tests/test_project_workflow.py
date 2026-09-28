@@ -585,3 +585,24 @@ def test_fact_revision_keeps_public_privacy_contact_separate_from_private_lead_e
 
     assert revision.facts["legal"]["privacy_email"] == "privacy@example.com"
     assert str(revision.private_lead_email) == "leads@example.com"
+
+
+def test_legal_publish_gate_requires_explicit_public_legal_fields():
+    from app.api.v1.projects import _legal_publish_blockers
+    from site_panel_shared.manifests import SiteManifest
+
+    manifest = SiteManifest(site_id=uuid4(), tenant_id=uuid4(), domain="example.test")
+    assert _legal_publish_blockers(manifest) == [
+        "Set the legal organization before publish",
+        "Set the legal address before publish",
+        "Set the legal jurisdiction before publish",
+        "Set a public privacy/DSAR email before publish",
+    ]
+
+    manifest.legal = {
+        "org": "ООО Тест",
+        "address": "Казань, улица Тестовая, 1",
+        "jurisdiction": "Российская Федерация",
+        "privacy_email": "privacy@example.com",
+    }
+    assert _legal_publish_blockers(manifest) == []

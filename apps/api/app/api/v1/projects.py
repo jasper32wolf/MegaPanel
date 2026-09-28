@@ -84,6 +84,17 @@ async def _project_or_404(db: AsyncSession, project_id: UUID, auth: AuthContext)
     return project
 
 
+def _legal_publish_blockers(manifest: SiteManifest) -> list[str]:
+    legal = manifest.legal or {}
+    required = {
+        "org": "Set the legal organization before publish",
+        "address": "Set the legal address before publish",
+        "jurisdiction": "Set the legal jurisdiction before publish",
+        "privacy_email": "Set a public privacy/DSAR email before publish",
+    }
+    return [message for key, message in required.items() if not str(legal.get(key) or "").strip()]
+
+
 async def _project_site_or_409(db: AsyncSession, project: Project) -> Site:
     if not project.site_id:
         raise HTTPException(status_code=409, detail="Project has no site")
@@ -1970,6 +1981,10 @@ async def publish_project_build(
         raise HTTPException(
             status_code=409, detail={"blockers": ["Select a ready candidate build"]}
         )
+    manifest = SiteManifest.model_validate(build.manifest_snapshot or site.manifest)
+    legal_blockers = _legal_publish_blockers(manifest)
+    if legal_blockers:
+        raise HTTPException(status_code=409, detail={"blockers": legal_blockers})
     old_hash = site.build_hash
     builder = SiteBuilder(Path(settings.sites_root))
     if not builder.activate(str(site.id), build.build_hash):
@@ -1988,7 +2003,6 @@ async def publish_project_build(
     site.publish_state = "published"
     build.status = "published"
     build.activated_at = datetime.now(UTC)
-    manifest = SiteManifest.model_validate(build.manifest_snapshot or site.manifest)
     existing = {
         page.slug: page
         for page in (await db.execute(select(SitePage).where(SitePage.site_id == site.id)))

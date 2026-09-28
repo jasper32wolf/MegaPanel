@@ -88,6 +88,7 @@ export function ProjectWorkspacePage() {
   const [privateLeadEmail, setPrivateLeadEmail] = useState("");
   const [privacyEmail, setPrivacyEmail] = useState("");
   const [legal, setLegal] = useState("");
+  const [legalJurisdiction, setLegalJurisdiction] = useState("");
   const [inn, setInn] = useState("");
   const [companyHistory, setCompanyHistory] = useState("");
   const [mission, setMission] = useState("");
@@ -209,6 +210,7 @@ export function ProjectWorkspacePage() {
                   org: legal || organization,
                   inn: inn || undefined,
                   privacy_email: privacyEmail || undefined,
+                  jurisdiction: legalJurisdiction || undefined,
                   address: address || undefined,
                 },
                 company_history: companyHistory || undefined,
@@ -616,6 +618,7 @@ export function ProjectWorkspacePage() {
           <label className="field">Email для заявок<input type="email" value={privateLeadEmail} onChange={(event) => setPrivateLeadEmail(event.target.value)} placeholder="leads@example.com" /><span className="muted">Приватный маршрут доставки. Не публикуется на сайте и не отправляется AI-провайдерам.</span></label>
           <label className="field">Публичный email для privacy/DSAR<input type="email" value={privacyEmail} onChange={(event) => setPrivacyEmail(event.target.value)} placeholder="privacy@example.ru" /><span className="muted">Публичный юридический контакт для legal pages. Не используйте адрес для заявок, если он должен оставаться private.</span></label>
           <label className="field">Юридическое наименование<input value={legal} onChange={(event) => setLegal(event.target.value)} placeholder="ООО «Организация»" /></label>
+          <label className="field">Юрисдикция для legal pages<input value={legalJurisdiction} onChange={(event) => setLegalJurisdiction(event.target.value)} placeholder="Например: Российская Федерация" /><span className="muted">Обязательна перед public publish; preview и candidate build доступны для review без неё.</span></label>
           <label className="field">ИНН<input value={inn} onChange={(event) => setInn(event.target.value)} placeholder="1234567890" inputMode="numeric" /></label>
           <label className="field">История компании<textarea value={companyHistory} onChange={(event) => setCompanyHistory(event.target.value)} placeholder="Проверенные факты для страницы «История компании»" /></label>
           <label className="field">Миссия<textarea value={mission} onChange={(event) => setMission(event.target.value)} placeholder="Проверенная формулировка миссии" /></label>
