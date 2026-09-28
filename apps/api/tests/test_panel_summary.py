@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
-from app.api.v1.panel import report_summary
+from app.api.v1.panel import _worker_heartbeat_observation, report_summary
 
 
 class Result:
@@ -75,6 +76,26 @@ def test_report_summary_returns_actionable_current_state_alerts():
         "count": 1,
         "route": "/domains",
     }
+
+
+def test_worker_heartbeat_observation_is_truthful_about_freshness():
+    now = datetime(2026, 9, 29, 12, tzinfo=UTC)
+
+    assert _worker_heartbeat_observation(None, now, 90) == {
+        "status": "not_observed",
+        "last_heartbeat_at": None,
+        "age_seconds": None,
+        "stale_after_seconds": 90,
+        "reason": "No persisted worker heartbeat has been recorded",
+    }
+    fresh = _worker_heartbeat_observation(now - timedelta(seconds=30), now, 90)
+    assert fresh["status"] == "healthy"
+    assert fresh["age_seconds"] == 30
+    assert fresh["reason"] is None
+    stale = _worker_heartbeat_observation(now - timedelta(seconds=91), now, 90)
+    assert stale["status"] == "stale"
+    assert stale["age_seconds"] == 91
+    assert stale["stale_after_seconds"] == 90
 
 
 def test_observability_route_is_registered():

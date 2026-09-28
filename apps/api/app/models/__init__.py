@@ -283,6 +283,7 @@ from app.models.publish import (  # noqa: E402
     SitePage,
 )
 from app.models.system_operation import SystemOperation  # noqa: E402
+from app.models.worker_heartbeat import WorkerHeartbeat  # noqa: E402
 
 __all__ = [
     "AIRun",
@@ -340,5 +341,6 @@ __all__ = [
     "WebhookDelivery",
     "WebhookDeliveryAttempt",
     "WebhookSubscription",
+    "WorkerHeartbeat",
     "make_hash_class",
 ]

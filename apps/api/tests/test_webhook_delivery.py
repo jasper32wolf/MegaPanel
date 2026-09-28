@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
+from contextlib import asynccontextmanager
 from html.parser import HTMLParser
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,7 +24,7 @@ from app.services.webhook_delivery import (
     resend_delivery,
     wire_payload,
 )
-from app.worker import WorkerSettings, webhook_delivery_task
+from app.worker import WorkerSettings, webhook_delivery_task, worker_heartbeat_task
 from arq.constants import default_queue_name
 from arq.worker import Worker
 from httpx import ASGITransport, AsyncClient
@@ -61,7 +62,34 @@ def test_delivery_retry_policy_distinguishes_permanent_failures():
 def test_worker_registers_durable_delivery_tasks():
     names = {task.__name__ for task in WorkerSettings.functions}
 
-    assert {"webhook_delivery_task", "webhook_delivery_sweep_task"} <= names
+    assert {
+        "worker_heartbeat_task",
+        "webhook_delivery_task",
+        "webhook_delivery_sweep_task",
+    } <= names
+    heartbeat_job = next(
+        job for job in WorkerSettings.cron_jobs if job.coroutine is worker_heartbeat_task
+    )
+    assert heartbeat_job.run_at_startup is True
+    assert heartbeat_job.second == set(range(0, 60, 30))
+
+
+def test_worker_heartbeat_uses_persisted_database_signal(monkeypatch):
+    session = object()
+    recorded: list[object] = []
+
+    @asynccontextmanager
+    async def fake_open_db_session():
+        yield session
+
+    async def fake_record(value: object) -> None:
+        recorded.append(value)
+
+    monkeypatch.setattr("app.worker.open_db_session", fake_open_db_session)
+    monkeypatch.setattr("app.worker.record_worker_heartbeat", fake_record)
+
+    assert asyncio.run(worker_heartbeat_task({})) == {"ok": True}
+    assert recorded == [session]
 
 
 def test_delivery_reuses_encrypted_site_secret():

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Literal
 from urllib.parse import urlparse
 
 from pydantic import Field, model_validator
@@ -28,6 +29,8 @@ class Settings(BaseSettings):
     dsar_exports_root: str = "./data/dsar"
     dsar_export_ttl_hours: int = 24
     health_readiness_timeout_seconds: float = Field(default=2.0, gt=0, le=10)
+    worker_heartbeat_interval_seconds: Literal[10, 12, 15, 20, 30, 60] = 30
+    worker_heartbeat_stale_after_seconds: int = Field(default=90, ge=30, le=900)
 
     sentry_dsn: str = ""
     log_level: str = "INFO"
@@ -74,6 +77,10 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_production_settings(self) -> Settings:
+        if self.worker_heartbeat_stale_after_seconds < self.worker_heartbeat_interval_seconds * 2:
+            raise ValueError(
+                "WORKER_HEARTBEAT_STALE_AFTER_SECONDS must cover two heartbeat intervals"
+            )
         smtp_values = (self.smtp_host, self.smtp_username, self.smtp_password, self.smtp_from_email)
         if any(smtp_values):
             if not self.smtp_configured:

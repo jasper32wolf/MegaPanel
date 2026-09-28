@@ -10,8 +10,14 @@ type Observability = {
   media: { assets: number; missing_files: number; provenance_gaps: number; expired_licenses: number; references: string; references_reason: string };
   content_gaps: { thin_pages: number; noindex_pages: number };
   system: { backups: { status: string; reason: string } };
-  worker: { status: string; reason: string };
+  worker: { status: "healthy" | "stale" | "not_observed"; last_heartbeat_at: string | null; age_seconds: number | null; stale_after_seconds: number; reason: string | null };
 };
+
+function workerTone(status: Observability["worker"]["status"]) {
+  if (status === "healthy") return "ok" as const;
+  if (status === "stale") return "danger" as const;
+  return "warn" as const;
+}
 
 export function OpsPage() {
   const { token } = useAuth();
@@ -42,7 +48,7 @@ export function OpsPage() {
       <Surface title="Доставка лидов"><div className="row"><StatusPill tone={summary?.delivery_dead_letter ? "danger" : summary?.delivery_pending ? "warn" : "ok"}>В очереди: {summary?.delivery_pending ?? "—"}</StatusPill><StatusPill tone={summary?.delivery_dead_letter ? "danger" : "ok"}>Dead letter: {summary?.delivery_dead_letter ?? "—"}</StatusPill></div><p className="muted">Это состояние database queue; история попыток и resend доступны в inbox лидов.</p></Surface>
       <Surface title="Сборки и AI"><div className="detail-grid"><div><strong>Ошибки сборок: {observability?.builds.failed ?? "—"}</strong><p className="muted">Последняя successful build: {observability?.builds.latest_success?.build_hash?.slice(0, 12) || "нет записи"}</p></div><div><strong>AI runs: {Object.values(observability?.ai.status_counts || {}).reduce((sum, count) => sum + count, 0)}</strong><p className="muted">Recorded cost: ${observability?.ai.recorded_cost_usd.toFixed(6) ?? "—"}; reserved estimate: ${observability?.ai.reserved_estimated_usd.toFixed(6) ?? "—"}</p><p className="muted">AI DLQ: {observability?.ai.unresolved_dead_letter_jobs ?? "—"}</p></div></div></Surface>
       <Surface title="Контент и медиа"><div className="detail-grid"><div><strong>Thin pages: {observability?.content_gaps.thin_pages ?? "—"}</strong><p className="muted">Noindex pages: {observability?.content_gaps.noindex_pages ?? "—"}</p></div><div><strong>Assets: {observability?.media.assets ?? "—"}</strong><p className="muted">Отсутствуют файлы: {observability?.media.missing_files ?? "—"}; provenance gaps: {observability?.media.provenance_gaps ?? "—"}; expired: {observability?.media.expired_licenses ?? "—"}</p><p className="muted">References: {observability?.media.references ?? "not observed"} — {observability?.media.references_reason}</p></div></div></Surface>
-      <Surface title="Неподтверждённые сигналы"><p className="muted">Worker: {observability?.worker.status ?? "not observed"} — {observability?.worker.reason}</p><p className="muted">Backups: {observability?.system.backups.status ?? "not observed"} — {observability?.system.backups.reason}</p></Surface>
+      <Surface title="Worker и неподтверждённые сигналы"><div className="row"><StatusPill tone={workerTone(observability?.worker.status || "not_observed")}>Worker: {observability?.worker.status || "not observed"}</StatusPill></div>{observability?.worker.last_heartbeat_at ? <p className="muted">Последний database heartbeat: {new Date(observability.worker.last_heartbeat_at).toLocaleString()} · возраст {observability.worker.age_seconds ?? "—"} сек. · stale после {observability.worker.stale_after_seconds} сек.</p> : <p className="muted">{observability?.worker.reason || "Worker heartbeat пока не записан."}</p>}{observability?.worker.reason && observability.worker.last_heartbeat_at && <p className="muted">{observability.worker.reason}</p>}<p className="muted">Backups: {observability?.system.backups.status ?? "not observed"} — {observability?.system.backups.reason}</p></Surface>
       <Surface title="Домены"><div className="row"><StatusPill tone={summary?.domains_pending_tls ? "warn" : "ok"}>Ожидают TLS: {summary?.domains_pending_tls ?? "—"}</StatusPill><StatusPill tone={summary?.domains_tls_error ? "danger" : "ok"}>Ошибки TLS: {summary?.domains_tls_error ?? "—"}</StatusPill></div><p className="muted">DNS и сертификаты показывают последний persisted domain status, а не текущую внешнюю проверку.</p></Surface>
     </div>
   );

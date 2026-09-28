@@ -9,6 +9,7 @@ from arq.connections import RedisSettings
 from app.core.config import get_settings
 from app.db.session import open_db_session
 from app.services.webhook_delivery import due_delivery_ids, process_delivery, recover_expired_leases
+from app.services.worker_heartbeat import record_worker_heartbeat
 
 logger = structlog.get_logger("worker")
 settings = get_settings()
@@ -16,6 +17,13 @@ settings = get_settings()
 
 async def healthcheck_task(ctx: dict) -> dict:
     logger.info("worker_healthcheck")
+    return {"ok": True}
+
+
+async def worker_heartbeat_task(ctx: dict) -> dict:
+    async with open_db_session() as session:
+        await record_worker_heartbeat(session)
+    logger.info("worker_heartbeat_recorded")
     return {"ok": True}
 
 
@@ -49,10 +57,16 @@ async def webhook_delivery_sweep_task(ctx: dict) -> dict:
 class WorkerSettings:
     functions = [
         healthcheck_task,
+        worker_heartbeat_task,
         webhook_delivery_task,
         webhook_delivery_sweep_task,
     ]
     cron_jobs = [
+        cron(
+            worker_heartbeat_task,
+            second=set(range(0, 60, settings.worker_heartbeat_interval_seconds)),
+            run_at_startup=True,
+        ),
         cron(webhook_delivery_sweep_task, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}),
     ]
     redis_settings = RedisSettings.from_dsn(settings.redis_url)

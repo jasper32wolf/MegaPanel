@@ -124,3 +124,12 @@ def test_readiness_timeout_setting_is_bounded():
 
     with pytest.raises(ValidationError):
         Settings(health_readiness_timeout_seconds=11)
+
+
+def test_worker_heartbeat_settings_require_a_regular_safe_cadence():
+    assert Settings().worker_heartbeat_interval_seconds == 30
+    with pytest.raises(ValidationError):
+        Settings(worker_heartbeat_interval_seconds=40)
+    with pytest.raises(ValidationError, match="two heartbeat intervals"):
+        Settings(worker_heartbeat_interval_seconds=60, worker_heartbeat_stale_after_seconds=90)
+    assert Settings(worker_heartbeat_interval_seconds=60, worker_heartbeat_stale_after_seconds=120)

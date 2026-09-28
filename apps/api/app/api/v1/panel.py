@@ -6,7 +6,7 @@ from uuid import UUID
 
 from app.api.deps import AuthContext, require_roles
 from app.db.session import get_db
-from app.models import Lead, Site, WebhookDelivery
+from app.models import Lead, Site, WebhookDelivery, WorkerHeartbeat
 from app.models.project import PageDraft, PagePlan, Project
 from app.models.publish import Domain, SiteBuild
 from app.models.system_operation import SystemOperation
@@ -90,6 +90,35 @@ def _alert(
         "detail": detail,
         "count": count,
         "route": route,
+    }
+
+
+def _worker_heartbeat_observation(
+    last_seen_at: datetime | None, now: datetime, stale_after_seconds: int
+) -> dict:
+    if last_seen_at is None:
+        return {
+            "status": "not_observed",
+            "last_heartbeat_at": None,
+            "age_seconds": None,
+            "stale_after_seconds": stale_after_seconds,
+            "reason": "No persisted worker heartbeat has been recorded",
+        }
+    age_seconds = max(0, int((now - last_seen_at).total_seconds()))
+    if age_seconds > stale_after_seconds:
+        return {
+            "status": "stale",
+            "last_heartbeat_at": last_seen_at.isoformat(),
+            "age_seconds": age_seconds,
+            "stale_after_seconds": stale_after_seconds,
+            "reason": "The persisted worker heartbeat is older than its freshness threshold",
+        }
+    return {
+        "status": "healthy",
+        "last_heartbeat_at": last_seen_at.isoformat(),
+        "age_seconds": age_seconds,
+        "stale_after_seconds": stale_after_seconds,
+        "reason": None,
     }
 
 
@@ -287,6 +316,14 @@ async def report_observability(
         .where(*_tenant_predicate(DeadLetterJob, auth), DeadLetterJob.resolved.is_(False))
     )
     now = datetime.now(UTC)
+    latest_worker_heartbeat = await db.scalar(
+        select(WorkerHeartbeat.last_seen_at).where(WorkerHeartbeat.worker_key == "arq").limit(1)
+    )
+    worker = _worker_heartbeat_observation(
+        latest_worker_heartbeat,
+        now,
+        get_settings().worker_heartbeat_stale_after_seconds,
+    )
     missing_media = 0
     provenance_gaps = 0
     expired_media = 0
@@ -312,7 +349,7 @@ async def report_observability(
             expired_media += 1
     return {
         "observed_at": now.isoformat(),
-        "scope": "tenant_database_and_local_uploads",
+        "scope": "tenant_database_local_uploads_and_global_worker_heartbeat",
         "builds": {
             "status_counts": build_statuses,
             "failed": build_statuses.get("failed", 0),
@@ -380,8 +417,5 @@ async def report_observability(
                 "reason": "No persisted backup completion or restore-drill result",
             },
         },
-        "worker": {
-            "status": "not_observed",
-            "reason": "No persisted worker heartbeat or job-completion freshness signal",
-        },
+        "worker": worker,
     }
