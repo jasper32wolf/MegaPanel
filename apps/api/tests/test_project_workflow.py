@@ -606,3 +606,14 @@ def test_legal_publish_gate_requires_explicit_public_legal_fields():
         "privacy_email": "privacy@example.com",
     }
     assert _legal_publish_blockers(manifest) == []
+
+
+def test_fact_revision_normalizes_confirmed_allowed_claims():
+    revision = FactRevisionCreate(
+        facts={
+            "service": "Ремонт",
+            "allowed_claims": ["  Письменная гарантия на работы  ", "", "Выезд по записи"],
+        }
+    )
+
+    assert revision.facts["allowed_claims"] == ["Письменная гарантия на работы", "Выезд по записи"]

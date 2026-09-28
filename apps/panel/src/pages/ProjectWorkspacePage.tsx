@@ -94,6 +94,7 @@ export function ProjectWorkspacePage() {
   const [mission, setMission] = useState("");
   const [legalEntities, setLegalEntities] = useState("");
   const [paymentTerms, setPaymentTerms] = useState("");
+  const [allowedClaimsText, setAllowedClaimsText] = useState("");
   const [sourceNotes, setSourceNotes] = useState("");
   const [selectedKeywordIds, setSelectedKeywordIds] = useState<string[]>([]);
   const [selectedGeoIds, setSelectedGeoIds] = useState<string[]>([]);
@@ -217,7 +218,10 @@ export function ProjectWorkspacePage() {
                 mission: mission || undefined,
                 legal_entities: legalEntities || undefined,
                 payment_terms: paymentTerms || undefined,
-                allowed_claims: [],
+                allowed_claims: allowedClaimsText
+                  .split(String.fromCharCode(10))
+                  .map((item) => item.trim())
+                  .filter(Boolean),
               },
               private_lead_email: privateLeadEmail || undefined,
               source_notes: sourceNotes || null,
@@ -624,6 +628,8 @@ export function ProjectWorkspacePage() {
           <label className="field">Миссия<textarea value={mission} onChange={(event) => setMission(event.target.value)} placeholder="Проверенная формулировка миссии" /></label>
           <label className="field">Для юридических лиц<textarea value={legalEntities} onChange={(event) => setLegalEntities(event.target.value)} placeholder="Условия и особенности работы с компаниями" /></label>
           <label className="field">Оплата<textarea value={paymentTerms} onChange={(event) => setPaymentTerms(event.target.value)} placeholder="Проверенные способы и условия оплаты" /></label>
+          <label className="field">Подтверждённые claims<textarea value={allowedClaimsText} onChange={(event) => setAllowedClaimsText(event.target.value)} placeholder={`Например: Письменная гарантия на работы
+Например: Выезд в пределах Казани`} /><span className="muted">По одному проверяемому утверждению на строку. Список сохраняется как facts и не добавляет claim в страницу автоматически.</span></label>
           <label className="field">Источник фактов<textarea value={sourceNotes} onChange={(event) => setSourceNotes(event.target.value)} placeholder="Откуда оператор подтвердил сведения" /></label>
           <button className="btn" type="submit" disabled={busy !== null}>{busy === "facts" ? "Сохранение…" : "Сохранить новую версию фактов"}</button>
         </form>
