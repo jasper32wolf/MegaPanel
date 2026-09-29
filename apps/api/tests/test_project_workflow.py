@@ -126,9 +126,10 @@ def _page_manifest(slug: str, title: str) -> dict:
 
 
 def _page_metadata(slug: str, *, index_state: str = "indexed", thin: bool = False) -> dict:
+    path = "/" if slug == "/" else f"/{slug.strip('/')}/"
     return {
         "slug": slug,
-        "path": slug,
+        "path": path,
         "index_state": index_state,
         "thin": thin,
         "content_chars": 240,

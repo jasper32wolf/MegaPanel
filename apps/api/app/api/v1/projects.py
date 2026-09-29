@@ -59,6 +59,7 @@ from app.services.generation import create_page_draft
 from app.services.indexnow import new_indexnow_key
 from app.services.leads import get_blind, get_encryptor
 from app.services.qa import run_page_qa
+from app.services.site_build_metadata import validate_page_metadata_snapshot
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 from site_panel_blocks import list_kits
@@ -1918,31 +1919,18 @@ def _selected_build_projection(
     if manifest.site_id != site.id or manifest.tenant_id != site.tenant_id:
         raise ValueError("Selected build manifest snapshot does not belong to this site")
     metadata = build.page_metadata_snapshot
-    if not isinstance(metadata, list):
+    if metadata is None:
         raise ValueError("Selected build has no immutable page metadata snapshot")
-    manifest_slugs = {page.slug for page in manifest.pages}
-    metadata_by_slug: dict[str, dict] = {}
-    for item in metadata:
-        if not isinstance(item, dict):
-            raise ValueError("Selected build page metadata snapshot is invalid")
-        slug = item.get("slug")
-        index_state = item.get("index_state")
-        thin = item.get("thin")
-        content_chars = item.get("content_chars")
-        if (
-            not isinstance(slug, str)
-            or slug in metadata_by_slug
-            or index_state not in {"noindex", "queued", "indexed"}
-            or not isinstance(thin, bool)
-            or not isinstance(content_chars, int)
-            or isinstance(content_chars, bool)
-            or content_chars < 0
-            or (thin and index_state != "noindex")
-        ):
-            raise ValueError("Selected build page metadata snapshot is invalid")
-        metadata_by_slug[slug] = item
-    if set(metadata_by_slug) != manifest_slugs:
-        raise ValueError("Selected build manifest and page metadata snapshots do not match")
+    try:
+        metadata_by_slug = validate_page_metadata_snapshot(
+            metadata, expected_slugs={page.slug for page in manifest.pages}
+        )
+    except ValueError as exc:
+        if str(exc) == "Build manifest and page metadata snapshots do not match":
+            raise ValueError(
+                "Selected build manifest and page metadata snapshots do not match"
+            ) from exc
+        raise ValueError("Selected build page metadata snapshot is invalid") from exc
     return manifest, metadata_by_slug
 
 
