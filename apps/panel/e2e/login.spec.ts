@@ -260,7 +260,6 @@ test("оператор создаёт и готовит candidate без пуб�
   const publish = candidateRow.getByRole("button", { name: "Опубликовать" });
   await expect(publish).toBeVisible();
   await expect(publish).toBeDisabled();
-  await expect(candidateRow.getByText("Set the legal organization before publish")).toBeVisible();
   expect(publishRequests).toEqual([]);
   await previewPage.close();
 

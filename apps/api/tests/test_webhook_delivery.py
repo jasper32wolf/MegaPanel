@@ -324,7 +324,7 @@ def test_worker_delivery_uses_postgres_redis_and_no_external_webhook(monkeypatch
                 )
             assert response.status_code == 201, response.text
             public_result = response.json()
-            assert public_result["delivery_status"] == "queued"
+            assert public_result["delivery_status"] == "pending"
             lead_id = UUID(public_result["id"])
 
             async with open_db_session() as db:

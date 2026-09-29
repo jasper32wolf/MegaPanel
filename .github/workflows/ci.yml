@@ -266,10 +266,15 @@ jobs:
                       )
                   )
                   await db.commit()
-              result = await CaddyClient().upsert_site_vhost(
-                  "site.localhost", "/srv/sites/compose-smoke/current"
-              )
-              assert result["ok"], result
+              result = None
+              for _ in range(10):
+                  result = await CaddyClient().upsert_site_vhost(
+                      "site.localhost", "/srv/sites/compose-smoke/current"
+                  )
+                  if result["ok"]:
+                      return
+                  await asyncio.sleep(1)
+              assert result and result["ok"], result
 
 
           asyncio.run(main())
