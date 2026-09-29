@@ -13,14 +13,21 @@ from app.api.v1.projects import (
     _draft_manifest_hash,
     _project_site_or_409,
     _public_fact_values,
+    _reconcile_site_page_projection,
+    _selected_build_projection,
     _selection_snapshots,
     _serialize_fact,
     _verified_media_hash,
     attach_draft_block_media,
     attach_draft_media,
+    materialize_project_build,
+    publish_project_build,
+    rollback_project_build,
 )
 from app.main import app
 from app.schemas.workflow import (
+    BuildPublishRequest,
+    BuildRollbackRequest,
     ClaimSlotBinding,
     FactRevisionCreate,
     LeadOutcomeIn,
@@ -35,6 +42,7 @@ from app.services.generation import create_page_draft
 from app.services.qa import run_page_qa
 from fastapi import HTTPException
 from pydantic import ValidationError
+from site_panel_shared.manifests import PageManifest, SiteManifest
 
 
 def _private_lead_email_migration():
@@ -74,6 +82,650 @@ class PreviewDatabase:
     async def execute(self, _: object) -> object:
         row = self.rows.pop(0)
         return SimpleNamespace(scalar_one_or_none=lambda: row)
+
+
+class BuildWorkflowDatabase:
+    def __init__(self, results: list[object]):
+        self.results = results
+        self.added: list[object] = []
+        self.committed = False
+
+    async def execute(self, _: object) -> object:
+        value = self.results.pop(0)
+        if isinstance(value, list):
+            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: value))
+        return SimpleNamespace(scalar_one_or_none=lambda: value)
+
+    def add(self, value: object) -> None:
+        self.added.append(value)
+
+    async def commit(self) -> None:
+        self.committed = True
+
+
+def _build_manifest_snapshot(site_id, tenant_id, pages: list[dict]) -> dict:
+    return SiteManifest.model_validate(
+        {
+            "site_id": site_id,
+            "tenant_id": tenant_id,
+            "domain": "example.test",
+            "pages": pages,
+        }
+    ).model_dump(mode="json")
+
+
+def _page_manifest(slug: str, title: str) -> dict:
+    return PageManifest(
+        slug=slug,
+        title_template=title,
+        h1_template=title,
+        service="Ремонт",
+    ).model_dump(mode="json")
+
+
+def _page_metadata(slug: str, *, index_state: str = "indexed", thin: bool = False) -> dict:
+    return {
+        "slug": slug,
+        "path": slug,
+        "index_state": index_state,
+        "thin": thin,
+        "content_chars": 240,
+        "hash": "a" * 64,
+    }
+
+
+def test_materializing_candidate_does_not_mutate_active_site_page_projection(monkeypatch):
+    tenant_id, project_id, site_id = uuid4(), uuid4(), uuid4()
+    active_page = SimpleNamespace(
+        slug="/",
+        manifest=_page_manifest("/", "Активная страница"),
+        project_id=uuid4(),
+        page_plan_id=uuid4(),
+        page_draft_id=uuid4(),
+        content_chars=999,
+        thin=False,
+        index_state="indexed",
+        publish_state="published",
+    )
+    snapshot = _build_manifest_snapshot(
+        site_id,
+        tenant_id,
+        [_page_manifest("/", "Candidate"), _page_manifest("/new", "Новая страница")],
+    )
+    project = SimpleNamespace(
+        id=project_id, tenant_id=tenant_id, site_id=site_id, domain="example.test"
+    )
+    site = SimpleNamespace(
+        id=site_id,
+        tenant_id=tenant_id,
+        manifest=snapshot,
+        lead_token="lead-token",
+        build_hash="b" * 64,
+    )
+    result = {
+        "build_hash": "c" * 64,
+        "pages": [_page_metadata("/"), _page_metadata("/new")],
+        "indexed_count": 2,
+    }
+
+    class Builder:
+        calls: list[dict] = []
+
+        def __init__(self, _root):
+            pass
+
+        def build(self, *args, **kwargs):
+            self.calls.append(kwargs)
+            return result
+
+    db = BuildWorkflowDatabase([[active_page], []])
+    monkeypatch.setattr(projects, "_project_or_404", AsyncMock(return_value=project))
+    monkeypatch.setattr(projects, "_project_site_or_409", AsyncMock(return_value=site))
+    monkeypatch.setattr(projects, "SiteBuilder", Builder)
+    monkeypatch.setattr(projects, "append_audit", AsyncMock())
+    auth = SimpleNamespace(user=SimpleNamespace(id=uuid4()))
+    before = {
+        name: getattr(active_page, name)
+        for name in (
+            "manifest",
+            "project_id",
+            "page_plan_id",
+            "page_draft_id",
+            "content_chars",
+            "thin",
+            "index_state",
+            "publish_state",
+        )
+    }
+
+    response = asyncio.run(materialize_project_build(project_id, auth, db))
+
+    assert response["activated"] is False
+    assert Builder.calls == [{"index_states": {"/": "indexed"}, "assets": [], "activate": False}]
+    assert {type(item).__name__ for item in db.added} == {"SiteBuild"}
+    build = db.added[0]
+    assert build.manifest_snapshot == snapshot
+    assert build.page_metadata_snapshot == result["pages"]
+    assert {name: getattr(active_page, name) for name in before} == before
+    assert db.committed is True
+
+
+def test_selected_build_projection_requires_exact_immutable_metadata_snapshot():
+    site_id, tenant_id = uuid4(), uuid4()
+    site = SimpleNamespace(id=site_id, tenant_id=tenant_id)
+    build = SimpleNamespace(
+        manifest_snapshot=_build_manifest_snapshot(
+            site_id, tenant_id, [_page_manifest("/", "Страница")]
+        ),
+        page_metadata_snapshot=[_page_metadata("/other")],
+    )
+
+    with pytest.raises(ValueError, match="do not match"):
+        _selected_build_projection(build, site)
+
+
+def test_reconcile_site_page_projection_uses_selected_snapshot_and_archives_omitted_pages():
+    site_id, tenant_id, project_id = uuid4(), uuid4(), uuid4()
+    selected = SimpleNamespace(
+        slug="/",
+        manifest=_page_manifest("/", "Старое содержимое"),
+        project_id=project_id,
+        page_plan_id=uuid4(),
+        page_draft_id=uuid4(),
+        content_chars=111,
+        thin=False,
+        index_state="indexed",
+        publish_state="published",
+    )
+    omitted = SimpleNamespace(
+        slug="/removed",
+        manifest=_page_manifest("/removed", "История"),
+        project_id=project_id,
+        page_plan_id=uuid4(),
+        page_draft_id=uuid4(),
+        content_chars=222,
+        thin=False,
+        index_state="indexed",
+        publish_state="published",
+    )
+    site = SimpleNamespace(id=site_id, tenant_id=tenant_id)
+    project = SimpleNamespace(id=project_id)
+    manifest, metadata = _selected_build_projection(
+        SimpleNamespace(
+            manifest_snapshot=_build_manifest_snapshot(
+                site_id,
+                tenant_id,
+                [_page_manifest("/", "Выбранная сборка"), _page_manifest("/new", "Новая")],
+            ),
+            page_metadata_snapshot=[
+                _page_metadata("/"),
+                _page_metadata("/new", thin=True, index_state="noindex"),
+            ],
+        ),
+        site,
+    )
+    db = BuildWorkflowDatabase([[selected, omitted]])
+
+    asyncio.run(
+        _reconcile_site_page_projection(
+            db,
+            site=site,
+            project=project,
+            manifest=manifest,
+            metadata_by_slug=metadata,
+        )
+    )
+
+    assert selected.manifest == _page_manifest("/", "Выбранная сборка")
+    assert selected.publish_state == "published"
+    assert selected.index_state == "indexed"
+    assert selected.content_chars == 240
+    assert selected.page_plan_id is None
+    assert selected.page_draft_id is None
+    assert omitted.manifest == _page_manifest("/removed", "История")
+    assert omitted.page_plan_id is not None
+    assert omitted.page_draft_id is not None
+    assert (omitted.publish_state, omitted.index_state) == ("archived", "noindex")
+    new_page = db.added[0]
+    assert (new_page.slug, new_page.publish_state, new_page.index_state, new_page.thin) == (
+        "/new",
+        "published",
+        "noindex",
+        True,
+    )
+
+
+def test_publish_projects_selected_snapshot_and_archives_omitted_pages(monkeypatch):
+    tenant_id, project_id, site_id, build_id = (uuid4() for _ in range(4))
+    selected_snapshot = _build_manifest_snapshot(
+        site_id,
+        tenant_id,
+        [_page_manifest("/", "Снимок candidate"), _page_manifest("/new", "Новая")],
+    )
+    selected_snapshot["legal"] = {
+        "org": "ООО Тест",
+        "address": "Казань",
+        "jurisdiction": "Российская Федерация",
+        "privacy_email": "privacy@example.com",
+    }
+    project = SimpleNamespace(
+        id=project_id,
+        tenant_id=tenant_id,
+        site_id=site_id,
+        domain="example.test",
+        domain_check_meta={"dns_status": "ok"},
+    )
+    site = SimpleNamespace(
+        id=site_id,
+        tenant_id=tenant_id,
+        domain="example.test",
+        build_hash="a" * 64,
+        previous_build_hash=None,
+        publish_state="published",
+        manifest=_build_manifest_snapshot(
+            site_id, tenant_id, [_page_manifest("/", "Позднее изменение")]
+        ),
+    )
+    build = SimpleNamespace(
+        id=build_id,
+        project_id=project_id,
+        tenant_id=tenant_id,
+        site_id=site_id,
+        status="ready",
+        build_hash="b" * 64,
+        manifest_snapshot=selected_snapshot,
+        page_metadata_snapshot=[
+            _page_metadata("/"),
+            _page_metadata("/new", thin=True, index_state="noindex"),
+        ],
+        activated_at=None,
+    )
+    selected = SimpleNamespace(
+        slug="/",
+        manifest=_page_manifest("/", "Активное содержимое"),
+        project_id=project_id,
+        page_plan_id=uuid4(),
+        page_draft_id=uuid4(),
+        content_chars=99,
+        thin=False,
+        index_state="queued",
+        publish_state="published",
+    )
+    omitted = SimpleNamespace(
+        slug="/removed",
+        manifest=_page_manifest("/removed", "Историческая страница"),
+        project_id=project_id,
+        page_plan_id=uuid4(),
+        page_draft_id=uuid4(),
+        content_chars=120,
+        thin=False,
+        index_state="indexed",
+        publish_state="published",
+    )
+
+    class Builder:
+        activations: list[tuple[str, str]] = []
+
+        def __init__(self, _root):
+            pass
+
+        def activate(self, site_key: str, build_hash: str) -> bool:
+            self.activations.append((site_key, build_hash))
+            return True
+
+    class Caddy:
+        async def upsert_site_vhost(self, *_args):
+            return {"ok": True}
+
+    db = BuildWorkflowDatabase([build, [selected, omitted]])
+    monkeypatch.setattr(projects, "_project_or_404", AsyncMock(return_value=project))
+    monkeypatch.setattr(projects, "_project_site_or_409", AsyncMock(return_value=site))
+    monkeypatch.setattr(projects, "SiteBuilder", Builder)
+    monkeypatch.setattr(projects, "CaddyClient", Caddy)
+    monkeypatch.setattr(projects, "append_audit", AsyncMock())
+    auth = SimpleNamespace(user=SimpleNamespace(id=uuid4()))
+
+    response = asyncio.run(
+        publish_project_build(project_id, build_id, BuildPublishRequest(confirmed=True), auth, db)
+    )
+
+    assert response["published"] is True
+    assert Builder.activations == [(str(site_id), "b" * 64)]
+    assert (site.previous_build_hash, site.build_hash, site.publish_state) == (
+        "a" * 64,
+        "b" * 64,
+        "published",
+    )
+    assert site.manifest["pages"] == [_page_manifest("/", "Позднее изменение")]
+    assert selected.manifest == _page_manifest("/", "Снимок candidate")
+    assert (selected.index_state, selected.content_chars, selected.publish_state) == (
+        "indexed",
+        240,
+        "published",
+    )
+    assert (omitted.publish_state, omitted.index_state) == ("archived", "noindex")
+    new_page = db.added[0]
+    assert (new_page.slug, new_page.manifest, new_page.thin) == (
+        "/new",
+        _page_manifest("/new", "Новая"),
+        True,
+    )
+    assert db.committed is True
+
+
+def test_rollback_restores_target_snapshot_and_archives_newer_only_pages(monkeypatch):
+    tenant_id, project_id, site_id = (uuid4() for _ in range(3))
+    target_snapshot = _build_manifest_snapshot(
+        site_id,
+        tenant_id,
+        [_page_manifest("/", "Старая страница"), _page_manifest("/old", "Старый путь")],
+    )
+    project = SimpleNamespace(id=project_id, tenant_id=tenant_id, site_id=site_id)
+    site = SimpleNamespace(
+        id=site_id,
+        tenant_id=tenant_id,
+        domain="example.test",
+        build_hash="b" * 64,
+        previous_build_hash="a" * 64,
+        publish_state="published",
+    )
+    target = SimpleNamespace(
+        project_id=project_id,
+        tenant_id=tenant_id,
+        site_id=site_id,
+        status="published",
+        build_hash="a" * 64,
+        manifest_snapshot=target_snapshot,
+        page_metadata_snapshot=[_page_metadata("/"), _page_metadata("/old")],
+        activated_at=None,
+    )
+    current = SimpleNamespace(
+        slug="/",
+        manifest=_page_manifest("/", "Новая страница"),
+        project_id=project_id,
+        page_plan_id=uuid4(),
+        page_draft_id=uuid4(),
+        content_chars=500,
+        thin=False,
+        index_state="indexed",
+        publish_state="published",
+    )
+    newer_only = SimpleNamespace(
+        slug="/new",
+        manifest=_page_manifest("/new", "Новый путь"),
+        project_id=project_id,
+        page_plan_id=uuid4(),
+        page_draft_id=uuid4(),
+        content_chars=500,
+        thin=False,
+        index_state="indexed",
+        publish_state="published",
+    )
+
+    class Builder:
+        activations: list[tuple[str, str]] = []
+
+        def __init__(self, _root):
+            pass
+
+        def activate(self, site_key: str, build_hash: str) -> bool:
+            self.activations.append((site_key, build_hash))
+            return True
+
+    class Caddy:
+        async def upsert_site_vhost(self, *_args):
+            return {"ok": True}
+
+    db = BuildWorkflowDatabase([target, [current, newer_only]])
+    monkeypatch.setattr(projects, "_project_or_404", AsyncMock(return_value=project))
+    monkeypatch.setattr(projects, "_project_site_or_409", AsyncMock(return_value=site))
+    monkeypatch.setattr(projects, "SiteBuilder", Builder)
+    monkeypatch.setattr(projects, "CaddyClient", Caddy)
+    monkeypatch.setattr(projects, "append_audit", AsyncMock())
+    auth = SimpleNamespace(user=SimpleNamespace(id=uuid4()))
+
+    response = asyncio.run(
+        rollback_project_build(
+            project_id,
+            BuildRollbackRequest(build_hash="a" * 64, confirmed=True),
+            auth,
+            db,
+        )
+    )
+
+    assert response["build_hash"] == "a" * 64
+    assert Builder.activations == [(str(site_id), "a" * 64)]
+    assert (site.previous_build_hash, site.build_hash, site.publish_state) == (
+        "b" * 64,
+        "a" * 64,
+        "published",
+    )
+    assert current.manifest == _page_manifest("/", "Старая страница")
+    assert (current.publish_state, current.index_state, current.content_chars) == (
+        "published",
+        "indexed",
+        240,
+    )
+    assert (newer_only.publish_state, newer_only.index_state) == ("archived", "noindex")
+    old_page = db.added[0]
+    assert (old_page.slug, old_page.publish_state, old_page.index_state) == (
+        "/old",
+        "published",
+        "indexed",
+    )
+    assert target.status == "published"
+    assert target.activated_at is not None
+    assert db.committed is True
+
+
+def test_publish_blocks_build_without_page_metadata_before_activation(monkeypatch):
+    tenant_id, project_id, site_id, build_id = (uuid4() for _ in range(4))
+    project = SimpleNamespace(
+        id=project_id,
+        tenant_id=tenant_id,
+        site_id=site_id,
+        domain="example.test",
+        domain_check_meta={"dns_status": "ok"},
+    )
+    site = SimpleNamespace(id=site_id, tenant_id=tenant_id, domain="example.test")
+    build = SimpleNamespace(
+        id=build_id,
+        project_id=project_id,
+        tenant_id=tenant_id,
+        site_id=site_id,
+        status="ready",
+        build_hash="a" * 64,
+        manifest_snapshot=_build_manifest_snapshot(
+            site_id, tenant_id, [_page_manifest("/", "Страница")]
+        ),
+        page_metadata_snapshot=None,
+    )
+    db = BuildWorkflowDatabase([build])
+    monkeypatch.setattr(projects, "_project_or_404", AsyncMock(return_value=project))
+    monkeypatch.setattr(projects, "_project_site_or_409", AsyncMock(return_value=site))
+    monkeypatch.setattr(
+        projects,
+        "SiteBuilder",
+        lambda *_args: pytest.fail("builder must not activate"),
+    )
+
+    with pytest.raises(HTTPException, match="immutable page metadata") as exc_info:
+        asyncio.run(
+            publish_project_build(
+                project_id,
+                build_id,
+                BuildPublishRequest(confirmed=True),
+                object(),
+                db,
+            )
+        )
+
+    assert exc_info.value.status_code == 409
+    assert db.committed is False
+
+
+def test_publish_caddy_failure_restores_release_without_projection_mutation(monkeypatch):
+    tenant_id, project_id, site_id, build_id = (uuid4() for _ in range(4))
+    snapshot = _build_manifest_snapshot(site_id, tenant_id, [_page_manifest("/", "Candidate")])
+    snapshot["legal"] = {
+        "org": "ООО Тест",
+        "address": "Казань",
+        "jurisdiction": "Российская Федерация",
+        "privacy_email": "privacy@example.com",
+    }
+    project = SimpleNamespace(
+        id=project_id,
+        tenant_id=tenant_id,
+        site_id=site_id,
+        domain="example.test",
+        domain_check_meta={"dns_status": "ok"},
+    )
+    site = SimpleNamespace(
+        id=site_id,
+        tenant_id=tenant_id,
+        domain="example.test",
+        build_hash="a" * 64,
+        previous_build_hash=None,
+        publish_state="published",
+    )
+    build = SimpleNamespace(
+        id=build_id,
+        project_id=project_id,
+        tenant_id=tenant_id,
+        site_id=site_id,
+        status="ready",
+        build_hash="b" * 64,
+        manifest_snapshot=snapshot,
+        page_metadata_snapshot=[_page_metadata("/")],
+        activated_at=None,
+    )
+
+    class Builder:
+        activations: list[tuple[str, str]] = []
+
+        def __init__(self, _root):
+            pass
+
+        def activate(self, site_key: str, build_hash: str) -> bool:
+            self.activations.append((site_key, build_hash))
+            return True
+
+    class Caddy:
+        async def upsert_site_vhost(self, *_args):
+            return {"ok": False}
+
+    db = BuildWorkflowDatabase([build])
+    audit = AsyncMock()
+    monkeypatch.setattr(projects, "_project_or_404", AsyncMock(return_value=project))
+    monkeypatch.setattr(projects, "_project_site_or_409", AsyncMock(return_value=site))
+    monkeypatch.setattr(projects, "SiteBuilder", Builder)
+    monkeypatch.setattr(projects, "CaddyClient", Caddy)
+    monkeypatch.setattr(projects, "append_audit", audit)
+
+    with pytest.raises(HTTPException, match="previous release restored") as exc_info:
+        asyncio.run(
+            publish_project_build(
+                project_id,
+                build_id,
+                BuildPublishRequest(confirmed=True),
+                object(),
+                db,
+            )
+        )
+
+    assert exc_info.value.status_code == 503
+    assert Builder.activations == [(str(site_id), "b" * 64), (str(site_id), "a" * 64)]
+    assert (site.build_hash, site.publish_state, build.status, build.activated_at) == (
+        "a" * 64,
+        "published",
+        "ready",
+        None,
+    )
+    assert db.added == []
+    assert db.committed is False
+    audit.assert_not_awaited()
+
+
+def test_rollback_caddy_failure_restores_release_without_projection_mutation(monkeypatch):
+    tenant_id, project_id, site_id = (uuid4() for _ in range(3))
+    project = SimpleNamespace(id=project_id, tenant_id=tenant_id, site_id=site_id)
+    site = SimpleNamespace(
+        id=site_id,
+        tenant_id=tenant_id,
+        domain="example.test",
+        build_hash="b" * 64,
+        previous_build_hash="a" * 64,
+        publish_state="published",
+    )
+    target = SimpleNamespace(
+        project_id=project_id,
+        tenant_id=tenant_id,
+        site_id=site_id,
+        status="published",
+        build_hash="a" * 64,
+        manifest_snapshot=_build_manifest_snapshot(
+            site_id, tenant_id, [_page_manifest("/", "Старая")]
+        ),
+        page_metadata_snapshot=[_page_metadata("/")],
+        activated_at=None,
+    )
+
+    class Builder:
+        activations: list[tuple[str, str]] = []
+
+        def __init__(self, _root):
+            pass
+
+        def activate(self, site_key: str, build_hash: str) -> bool:
+            self.activations.append((site_key, build_hash))
+            return True
+
+    class Caddy:
+        async def upsert_site_vhost(self, *_args):
+            return {"ok": False}
+
+    db = BuildWorkflowDatabase([target])
+    audit = AsyncMock()
+    monkeypatch.setattr(projects, "_project_or_404", AsyncMock(return_value=project))
+    monkeypatch.setattr(projects, "_project_site_or_409", AsyncMock(return_value=site))
+    monkeypatch.setattr(projects, "SiteBuilder", Builder)
+    monkeypatch.setattr(projects, "CaddyClient", Caddy)
+    monkeypatch.setattr(projects, "append_audit", audit)
+
+    with pytest.raises(HTTPException, match="previous release restored") as exc_info:
+        asyncio.run(
+            rollback_project_build(
+                project_id,
+                BuildRollbackRequest(build_hash="a" * 64, confirmed=True),
+                object(),
+                db,
+            )
+        )
+
+    assert exc_info.value.status_code == 503
+    assert Builder.activations == [(str(site_id), "a" * 64), (str(site_id), "b" * 64)]
+    assert (site.build_hash, site.publish_state, target.status, target.activated_at) == (
+        "b" * 64,
+        "published",
+        "published",
+        None,
+    )
+    assert db.added == []
+    assert db.committed is False
+    audit.assert_not_awaited()
+
+
+def test_page_metadata_snapshot_migration_follows_current_head():
+    migration_path = (
+        Path(__file__).parents[1]
+        / "alembic"
+        / "versions"
+        / "0031_site_build_page_metadata_snapshot.py"
+    )
+    source = migration_path.read_text(encoding="utf-8")
+
+    assert 'down_revision: str | None = "0030_prompt_revision_immutability"' in source
+    assert '"page_metadata_snapshot"' in source
 
 
 def test_page_plan_normalizes_root_slug():

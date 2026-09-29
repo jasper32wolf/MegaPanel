@@ -1908,6 +1908,79 @@ async def _build_assets_for_manifest(
     return build_assets
 
 
+def _selected_build_projection(
+    build: SiteBuild, site: Site
+) -> tuple[SiteManifest, dict[str, dict]]:
+    try:
+        manifest = SiteManifest.model_validate(build.manifest_snapshot)
+    except ValueError as exc:
+        raise ValueError("Selected build manifest snapshot is invalid") from exc
+    if manifest.site_id != site.id or manifest.tenant_id != site.tenant_id:
+        raise ValueError("Selected build manifest snapshot does not belong to this site")
+    metadata = build.page_metadata_snapshot
+    if not isinstance(metadata, list):
+        raise ValueError("Selected build has no immutable page metadata snapshot")
+    manifest_slugs = {page.slug for page in manifest.pages}
+    metadata_by_slug: dict[str, dict] = {}
+    for item in metadata:
+        if not isinstance(item, dict):
+            raise ValueError("Selected build page metadata snapshot is invalid")
+        slug = item.get("slug")
+        index_state = item.get("index_state")
+        thin = item.get("thin")
+        content_chars = item.get("content_chars")
+        if (
+            not isinstance(slug, str)
+            or slug in metadata_by_slug
+            or index_state not in {"noindex", "queued", "indexed"}
+            or not isinstance(thin, bool)
+            or not isinstance(content_chars, int)
+            or isinstance(content_chars, bool)
+            or content_chars < 0
+            or (thin and index_state != "noindex")
+        ):
+            raise ValueError("Selected build page metadata snapshot is invalid")
+        metadata_by_slug[slug] = item
+    if set(metadata_by_slug) != manifest_slugs:
+        raise ValueError("Selected build manifest and page metadata snapshots do not match")
+    return manifest, metadata_by_slug
+
+
+async def _reconcile_site_page_projection(
+    db: AsyncSession,
+    *,
+    site: Site,
+    project: Project,
+    manifest: SiteManifest,
+    metadata_by_slug: dict[str, dict],
+) -> None:
+    existing = {
+        page.slug: page
+        for page in (await db.execute(select(SitePage).where(SitePage.site_id == site.id)))
+        .scalars()
+        .all()
+    }
+    selected_slugs = {page.slug for page in manifest.pages}
+    for page_manifest in manifest.pages:
+        page = existing.get(page_manifest.slug)
+        if not page:
+            page = SitePage(site_id=site.id, tenant_id=site.tenant_id, slug=page_manifest.slug)
+            db.add(page)
+        metadata = metadata_by_slug[page_manifest.slug]
+        page.project_id = project.id
+        page.page_plan_id = None
+        page.page_draft_id = None
+        page.manifest = page_manifest.model_dump(mode="json")
+        page.publish_state = "published"
+        page.index_state = metadata["index_state"]
+        page.thin = metadata["thin"]
+        page.content_chars = metadata["content_chars"]
+    for slug, page in existing.items():
+        if slug not in selected_slugs:
+            page.publish_state = "archived"
+            page.index_state = "noindex"
+
+
 @router.post("/{project_id}/builds", status_code=status.HTTP_201_CREATED)
 async def materialize_project_build(
     project_id: UUID,
@@ -1961,49 +2034,6 @@ async def materialize_project_build(
         .scalars()
         .all()
     ]
-    applied_drafts = (
-        (
-            await db.execute(
-                select(PageDraft).where(
-                    PageDraft.project_id == project.id,
-                    PageDraft.state == "applied",
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-    drafts_by_slug = {
-        str((draft.page_manifest or {}).get("slug") or ""): draft for draft in applied_drafts
-    }
-    existing_pages = {row.slug: row for row in rows}
-    for page_meta in result["pages"]:
-        page = existing_pages.get(page_meta["slug"])
-        if not page:
-            page = SitePage(
-                site_id=site.id,
-                tenant_id=site.tenant_id,
-                slug=page_meta["slug"],
-                publish_state="draft",
-                index_state=page_meta["index_state"],
-            )
-            db.add(page)
-        draft = drafts_by_slug.get(page_meta["slug"])
-        page.project_id = project.id
-        page.page_draft_id = draft.id if draft else None
-        page.page_plan_id = draft.page_plan_id if draft else None
-        page.manifest = next(
-            (
-                item.model_dump(mode="json")
-                for item in manifest.pages
-                if item.slug == page_meta["slug"]
-            ),
-            {},
-        )
-        page.content_chars = page_meta["content_chars"]
-        page.thin = page_meta["thin"]
-        if page.thin:
-            page.index_state = "noindex"
     build = SiteBuild(
         site_id=site.id,
         tenant_id=site.tenant_id,
@@ -2015,6 +2045,7 @@ async def materialize_project_build(
         duration_ms=int((time.perf_counter() - started) * 1000),
         log=f"candidate=true; indexed={result['indexed_count']}",
         manifest_snapshot=manifest.model_dump(mode="json"),
+        page_metadata_snapshot=result["pages"],
         page_plan_ids=plan_ids,
         requested_by=auth.user.id,
     )
@@ -2111,7 +2142,10 @@ async def publish_project_build(
         raise HTTPException(
             status_code=409, detail={"blockers": ["Select a ready candidate build"]}
         )
-    manifest = SiteManifest.model_validate(build.manifest_snapshot or site.manifest)
+    try:
+        manifest, metadata_by_slug = _selected_build_projection(build, site)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail={"blockers": [str(exc)]}) from exc
     legal_blockers = _legal_publish_blockers(manifest)
     if legal_blockers:
         raise HTTPException(status_code=409, detail={"blockers": legal_blockers})
@@ -2133,24 +2167,13 @@ async def publish_project_build(
     site.publish_state = "published"
     build.status = "published"
     build.activated_at = datetime.now(UTC)
-    existing = {
-        page.slug: page
-        for page in (await db.execute(select(SitePage).where(SitePage.site_id == site.id)))
-        .scalars()
-        .all()
-    }
-    for page_manifest in manifest.pages:
-        page = existing.get(page_manifest.slug)
-        if not page:
-            page = SitePage(site_id=site.id, tenant_id=site.tenant_id, slug=page_manifest.slug)
-            db.add(page)
-        page.project_id = project.id
-        page.publish_state = "published"
-        page.index_state = (
-            page_manifest.index_state.value
-            if hasattr(page_manifest.index_state, "value")
-            else str(page_manifest.index_state)
-        )
+    await _reconcile_site_page_projection(
+        db,
+        site=site,
+        project=project,
+        manifest=manifest,
+        metadata_by_slug=metadata_by_slug,
+    )
     await append_audit(
         db,
         action="project.build.publish",
@@ -2198,6 +2221,10 @@ async def rollback_project_build(
     ).scalar_one_or_none()
     if not target:
         raise HTTPException(status_code=404, detail="Approved build hash not found")
+    try:
+        manifest, metadata_by_slug = _selected_build_projection(target, site)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail={"blockers": [str(exc)]}) from exc
     old_hash = site.build_hash
     builder = SiteBuilder(Path(settings.sites_root))
     if not builder.activate(str(site.id), body.build_hash):
@@ -2213,7 +2240,16 @@ async def rollback_project_build(
         )
     site.previous_build_hash = old_hash
     site.build_hash = body.build_hash
+    site.publish_state = "published"
     target.status = "published"
+    target.activated_at = datetime.now(UTC)
+    await _reconcile_site_page_projection(
+        db,
+        site=site,
+        project=project,
+        manifest=manifest,
+        metadata_by_slug=metadata_by_slug,
+    )
     await append_audit(
         db,
         action="project.build.rollback",

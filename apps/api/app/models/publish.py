@@ -129,6 +129,7 @@ class SiteBuild(Base):
         index=True,
     )
     manifest_snapshot: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    page_metadata_snapshot: Mapped[list[dict] | None] = mapped_column(JSONB, nullable=True)
     page_plan_ids: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     requested_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
