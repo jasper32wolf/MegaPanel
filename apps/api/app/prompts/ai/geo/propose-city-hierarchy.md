@@ -3,6 +3,7 @@
 - **ID:** `geo.city-hierarchy`
 - **Version:** `1.0.0`
 - **Approval boundary:** output is an editable proposal only. It never writes to the geo reference until the operator explicitly approves and applies it.
+- **Evaluation fixtures:** `../evals/geo/city-hierarchy.jsonl`
 
 ## Purpose
 

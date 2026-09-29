@@ -11,6 +11,7 @@ from app.schemas.prompts import PromptRevisionCreate
 from app.services.audit import append_audit
 from app.services.managed_prompts import effective_prompt
 from app.services.prompt_catalog import list_prompts
+from app.services.prompt_evals import validate_prompt_evaluation_fixture
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -213,6 +214,10 @@ async def activate_prompt_revision(
         raise HTTPException(status_code=404, detail="Built-in prompt not found")
     if entry.state != "approved":
         raise HTTPException(status_code=409, detail="Approve the prompt revision before activation")
+    try:
+        validate_prompt_evaluation_fixture(baseline)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if (entry.schema_json or {}).get("baseline_hash") != baseline.content_hash:
         raise HTTPException(
             status_code=409, detail="Prompt baseline changed; create a new revision"

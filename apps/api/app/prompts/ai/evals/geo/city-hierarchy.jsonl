@@ -1,0 +1,2 @@
+{"name":"bounded-city-child-proposal","input":{"city":{"id":"geo-city-1","name":"Казань"},"existing_children":[],"operator_guidance":[],"max_places":2},"assert":{"nodes_max":2,"allowed_kinds":["district","metro","landmark"],"manual_review_required":true}}
+{"name":"insufficient-data-allows-empty-result","input":{"city":{"id":"geo-city-1","name":"Казань"},"existing_children":[],"operator_guidance":[],"max_places":1},"assert":{"empty_nodes_allowed":true,"warnings_allowed":true}}

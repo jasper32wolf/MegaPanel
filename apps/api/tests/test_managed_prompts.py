@@ -124,6 +124,7 @@ def test_activation_and_baseline_rollback_only_supersede_active_revision(monkeyp
     auth = SimpleNamespace(tenant_id=tenant_id, user=SimpleNamespace(id=uuid4()))
     monkeypatch.setattr(prompts, "_revision_or_404", AsyncMock(return_value=entry))
     monkeypatch.setattr(prompts, "_baseline", lambda _: baseline)
+    monkeypatch.setattr(prompts, "validate_prompt_evaluation_fixture", lambda _: None)
     monkeypatch.setattr(prompts, "append_audit", AsyncMock())
 
     activation_db = Session()
@@ -134,6 +135,37 @@ def test_activation_and_baseline_rollback_only_supersede_active_revision(monkeyp
     for statement in [activation_db.statements[0], rollback_db.statements[0]]:
         compiled = str(statement.compile(dialect=postgresql.dialect()))
         assert "prompt_registry.is_active IS true" in compiled
+
+
+def test_activation_requires_a_valid_packaged_evaluation_fixture(monkeypatch):
+    from app.api.v1 import prompts
+    from fastapi import HTTPException
+
+    baseline = SimpleNamespace(content_hash="a" * 64)
+    entry = SimpleNamespace(
+        id=uuid4(),
+        key="architecture.site-map",
+        version=2,
+        template="Уточняйте неопределённость.",
+        is_active=False,
+        state="approved",
+        schema_json={"baseline_hash": baseline.content_hash},
+    )
+    auth = SimpleNamespace(tenant_id=uuid4(), user=SimpleNamespace(id=uuid4()))
+    monkeypatch.setattr(prompts, "_revision_or_404", AsyncMock(return_value=entry))
+    monkeypatch.setattr(prompts, "_baseline", lambda _: baseline)
+    monkeypatch.setattr(
+        prompts,
+        "validate_prompt_evaluation_fixture",
+        lambda _: (_ for _ in ()).throw(ValueError("fixture is missing")),
+    )
+
+    with pytest.raises(HTTPException, match="fixture is missing") as exc_info:
+        asyncio.run(prompts.activate_prompt_revision(entry.key, entry.id, auth, object()))
+
+    assert exc_info.value.status_code == 409
+    assert entry.is_active is False
+    assert entry.state == "approved"
 
 
 def test_finalized_prompt_revision_migration_freezes_content_only():
