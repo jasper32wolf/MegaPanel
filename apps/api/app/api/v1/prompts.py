@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from difflib import unified_diff
 from uuid import UUID
 
 from app.api.deps import AuthContext, require_roles
@@ -21,7 +22,8 @@ def _baseline(prompt_id: str):
     return next((item for item in list_prompts() if item.prompt_id == prompt_id), None)
 
 
-def _serialize(entry: PromptEntry) -> dict:
+def _serialize(entry: PromptEntry, baseline=None) -> dict:
+    effective = effective_prompt(baseline, entry) if baseline else None
     return {
         "id": str(entry.id),
         "key": entry.key,
@@ -30,6 +32,16 @@ def _serialize(entry: PromptEntry) -> dict:
         "active": entry.is_active,
         "state": entry.state,
         "baseline_hash": (entry.schema_json or {}).get("baseline_hash"),
+        "effective_diff": "".join(
+            unified_diff(
+                baseline.content.splitlines(keepends=True),
+                effective.content.splitlines(keepends=True),
+                fromfile=f"packaged/{baseline.prompt_id}@{baseline.version}",
+                tofile=f"effective/{baseline.prompt_id}@{effective.version}",
+            )
+        )
+        if baseline and effective
+        else None,
         "created_by": str(entry.created_by) if entry.created_by else None,
         "reviewed_by": str(entry.reviewed_by) if entry.reviewed_by else None,
         "submitted_at": entry.submitted_at.isoformat() if entry.submitted_at else None,
@@ -85,7 +97,9 @@ async def list_managed_prompts(
             "baseline_version": baseline.version,
             "baseline_hash": baseline.content_hash,
             "path": "/".join(baseline.path.parts[-3:]),
-            "revisions": [_serialize(item) for item in by_key.get(baseline.prompt_id, [])],
+            "revisions": [
+                _serialize(item, baseline) for item in by_key.get(baseline.prompt_id, [])
+            ],
         }
         for baseline in list_prompts()
     ]

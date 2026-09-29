@@ -27,6 +27,35 @@ def test_operator_prompt_revision_extends_but_never_replaces_baseline():
     assert prompt.revision_id == revision.id
 
 
+def test_prompt_revision_serialization_includes_effective_diff():
+    from app.api.v1.prompts import _serialize
+
+    baseline = load_prompt("architecture/propose-site-map.md")
+    entry = SimpleNamespace(
+        id=uuid4(),
+        key=baseline.prompt_id,
+        version=2,
+        template="Показывайте ограничения перед предложением.",
+        is_active=False,
+        state="review",
+        schema_json={"baseline_hash": baseline.content_hash},
+        created_by=None,
+        reviewed_by=None,
+        submitted_at=None,
+        reviewed_at=None,
+        decision_reason=None,
+        created_at=None,
+    )
+
+    serialized = _serialize(entry, baseline)
+
+    assert serialized["effective_diff"].startswith(
+        f"--- packaged/{baseline.prompt_id}@{baseline.version}"
+    )
+    assert "+## Операторские инструкции" in serialized["effective_diff"]
+    assert "+Показывайте ограничения перед предложением." in serialized["effective_diff"]
+
+
 def test_content_ai_actions_use_managed_prompt_composition():
     source = (Path(__file__).parents[1] / "app" / "api" / "v1" / "ai_content.py").read_text(
         encoding="utf-8"
