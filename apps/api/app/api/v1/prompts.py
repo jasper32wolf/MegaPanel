@@ -7,7 +7,7 @@ from uuid import UUID
 from app.api.deps import AuthContext, require_roles
 from app.db.session import get_db
 from app.models.ai import PromptEntry
-from app.schemas.prompts import PromptRevisionCreate
+from app.schemas.prompts import PromptRevisionCreate, PromptRevisionDecision
 from app.services.audit import append_audit
 from app.services.managed_prompts import effective_prompt
 from app.services.prompt_catalog import list_prompts
@@ -193,6 +193,33 @@ async def approve_prompt_revision(
     await append_audit(
         db,
         action="ai.prompt_revision.approve",
+        payload={"prompt_id": prompt_id, "revision_id": str(entry.id)},
+        tenant_id=auth.tenant_id,
+        actor_id=auth.user.id,
+    )
+    await db.commit()
+    return _serialize(entry)
+
+
+@router.post("/{prompt_id}/revisions/{revision_id}/reject")
+async def reject_prompt_revision(
+    prompt_id: str,
+    revision_id: UUID,
+    body: PromptRevisionDecision,
+    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    entry = await _revision_or_404(db, prompt_id, revision_id, auth)
+    if entry.state != "review":
+        raise HTTPException(status_code=409, detail="Only revisions under review can be rejected")
+    entry.state = "rejected"
+    entry.is_active = False
+    entry.reviewed_by = auth.user.id
+    entry.reviewed_at = datetime.now(UTC)
+    entry.decision_reason = body.reason
+    await append_audit(
+        db,
+        action="ai.prompt_revision.reject",
         payload={"prompt_id": prompt_id, "revision_id": str(entry.id)},
         tenant_id=auth.tenant_id,
         actor_id=auth.user.id,

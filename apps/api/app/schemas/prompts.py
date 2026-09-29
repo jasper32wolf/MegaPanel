@@ -15,6 +15,18 @@ _EMAIL = re.compile(r"\b[^\s@]+@[^\s@]+\.[^\s@]+\b")
 _PHONE = re.compile(r"(?:\+7|8)[\s()-]?\d[\d\s()-]{8,}")
 
 
+class PromptRevisionDecision(BaseModel):
+    reason: str = Field(min_length=3, max_length=4000)
+
+    @field_validator("reason")
+    @classmethod
+    def normalize_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if len(normalized) < 3:
+            raise ValueError("Provide a rejection reason")
+        return normalized
+
+
 class PromptRevisionCreate(BaseModel):
     instructions: str = Field(min_length=1, max_length=12_000)
 

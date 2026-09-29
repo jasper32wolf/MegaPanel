@@ -85,7 +85,59 @@ def test_prompt_revision_lifecycle_routes_are_registered():
 
     assert "post" in paths["/api/v1/ai/prompts/{prompt_id}/revisions/{revision_id}/submit-review"]
     assert "post" in paths["/api/v1/ai/prompts/{prompt_id}/revisions/{revision_id}/approve"]
+    assert "post" in paths["/api/v1/ai/prompts/{prompt_id}/revisions/{revision_id}/reject"]
     assert "post" in paths["/api/v1/ai/prompts/{prompt_id}/rollback-baseline"]
+
+
+def test_prompt_revision_rejection_records_terminal_decision(monkeypatch):
+    from app.api.v1 import prompts
+    from app.schemas.prompts import PromptRevisionDecision
+
+    entry = SimpleNamespace(
+        id=uuid4(),
+        key="architecture.site-map",
+        version=2,
+        template="Уточняйте неопределённость.",
+        is_active=False,
+        state="review",
+        schema_json={},
+        created_by=None,
+        reviewed_by=None,
+        submitted_at=None,
+        reviewed_at=None,
+        decision_reason=None,
+        created_at=None,
+    )
+
+    class Session:
+        def __init__(self):
+            self.committed = False
+
+        async def commit(self):
+            self.committed = True
+
+    auth = SimpleNamespace(tenant_id=uuid4(), user=SimpleNamespace(id=uuid4()))
+    db = Session()
+    audit = AsyncMock()
+    monkeypatch.setattr(prompts, "_revision_or_404", AsyncMock(return_value=entry))
+    monkeypatch.setattr(prompts, "append_audit", audit)
+
+    result = asyncio.run(
+        prompts.reject_prompt_revision(
+            entry.key,
+            entry.id,
+            PromptRevisionDecision(reason="Не проходит проверку ограничений."),
+            auth,
+            db,
+        )
+    )
+
+    assert (entry.state, entry.is_active, entry.reviewed_by) == ("rejected", False, auth.user.id)
+    assert entry.reviewed_at is not None
+    assert entry.decision_reason == "Не проходит проверку ограничений."
+    assert result["state"] == "rejected"
+    assert db.committed is True
+    assert audit.await_args.kwargs["action"] == "ai.prompt_revision.reject"
 
 
 def test_activation_and_baseline_rollback_only_supersede_active_revision(monkeypatch):
