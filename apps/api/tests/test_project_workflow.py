@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from app.api.v1 import projects
 from app.api.v1.projects import (
     _draft_manifest_hash,
@@ -726,6 +728,17 @@ def test_page_metadata_snapshot_migration_follows_current_head():
 
     assert 'down_revision: str | None = "0030_prompt_revision_immutability"' in source
     assert '"page_metadata_snapshot"' in source
+
+
+def test_project_status_document_names_the_actual_alembic_head():
+    api_dir = Path(__file__).parents[1]
+    head = ScriptDirectory.from_config(Config(str(api_dir / "alembic.ini"))).get_current_head()
+    status_document = (Path(__file__).parents[3] / "docs" / "ХОД-РАБОТ.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert head is not None
+    assert f"`{head}" in status_document
 
 
 def test_page_plan_normalizes_root_slug():
