@@ -3,6 +3,7 @@ import { api, useAuth } from "../lib/auth";
 import { PageHeader, Surface } from "../components/ui";
 
 type Provider = { id: string; label: string; provider_id: string; enabled: boolean };
+type ProjectChoice = { id: string; name: string; domain: string | null; site_id: string | null; current_fact_revision_id: string | null };
 type Quote = {
   provider_id: string;
   model_id: string;
@@ -48,6 +49,7 @@ type RunSummary = {
 export function AIWorkspacePage() {
   const { token } = useAuth();
   const [providers, setProviders] = useState<Provider[]>([]);
+  const [projects, setProjects] = useState<ProjectChoice[]>([]);
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [runProjectId, setRunProjectId] = useState("");
   const [runAction, setRunAction] = useState("");
@@ -73,6 +75,12 @@ export function AIWorkspacePage() {
         if (active.length === 1) setProviderId(active[0].id);
       })
       .catch((cause) => setError(cause instanceof Error ? cause.message : "Не удалось загрузить провайдеры"));
+  }, [token]);
+
+  useEffect(() => {
+    api<ProjectChoice[]>("/api/v1/projects", {}, token)
+      .then(setProjects)
+      .catch((cause) => setError(cause instanceof Error ? cause.message : "Не удалось загрузить проекты"));
   }, [token]);
 
   async function loadRuns() {
@@ -216,7 +224,7 @@ export function AIWorkspacePage() {
       {message && <p className="success" role="status">{message}</p>}
       <Surface title="История AI runs">
         <div className="row">
-          <label className="field">Project ID<input value={runProjectId} onChange={(event) => setRunProjectId(event.target.value)} placeholder="Все проекты" /></label>
+          <label className="field">Проект<select value={runProjectId} onChange={(event) => setRunProjectId(event.target.value)}><option value="">Все проекты</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}{project.domain ? ` · ${project.domain}` : ""}</option>)}</select></label>
           <label className="field">Действие<select value={runAction} onChange={(event) => setRunAction(event.target.value)}><option value="">Все</option><option value="architecture.site-map">Архитектура</option><option value="seo.create-brief">SEO brief</option><option value="content.page-draft-copy">PageDraft copy</option><option value="content.block-slot-copy">Текст curated-блока</option></select></label>
           <label className="field">Статус<select value={runStatus} onChange={(event) => setRunStatus(event.target.value)}><option value="">Все</option><option value="pending_approval">Ожидает решения</option><option value="approved">Одобрен</option><option value="rejected">Отклонён</option><option value="completed">Завершён</option><option value="failed">Ошибка</option></select></label>
           <button className="btn btn-ghost" type="button" disabled={busy} onClick={() => void loadRuns().catch((cause) => setError(cause instanceof Error ? cause.message : "Не удалось обновить AI runs"))}>Применить фильтры</button>
@@ -226,7 +234,7 @@ export function AIWorkspacePage() {
       </Surface>
       <Surface title="Предложить структуру сайта">
         <form className="stack" onSubmit={requestProposal}>
-          <label className="field">Project ID<input value={projectId} onChange={(event) => { setProjectId(event.target.value); setQuote(null); setConsented(false); }} placeholder="UUID проекта" required /></label>
+          <label className="field">Проект<select value={projectId} onChange={(event) => { setProjectId(event.target.value); setQuote(null); setConsented(false); }} required><option value="">Выберите проект</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}{project.domain ? ` · ${project.domain}` : ""}{project.current_fact_revision_id ? "" : " · facts не подтверждены"}</option>)}</select><span className="muted">Внешний вызов доступен только для проекта с подтверждёнными facts, geo и семантикой; это проверяется сервером до quote.</span></label>
           <label className="field">Активное подключение<select value={providerId} onChange={(event) => { setProviderId(event.target.value); setQuote(null); setConsented(false); }} required><option value="">Выберите провайдера</option>{providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.label} ({provider.provider_id})</option>)}</select></label>
           <label className="field">Model ID<input value={model} onChange={(event) => { setModel(event.target.value); setQuote(null); setConsented(false); }} placeholder="например, glm-4-flash" required /></label>
           <div className="detail-grid">

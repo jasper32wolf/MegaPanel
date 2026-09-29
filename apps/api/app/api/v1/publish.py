@@ -40,8 +40,6 @@ async def publish_site(
     pages = list((await db.execute(stmt)).scalars().all())
     for page in pages:
         page.publish_state = body.publish_state
-        if body.publish_state == "published" and page.index_state == "noindex" and not page.thin:
-            page.index_state = "queued"
         if body.publish_state == "archived":
             page.index_state = "noindex"
 

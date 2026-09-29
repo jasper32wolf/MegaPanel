@@ -241,3 +241,47 @@ def test_rotated_rows_are_one_visible_active_family():
     assert payload["active"][0]["id"] == str(current.id)
     assert payload["active"][0]["current"] is True
     assert payload["recent"] == []
+
+
+def test_audit_history_returns_metadata_without_payload():
+    entry = SimpleNamespace(
+        id=1,
+        action="lead.pii_reveal",
+        actor_id=uuid4(),
+        created_at=datetime.now(UTC),
+        record_hash="a" * 64,
+        payload={"phone": "+79990000000", "secret": "must-not-leak"},
+    )
+
+    class Database:
+        async def scalar(self, _statement):
+            return 1
+
+        async def execute(self, _statement):
+            return SessionRows([entry])
+
+    auth = SimpleNamespace(role="superadmin", tenant_id=None)
+    payload = asyncio.run(
+        security_ops.list_audit_history(action=None, offset=0, limit=50, auth=auth, db=Database())
+    )
+
+    assert payload["total"] == 1
+    assert payload["items"] == [
+        {
+            "id": 1,
+            "action": "lead.pii_reveal",
+            "actor_id": str(entry.actor_id),
+            "created_at": entry.created_at.isoformat(),
+            "record_hash": "a" * 64,
+        }
+    ]
+    assert "payload" not in str(payload)
+
+
+def test_audit_routes_are_registered():
+    from app.main import app
+
+    paths = app.openapi()["paths"]
+
+    assert "get" in paths["/api/v1/security/audit"]
+    assert "get" in paths["/api/v1/security/audit/integrity"]

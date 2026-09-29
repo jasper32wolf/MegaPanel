@@ -2,19 +2,32 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from typing import Literal
 from uuid import UUID
 
 from app.api.deps import AuthContext, require_roles
 from app.db.session import get_db
-from app.models import Lead, Site, WebhookDelivery, WorkerHeartbeat
+from app.models import AlertIncident, Lead, OperationalEvent, Site, WebhookDelivery, WorkerHeartbeat
+from app.models.leads import LeadDeliveryAggregate, LeadRoutingPolicy
 from app.models.project import PageDraft, PagePlan, Project
 from app.models.publish import Domain, SiteBuild
 from app.models.system_operation import SystemOperation
+from app.services.audit import append_audit
+from app.services.operations import (
+    _serialize_incident,
+    serialize_operational_event,
+    transition_incident,
+)
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
+
+
+class IncidentActionIn(BaseModel):
+    action: Literal["acknowledge", "resolve"]
 
 
 @router.get("/builds/{site_id}")
@@ -191,6 +204,26 @@ async def report_summary(
         await _status_counts(db, SystemOperation, auth),
     )
     domain_counts = dict(domain_counts.all())
+    aggregate_counts = await _status_counts(db, LeadDeliveryAggregate, auth)
+    routing_counts = await _status_counts(db, LeadRoutingPolicy, auth, "state")
+    active_routing_site_ids = set(
+        (
+            await db.execute(
+                select(LeadRoutingPolicy.site_id).where(
+                    *_tenant_predicate(LeadRoutingPolicy, auth),
+                    LeadRoutingPolicy.state == "active",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    routing_missing = sum(
+        site.publish_state == "published"
+        and getattr(site, "project_id", None) is not None
+        and site.id not in active_routing_site_ids
+        for site in sites
+    )
     delivery_pending = sum(
         delivery_counts.get(status, 0) for status in ("queued", "retrying", "processing")
     )
@@ -202,15 +235,40 @@ async def report_summary(
     )
     active_leads = sum(lead_counts.get(status, 0) for status in ("new", "qualified"))
     alerts = []
-    if delivery_counts.get("dead_letter", 0):
+    delivery_attention = aggregate_counts.get("attention", 0) or delivery_counts.get(
+        "dead_letter", 0
+    )
+    if delivery_attention:
         alerts.append(
             _alert(
                 code="lead-delivery-dead-letter",
                 severity="critical",
                 title="Недоставленные заявки",
-                detail="Заявки требуют ручного восстановления или настройки получателя.",
-                count=delivery_counts["dead_letter"],
+                detail="Требуемый получатель заявки требует ручного восстановления или настройки.",
+                count=delivery_attention,
                 route="/leads",
+            )
+        )
+    if routing_missing:
+        alerts.append(
+            _alert(
+                code="lead-routing-missing",
+                severity="warning",
+                title="Нет активной политики маршрутизации",
+                detail="Для опубликованного сайта настройте и явно активируйте получателей заявок.",
+                count=routing_missing,
+                route="/projects",
+            )
+        )
+    if routing_counts.get("review", 0):
+        alerts.append(
+            _alert(
+                code="lead-routing-review",
+                severity="info",
+                title="Маршрутизация ожидает проверки",
+                detail="Проверьте и явно активируйте policy до следующей публикации.",
+                count=routing_counts["review"],
+                route="/projects",
             )
         )
     if domain_counts.get("error", 0):
@@ -270,6 +328,9 @@ async def report_summary(
         "delivery_dead_letter": delivery_counts.get("dead_letter", 0),
         "delivery_oldest_at": delivery_oldest_at.isoformat() if delivery_oldest_at else None,
         "delivery_statuses": delivery_counts,
+        "lead_delivery_aggregate_statuses": aggregate_counts,
+        "lead_routing_policy_statuses": routing_counts,
+        "lead_routing_missing": routing_missing,
         "domains_pending_tls": domain_counts.get("pending", 0),
         "domains_tls_error": domain_counts.get("error", 0),
         "project_statuses": project_counts,
@@ -279,6 +340,74 @@ async def report_summary(
         "system_operation_statuses": operation_counts,
         "alerts": alerts,
     }
+
+
+@router.get("/incidents")
+async def list_incidents(
+    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor")),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    incidents = list(
+        (
+            await db.execute(
+                select(AlertIncident)
+                .where(*_tenant_predicate(AlertIncident, auth))
+                .order_by(AlertIncident.opened_at.desc())
+                .limit(100)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [_serialize_incident(incident) for incident in incidents]
+
+
+@router.patch("/incidents/{incident_id}")
+async def update_incident(
+    incident_id: UUID,
+    body: IncidentActionIn,
+    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    incident = (
+        await db.execute(
+            select(AlertIncident).where(AlertIncident.id == incident_id).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    if auth.role != "superadmin" and incident.tenant_id != auth.tenant_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    await transition_incident(db, incident=incident, action=body.action)
+    await append_audit(
+        db,
+        action=f"operational_incident.{body.action}",
+        payload={"incident_id": str(incident.id), "status": incident.status},
+        tenant_id=incident.tenant_id,
+        actor_id=auth.user.id,
+    )
+    await db.commit()
+    return _serialize_incident(incident)
+
+
+@router.get("/events")
+async def list_operational_events(
+    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor")),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    events = list(
+        (
+            await db.execute(
+                select(OperationalEvent)
+                .where(*_tenant_predicate(OperationalEvent, auth))
+                .order_by(OperationalEvent.occurred_at.desc())
+                .limit(100)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [serialize_operational_event(event) for event in events]
 
 
 @router.get("/reports/observability")

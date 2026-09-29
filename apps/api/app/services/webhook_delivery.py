@@ -3,17 +3,27 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import smtplib
 import ssl
 from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
+from hashlib import sha256
 from uuid import UUID
 
 from app.core.config import get_settings
 from app.models import Project, Site
-from app.models.leads import Lead, WebhookDelivery, WebhookDeliveryAttempt
+from app.models.leads import (
+    Lead,
+    LeadDeliveryAggregate,
+    LeadRoutingDestination,
+    LeadRoutingPolicy,
+    WebhookDelivery,
+    WebhookDeliveryAttempt,
+)
 from app.models.project import ProjectFactRevision
 from app.services.leads import dispatch_webhook, get_encryptor
+from app.services.metrics import record_delivery_transition
 from arq import create_pool
 from arq.connections import RedisSettings
 from sqlalchemy import func, select
@@ -85,6 +95,96 @@ def _delivery_payload(lead: Lead, site: Site) -> dict:
     }
 
 
+def policy_hash(destinations: list[dict]) -> str:
+    return sha256(
+        json.dumps(destinations, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+async def active_routing_policy(
+    db: AsyncSession, *, site: Site
+) -> tuple[LeadRoutingPolicy, list[LeadRoutingDestination]] | None:
+    if not site.project_id:
+        return None
+    policy = (
+        await db.execute(
+            select(LeadRoutingPolicy).where(
+                LeadRoutingPolicy.tenant_id == site.tenant_id,
+                LeadRoutingPolicy.project_id == site.project_id,
+                LeadRoutingPolicy.site_id == site.id,
+                LeadRoutingPolicy.state == "active",
+            )
+        )
+    ).scalar_one_or_none()
+    if not policy:
+        return None
+    destinations = list(
+        (
+            await db.execute(
+                select(LeadRoutingDestination)
+                .where(
+                    LeadRoutingDestination.policy_id == policy.id,
+                    LeadRoutingDestination.tenant_id == site.tenant_id,
+                )
+                .order_by(LeadRoutingDestination.target_key)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return policy, destinations
+
+
+async def recompute_lead_delivery_aggregate(
+    db: AsyncSession, *, lead: Lead
+) -> LeadDeliveryAggregate:
+    deliveries = list(
+        (
+            await db.execute(
+                select(WebhookDelivery)
+                .where(WebhookDelivery.lead_id == lead.id)
+                .order_by(WebhookDelivery.created_at, WebhookDelivery.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    required = [delivery for delivery in deliveries if getattr(delivery, "required", True)]
+    pending_statuses = {"queued", "retrying", "processing"}
+    expected_count = len(required)
+    delivered_count = sum(delivery.status == "delivered" for delivery in required)
+    attention_count = sum(delivery.status == "dead_letter" for delivery in required)
+    pending_count = sum(delivery.status in pending_statuses for delivery in required)
+    oldest_pending_at = min(
+        (
+            delivery.created_at
+            for delivery in required
+            if delivery.status in pending_statuses and delivery.created_at is not None
+        ),
+        default=None,
+    )
+    if not deliveries:
+        status = "not_configured"
+    elif attention_count:
+        status = "attention"
+    elif expected_count and delivered_count == expected_count:
+        status = "delivered"
+    else:
+        status = "pending"
+    aggregate = await db.get(LeadDeliveryAggregate, lead.id)
+    if aggregate is None:
+        aggregate = LeadDeliveryAggregate(lead_id=lead.id, tenant_id=lead.tenant_id)
+        db.add(aggregate)
+    aggregate.status = status
+    aggregate.expected_count = expected_count
+    aggregate.delivered_count = delivered_count
+    aggregate.pending_count = pending_count
+    aggregate.attention_count = attention_count
+    aggregate.oldest_pending_at = oldest_pending_at
+    lead.crm_status = status
+    return aggregate
+
+
 async def create_lead_delivery(
     db: AsyncSession, *, lead: Lead, site: Site
 ) -> WebhookDelivery | None:
@@ -111,8 +211,6 @@ async def create_lead_delivery(
         dead_lettered_at=None if target_secret_enc else _now(),
     )
     db.add(delivery)
-    if not target_secret_enc:
-        lead.crm_status = "dead_letter"
     return delivery
 
 
@@ -154,14 +252,78 @@ def create_smtp_delivery(
         dead_lettered_at=None if configured else _now(),
     )
     db.add(delivery)
-    if not configured:
-        lead.crm_status = "dead_letter"
+    return delivery
+
+
+def create_policy_delivery(
+    db: AsyncSession,
+    *,
+    lead: Lead,
+    site: Site,
+    policy: LeadRoutingPolicy,
+    destination: LeadRoutingDestination,
+) -> WebhookDelivery:
+    payload = _delivery_payload(lead, site)
+    if destination.channel == "webhook":
+        configured = bool(destination.target_url and destination.target_secret_enc)
+        delivery = WebhookDelivery(
+            tenant_id=lead.tenant_id,
+            site_id=site.id,
+            lead_id=lead.id,
+            routing_policy_id=policy.id,
+            routing_policy_version=policy.version,
+            routing_policy_hash=policy.policy_hash,
+            required=destination.required,
+            target_key=destination.target_key,
+            channel="webhook",
+            target_url=destination.target_url,
+            target_secret_enc=destination.target_secret_enc,
+            payload=payload,
+            idempotency_key=payload["idempotency_key"],
+            status="queued" if configured else "dead_letter",
+            max_attempts=MAX_ATTEMPTS,
+            next_attempt_at=_now() if configured else None,
+            last_error=None if configured else "Webhook target is not configured",
+            dead_lettered_at=None if configured else _now(),
+        )
+    elif destination.channel == "email":
+        configured = bool(destination.target_recipient_enc and get_settings().smtp_configured)
+        delivery = WebhookDelivery(
+            tenant_id=lead.tenant_id,
+            site_id=site.id,
+            lead_id=lead.id,
+            routing_policy_id=policy.id,
+            routing_policy_version=policy.version,
+            routing_policy_hash=policy.policy_hash,
+            required=destination.required,
+            target_key=destination.target_key,
+            channel="email",
+            target_recipient_enc=destination.target_recipient_enc,
+            payload=payload,
+            idempotency_key=payload["idempotency_key"],
+            status="queued" if configured else "dead_letter",
+            max_attempts=MAX_ATTEMPTS,
+            next_attempt_at=_now() if configured else None,
+            last_error=None if configured else "SMTP target is not configured",
+            dead_lettered_at=None if configured else _now(),
+        )
+    else:
+        raise ValueError("Unsupported routing destination channel")
+    db.add(delivery)
     return delivery
 
 
 async def create_lead_deliveries(
     db: AsyncSession, *, lead: Lead, site: Site
 ) -> list[WebhookDelivery]:
+    routing = await active_routing_policy(db, site=site)
+    if routing is not None:
+        policy, destinations = routing
+        return [
+            create_policy_delivery(db, lead=lead, site=site, policy=policy, destination=destination)
+            for destination in destinations
+        ]
+
     deliveries = []
     webhook = await create_lead_delivery(db, lead=lead, site=site)
     if webhook:
@@ -219,6 +381,10 @@ async def recover_expired_leases(db: AsyncSession) -> int:
         delivery.next_attempt_at = now
         delivery.locked_until = None
         delivery.last_error = "Worker lease expired"
+        lead = await db.get(Lead, delivery.lead_id)
+        if lead is not None:
+            await recompute_lead_delivery_aggregate(db, lead=lead)
+        record_delivery_transition(channel=delivery.channel, status="retrying", trigger="recovery")
     await db.commit()
     return len(rows)
 
@@ -329,6 +495,9 @@ async def process_delivery(
         status="processing",
     )
     db.add(attempt)
+    lead = await db.get(Lead, delivery.lead_id)
+    assert lead is not None
+    await recompute_lead_delivery_aggregate(db, lead=lead)
     await db.commit()
 
     lead = await db.get(Lead, delivery.lead_id)
@@ -367,18 +536,17 @@ async def process_delivery(
         delivery.delivered_at = finished
         delivery.next_attempt_at = None
         attempt.status = "delivered"
-        lead.crm_status = "sent"
     elif _retryable(result) and delivery.attempt_count < delivery.max_attempts:
         delivery.status = "retrying"
         delivery.next_attempt_at = _next_attempt(delivery.attempt_count)
         attempt.status = "retrying"
-        lead.crm_status = "retrying"
     else:
         delivery.status = "dead_letter"
         delivery.dead_lettered_at = finished
         delivery.next_attempt_at = None
         attempt.status = "dead_letter"
-        lead.crm_status = "dead_letter"
+    await recompute_lead_delivery_aggregate(db, lead=lead)
+    record_delivery_transition(channel=delivery.channel, status=delivery.status, trigger=trigger)
     await db.commit()
     return {"status": delivery.status, "delivery_id": str(delivery.id), "attempt": sequence}
 
@@ -397,4 +565,4 @@ async def resend_delivery(db: AsyncSession, delivery: WebhookDelivery) -> None:
     lead = (
         await db.execute(select(Lead).where(Lead.id == delivery.lead_id).with_for_update())
     ).scalar_one()
-    lead.crm_status = "queued"
+    await recompute_lead_delivery_aggregate(db, lead=lead)

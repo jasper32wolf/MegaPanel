@@ -12,6 +12,7 @@ from app.api.v1 import (
     geo,
     health,
     keywords,
+    lead_routing,
     leads,
     media,
     panel,
@@ -37,6 +38,7 @@ api_router.include_router(domains.router, prefix="/domains", tags=["domains"])
 api_router.include_router(competitors.router, prefix="/competitors", tags=["competitors"])
 api_router.include_router(bulk.router, prefix="/bulk", tags=["bulk"])
 api_router.include_router(leads.router, prefix="/leads", tags=["leads"])
+api_router.include_router(lead_routing.router, prefix="/projects", tags=["lead-routing"])
 api_router.include_router(panel.router, prefix="/panel", tags=["panel"])
 api_router.include_router(projects.router, prefix="/projects", tags=["projects"])
 api_router.include_router(semantic.router, prefix="/projects", tags=["semantic"])

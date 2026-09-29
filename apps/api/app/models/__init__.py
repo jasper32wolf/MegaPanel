@@ -231,6 +231,8 @@ from app.models.ai import (  # noqa: E402
     GenerationJob,
     LlmCache,
     PromptEntry,
+    PromptEvaluationCaseResult,
+    PromptEvaluationRun,
 )
 from app.models.ai_provider import AIProviderConnection, AIRun  # noqa: E402
 from app.models.blocks import (  # noqa: E402
@@ -246,9 +248,13 @@ from app.models.leads import (  # noqa: E402
     AnalyticsEvent,
     Consent,
     Lead,
+    LeadDeliveryAggregate,
+    LeadRoutingDestination,
+    LeadRoutingPolicy,
     WebhookDelivery,
     WebhookDeliveryAttempt,
 )
+from app.models.operations import AlertIncident, OperationalEvent  # noqa: E402
 from app.models.ops import (  # noqa: E402
     ContentDecayEvent,
     FootprintAudit,
@@ -276,8 +282,10 @@ from app.models.project import (  # noqa: E402
     ProjectSemanticKeywordGeoBinding,
 )
 from app.models.publish import (  # noqa: E402
+    BuildReleaseGate,
     BulkOperation,
     Domain,
+    PageIndexPromotion,
     Redirect,
     SiteBuild,
     SitePage,
@@ -288,12 +296,14 @@ from app.models.worker_heartbeat import WorkerHeartbeat  # noqa: E402
 __all__ = [
     "AIRun",
     "AIProviderConnection",
+    "AlertIncident",
     "AnalyticsEvent",
     "ApiKey",
     "AuthSession",
     "AuditLog",
     "BlockKit",
     "BlockKitItem",
+    "BuildReleaseGate",
     "BulkOperation",
     "CompetitorScan",
     "Consent",
@@ -311,10 +321,14 @@ __all__ = [
     "Keyword",
     "KnowledgeDoc",
     "Lead",
+    "LeadDeliveryAggregate",
+    "LeadRoutingDestination",
+    "LeadRoutingPolicy",
     "LlmCache",
     "MediaAsset",
     "MorphCache",
     "Notification",
+    "OperationalEvent",
     "Plugin",
     "Project",
     "ProjectFactRevision",
@@ -325,8 +339,11 @@ __all__ = [
     "ProjectSemanticKeywordGeoBinding",
     "PagePlan",
     "PageDraft",
+    "PageIndexPromotion",
     "LeadOutcome",
     "PromptEntry",
+    "PromptEvaluationCaseResult",
+    "PromptEvaluationRun",
     "Redirect",
     "SavedView",
     "SerpCheck",

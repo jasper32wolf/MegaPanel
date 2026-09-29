@@ -42,6 +42,9 @@ class SummaryDatabase:
             Result([("review", 3), ("failed", 1)]),
             Result([("ready", 1)]),
             Result([("failed", 1)]),
+            Result([("attention", 1)]),
+            Result([("review", 1)]),
+            Result([]),
         ]
 
     async def execute(self, _: object) -> Result:
@@ -71,6 +74,7 @@ def test_report_summary_returns_actionable_current_state_alerts():
         "page-draft-failed",
         "review-queue",
         "system-operation-failed",
+        "lead-routing-review",
     }
     assert next(alert for alert in summary["alerts"] if alert["code"] == "domain-tls-error") == {
         "code": "domain-tls-error",

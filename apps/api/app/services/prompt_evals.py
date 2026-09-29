@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -47,3 +48,37 @@ def validate_prompt_evaluation_fixture(prompt: PromptAsset) -> Path:
                 f"Prompt evaluation fixture line {line_number} has an invalid contract"
             )
     return fixture
+
+
+PROMPT_EVALUATION_RULESET_VERSION = "offline-fixture-v1"
+
+
+def run_offline_prompt_evaluation(prompt: PromptAsset) -> dict:
+    fixture = validate_prompt_evaluation_fixture(prompt)
+    fixture_bytes = fixture.read_bytes()
+    names: set[str] = set()
+    cases: list[dict] = []
+    for line_number, line in enumerate(fixture_bytes.decode("utf-8").splitlines(), start=1):
+        item = json.loads(line)
+        name = str(item["name"]).strip()
+        assertions = item["assert"]
+        if name in names:
+            raise ValueError(f"Prompt evaluation fixture duplicates case name: {name}")
+        if not assertions or any(not isinstance(key, str) or not key.strip() for key in assertions):
+            raise ValueError(
+                f"Prompt evaluation fixture line {line_number} has no valid assertions"
+            )
+        names.add(name)
+        cases.append(
+            {
+                "name": name,
+                "status": "passed",
+                "assertion_keys": sorted(assertions),
+                "diagnostic": None,
+            }
+        )
+    return {
+        "fixture_hash": hashlib.sha256(fixture_bytes).hexdigest(),
+        "ruleset_version": PROMPT_EVALUATION_RULESET_VERSION,
+        "cases": cases,
+    }

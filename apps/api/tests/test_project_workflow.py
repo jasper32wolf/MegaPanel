@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -12,7 +13,10 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 from app.api.v1 import projects
 from app.api.v1.projects import (
+    _candidate_index_states,
+    _current_qa_run,
     _draft_manifest_hash,
+    _lead_routing_publish_blockers,
     _project_site_or_409,
     _public_fact_values,
     _reconcile_site_page_projection,
@@ -22,6 +26,7 @@ from app.api.v1.projects import (
     _verified_media_hash,
     attach_draft_block_media,
     attach_draft_media,
+    create_index_promotion,
     materialize_project_build,
     publish_project_build,
     rollback_project_build,
@@ -35,6 +40,7 @@ from app.schemas.workflow import (
     LeadOutcomeIn,
     PageDraftBlockMediaAttachIn,
     PageDraftMediaAttachIn,
+    PageIndexPromotionIn,
     PagePlanCreate,
     ProjectGeoUpdate,
     ProjectKeywordsUpdate,
@@ -100,6 +106,14 @@ class BuildWorkflowDatabase:
 
     def add(self, value: object) -> None:
         self.added.append(value)
+
+    async def flush(self) -> None:
+        for value in self.added:
+            if getattr(value, "id", "set") is None:
+                value.id = uuid4()
+
+    async def get(self, _model, _key):
+        return None
 
     async def commit(self) -> None:
         self.committed = True
@@ -167,7 +181,10 @@ def test_materializing_candidate_does_not_mutate_active_site_page_projection(mon
     )
     result = {
         "build_hash": "c" * 64,
-        "pages": [_page_metadata("/"), _page_metadata("/new")],
+        "pages": [
+            _page_metadata("/", index_state="noindex"),
+            _page_metadata("/new", index_state="noindex"),
+        ],
         "indexed_count": 2,
     }
 
@@ -181,7 +198,7 @@ def test_materializing_candidate_does_not_mutate_active_site_page_projection(mon
             self.calls.append(kwargs)
             return result
 
-    db = BuildWorkflowDatabase([[active_page], []])
+    db = BuildWorkflowDatabase([[active_page], [], []])
     monkeypatch.setattr(projects, "_project_or_404", AsyncMock(return_value=project))
     monkeypatch.setattr(projects, "_project_site_or_409", AsyncMock(return_value=site))
     monkeypatch.setattr(projects, "SiteBuilder", Builder)
@@ -204,13 +221,88 @@ def test_materializing_candidate_does_not_mutate_active_site_page_projection(mon
     response = asyncio.run(materialize_project_build(project_id, auth, db))
 
     assert response["activated"] is False
-    assert Builder.calls == [{"index_states": {"/": "indexed"}, "assets": [], "activate": False}]
-    assert {type(item).__name__ for item in db.added} == {"SiteBuild"}
+    assert Builder.calls == [
+        {"index_states": {"/": "noindex", "/new": "noindex"}, "assets": [], "activate": False}
+    ]
+    assert {type(item).__name__ for item in db.added} == {"BuildReleaseGate", "SiteBuild"}
+    gate = next(item for item in db.added if type(item).__name__ == "BuildReleaseGate")
+    assert gate.status == "block"
+    assert "Set the legal organization before publish" in gate.blockers
     build = db.added[0]
     assert build.manifest_snapshot == snapshot
-    assert build.page_metadata_snapshot == result["pages"]
+    assert [item["index_state"] for item in build.page_metadata_snapshot] == ["noindex", "noindex"]
+    assert all(len(item["source_hash"]) == 64 for item in build.page_metadata_snapshot)
+    assert all(item["promoted_at"] is None for item in build.page_metadata_snapshot)
     assert {name: getattr(active_page, name) for name in before} == before
     assert db.committed is True
+
+
+def test_explicit_index_promotion_requires_passing_current_qa(monkeypatch):
+    tenant_id, project_id, site_id, draft_id = (uuid4() for _ in range(4))
+    page = _page_manifest("/", "Страница для индексации")
+    source_hash = _draft_manifest_hash(page)
+    project = SimpleNamespace(id=project_id, tenant_id=tenant_id, site_id=site_id)
+    site = SimpleNamespace(
+        id=site_id,
+        tenant_id=tenant_id,
+        manifest=_build_manifest_snapshot(site_id, tenant_id, [page]),
+    )
+    draft = SimpleNamespace(
+        id=draft_id,
+        state="applied",
+        content_hash=source_hash,
+        page_manifest=page,
+        qa_runs=[{"source_hash": source_hash, "verdict": "pass"}],
+        last_qa_verdict="pass",
+    )
+    db = BuildWorkflowDatabase([[draft]])
+    monkeypatch.setattr(projects, "_project_or_404", AsyncMock(return_value=project))
+    monkeypatch.setattr(projects, "_project_site_or_409", AsyncMock(return_value=site))
+    monkeypatch.setattr(projects, "append_audit", AsyncMock())
+    auth = SimpleNamespace(user=SimpleNamespace(id=uuid4()))
+
+    response = asyncio.run(
+        create_index_promotion(
+            project_id,
+            PageIndexPromotionIn(
+                slug="/", reason="Проверена готовность страницы к поисковой выдаче", confirmed=True
+            ),
+            auth,
+            db,
+        )
+    )
+
+    promotion = db.added[0]
+    assert promotion.slug == "/"
+    assert promotion.source_hash == source_hash
+    assert promotion.qa_source_hash == source_hash
+    assert response["source_hash"] == source_hash
+    assert db.committed is True
+
+
+def test_index_promotion_is_bound_to_the_selected_page_source_hash():
+    tenant_id, project_id, site_id = (uuid4() for _ in range(3))
+    page = PageManifest.model_validate(_page_manifest("/", "Текущая версия"))
+    source_hash = _draft_manifest_hash(page.model_dump(mode="json"))
+    promoted_at = datetime.now(UTC)
+    promotion = SimpleNamespace(slug="/", source_hash=source_hash, decided_at=promoted_at)
+    project = SimpleNamespace(id=project_id)
+    site = SimpleNamespace(id=site_id)
+    db = BuildWorkflowDatabase([[promotion]])
+
+    index_states, source_hashes, promoted = asyncio.run(
+        _candidate_index_states(
+            db,
+            project=project,
+            site=site,
+            manifest=SimpleNamespace(pages=[page]),
+            rows=[],
+        )
+    )
+
+    assert index_states == {"/": "indexed"}
+    assert source_hashes == {"/": source_hash}
+    assert promoted == {"/": promoted_at}
 
 
 def test_selected_build_projection_requires_exact_immutable_metadata_snapshot():
@@ -567,7 +659,7 @@ def test_publish_blocks_build_without_page_metadata_before_activation(monkeypatc
     assert db.committed is False
 
 
-def test_publish_caddy_failure_restores_release_without_projection_mutation(monkeypatch):
+def test_publish_caddy_failure_with_unverified_recovery_has_no_projection_mutation(monkeypatch):
     tenant_id, project_id, site_id, build_id = (uuid4() for _ in range(4))
     snapshot = _build_manifest_snapshot(site_id, tenant_id, [_page_manifest("/", "Candidate")])
     snapshot["legal"] = {
@@ -618,7 +710,7 @@ def test_publish_caddy_failure_restores_release_without_projection_mutation(monk
             self, site_key: str, candidate_hash: str, old_hash: str | None
         ) -> bool:
             self.restorations.append((site_key, candidate_hash, old_hash))
-            return True
+            return False
 
     class Caddy:
         async def upsert_site_vhost(self, *_args):
@@ -632,7 +724,7 @@ def test_publish_caddy_failure_restores_release_without_projection_mutation(monk
     monkeypatch.setattr(projects, "CaddyClient", Caddy)
     monkeypatch.setattr(projects, "append_audit", audit)
 
-    with pytest.raises(HTTPException, match="release activation restored") as exc_info:
+    with pytest.raises(HTTPException, match="recovery is unverified") as exc_info:
         asyncio.run(
             publish_project_build(
                 project_id,
@@ -708,7 +800,7 @@ def test_first_publish_caddy_failure_compensates_without_persistence(monkeypatch
             self, site_key: str, candidate_hash: str, old_hash: str | None
         ) -> bool:
             self.restorations.append((site_key, candidate_hash, old_hash))
-            return False
+            return True
 
     class Caddy:
         async def upsert_site_vhost(self, *_args):
@@ -722,7 +814,7 @@ def test_first_publish_caddy_failure_compensates_without_persistence(monkeypatch
     monkeypatch.setattr(projects, "CaddyClient", Caddy)
     monkeypatch.setattr(projects, "append_audit", audit)
 
-    with pytest.raises(HTTPException, match="recovery is unverified") as exc_info:
+    with pytest.raises(HTTPException, match="candidate activation reverted") as exc_info:
         asyncio.run(
             publish_project_build(
                 project_id,
@@ -800,7 +892,7 @@ def test_rollback_caddy_failure_restores_release_without_projection_mutation(mon
     monkeypatch.setattr(projects, "CaddyClient", Caddy)
     monkeypatch.setattr(projects, "append_audit", audit)
 
-    with pytest.raises(HTTPException, match="release activation restored") as exc_info:
+    with pytest.raises(HTTPException, match="previous release restored") as exc_info:
         asyncio.run(
             rollback_project_build(
                 project_id,
@@ -822,6 +914,36 @@ def test_rollback_caddy_failure_restores_release_without_projection_mutation(mon
     assert db.added == []
     assert db.committed is False
     audit.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("states", "expected"),
+    [
+        ([], []),
+        (["review"], ["Activate the reviewed lead routing policy before publish"]),
+        (["active"], []),
+    ],
+)
+def test_publish_requires_activation_after_a_routing_policy_exists(states, expected):
+    site = SimpleNamespace(id=uuid4(), tenant_id=uuid4(), project_id=uuid4())
+
+    class Database:
+        async def execute(self, _statement):
+            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: states))
+
+    assert asyncio.run(_lead_routing_publish_blockers(Database(), site)) == expected
+
+
+def test_current_qa_run_requires_the_current_content_hash():
+    draft = SimpleNamespace(
+        content_hash="a" * 64,
+        last_qa_verdict="pass",
+        qa_runs=[{"source_hash": "a" * 64, "verdict": "pass"}],
+    )
+
+    assert _current_qa_run(draft) == {"source_hash": "a" * 64, "verdict": "pass"}
+    draft.content_hash = "b" * 64
+    assert _current_qa_run(draft) is None
 
 
 def test_page_metadata_snapshot_migration_follows_current_head():

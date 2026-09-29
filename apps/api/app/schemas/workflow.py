@@ -317,6 +317,22 @@ class PageDraftDecision(BaseModel):
     reason: str | None = Field(default=None, max_length=4000)
 
 
+class BuildLegalReviewIn(BaseModel):
+    decision: Literal["approved", "rejected"]
+    evidence_ref: str = Field(min_length=3, max_length=255)
+
+
+class PageIndexPromotionIn(BaseModel):
+    slug: str = Field(min_length=1, max_length=512)
+    reason: str = Field(min_length=10, max_length=2000)
+    confirmed: bool
+
+    @field_validator("slug")
+    @classmethod
+    def normalize_slug(cls, value: str) -> str:
+        return normalize_page_plan_slug(value)
+
+
 class BuildPublishRequest(BaseModel):
     confirmed: bool
 

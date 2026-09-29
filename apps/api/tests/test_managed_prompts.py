@@ -12,6 +12,17 @@ from app.services.managed_prompts import effective_prompt
 from app.services.prompt_catalog import load_prompt
 
 
+def test_offline_prompt_evaluation_uses_only_packaged_fixture_contracts():
+    from app.services.prompt_evals import run_offline_prompt_evaluation
+
+    result = run_offline_prompt_evaluation(load_prompt("architecture/propose-site-map.md"))
+
+    assert result["ruleset_version"] == "offline-fixture-v1"
+    assert result["fixture_hash"]
+    assert result["cases"]
+    assert all(case["status"] == "passed" and case["assertion_keys"] for case in result["cases"])
+
+
 def test_operator_prompt_revision_extends_but_never_replaces_baseline():
     baseline = load_prompt("architecture/propose-site-map.md")
     revision = SimpleNamespace(id=uuid4(), version=2, template="Пишите кратко и объясняйте риски.")
@@ -163,12 +174,17 @@ def test_activation_and_baseline_rollback_only_supersede_active_revision(monkeyp
         created_at=None,
     )
 
+    class Result:
+        def scalar_one_or_none(self):
+            return uuid4()
+
     class Session:
         def __init__(self):
             self.statements = []
 
         async def execute(self, statement):
             self.statements.append(statement)
+            return Result()
 
         async def commit(self):
             pass
@@ -176,7 +192,14 @@ def test_activation_and_baseline_rollback_only_supersede_active_revision(monkeyp
     auth = SimpleNamespace(tenant_id=tenant_id, user=SimpleNamespace(id=uuid4()))
     monkeypatch.setattr(prompts, "_revision_or_404", AsyncMock(return_value=entry))
     monkeypatch.setattr(prompts, "_baseline", lambda _: baseline)
-    monkeypatch.setattr(prompts, "validate_prompt_evaluation_fixture", lambda _: None)
+    monkeypatch.setattr(
+        prompts,
+        "run_offline_prompt_evaluation",
+        lambda _: {"fixture_hash": "c" * 64, "ruleset_version": "test", "cases": []},
+    )
+    monkeypatch.setattr(
+        prompts, "effective_prompt", lambda *_: SimpleNamespace(content_hash="b" * 64)
+    )
     monkeypatch.setattr(prompts, "append_audit", AsyncMock())
 
     activation_db = Session()
@@ -184,12 +207,12 @@ def test_activation_and_baseline_rollback_only_supersede_active_revision(monkeyp
     rollback_db = Session()
     asyncio.run(prompts.rollback_prompt_baseline(entry.key, auth, rollback_db))
 
-    for statement in [activation_db.statements[0], rollback_db.statements[0]]:
+    for statement in [activation_db.statements[1], rollback_db.statements[0]]:
         compiled = str(statement.compile(dialect=postgresql.dialect()))
         assert "prompt_registry.is_active IS true" in compiled
 
 
-def test_activation_requires_a_valid_packaged_evaluation_fixture(monkeypatch):
+def test_activation_requires_a_valid_offline_evaluation_fixture(monkeypatch):
     from app.api.v1 import prompts
     from fastapi import HTTPException
 
@@ -208,12 +231,55 @@ def test_activation_requires_a_valid_packaged_evaluation_fixture(monkeypatch):
     monkeypatch.setattr(prompts, "_baseline", lambda _: baseline)
     monkeypatch.setattr(
         prompts,
-        "validate_prompt_evaluation_fixture",
+        "run_offline_prompt_evaluation",
         lambda _: (_ for _ in ()).throw(ValueError("fixture is missing")),
     )
 
     with pytest.raises(HTTPException, match="fixture is missing") as exc_info:
         asyncio.run(prompts.activate_prompt_revision(entry.key, entry.id, auth, object()))
+
+    assert exc_info.value.status_code == 409
+    assert entry.is_active is False
+    assert entry.state == "approved"
+
+
+def test_activation_requires_a_matching_persisted_offline_evaluation(monkeypatch):
+    from app.api.v1 import prompts
+    from fastapi import HTTPException
+
+    baseline = SimpleNamespace(content_hash="a" * 64)
+    entry = SimpleNamespace(
+        id=uuid4(),
+        key="architecture.site-map",
+        version=2,
+        template="Уточняйте неопределённость.",
+        is_active=False,
+        state="approved",
+        schema_json={"baseline_hash": baseline.content_hash},
+    )
+
+    class Result:
+        def scalar_one_or_none(self):
+            return None
+
+    class Session:
+        async def execute(self, _statement):
+            return Result()
+
+    auth = SimpleNamespace(tenant_id=uuid4(), user=SimpleNamespace(id=uuid4()))
+    monkeypatch.setattr(prompts, "_revision_or_404", AsyncMock(return_value=entry))
+    monkeypatch.setattr(prompts, "_baseline", lambda _: baseline)
+    monkeypatch.setattr(
+        prompts,
+        "run_offline_prompt_evaluation",
+        lambda _: {"fixture_hash": "c" * 64, "ruleset_version": "test", "cases": []},
+    )
+    monkeypatch.setattr(
+        prompts, "effective_prompt", lambda *_: SimpleNamespace(content_hash="b" * 64)
+    )
+
+    with pytest.raises(HTTPException, match="passing offline evaluation") as exc_info:
+        asyncio.run(prompts.activate_prompt_revision(entry.key, entry.id, auth, Session()))
 
     assert exc_info.value.status_code == 409
     assert entry.is_active is False

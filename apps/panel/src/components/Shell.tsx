@@ -39,6 +39,7 @@ const groups = [
       { to: "/ops", label: "Статус" },
       { to: "/system", label: "Обновления" },
       { to: "/settings", label: "Настройки" },
+      { to: "/audit", label: "Audit" },
       { to: "/help", label: "Справка" },
     ],
   },

@@ -254,7 +254,10 @@ def test_candidate_build_does_not_activate_until_requested(tmp_path: Path):
     assert marker.read_text(encoding="utf-8").strip() == result["build_hash"]
 
 
-def test_first_activation_compensation_restores_candidate_release(tmp_path: Path):
+@pytest.mark.parametrize("force_directory_fallback", [False, True])
+def test_first_activation_compensation_restores_candidate_release(
+    tmp_path: Path, monkeypatch, force_directory_fallback: bool
+):
     site_id = uuid4()
     site = SiteManifest(
         site_id=site_id,
@@ -273,8 +276,12 @@ def test_first_activation_compensation_restores_candidate_release(tmp_path: Path
     builder = SiteBuilder(tmp_path)
     result = builder.build(site, {"service": "Ремонт"}, activate=False)
     root = tmp_path / str(site_id)
+    if force_directory_fallback:
+        monkeypatch.setattr(builder, "_replace_link", lambda *_args: False)
 
     assert builder.activate(str(site_id), result["build_hash"])
+    if force_directory_fallback:
+        assert not (root / "current").is_symlink()
     assert builder.restore_activation(str(site_id), result["build_hash"], None)
 
     assert not (root / "current").exists()

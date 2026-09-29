@@ -15,10 +15,13 @@ from app.core.config import get_settings
 from app.core.security import sha256_hex
 from app.db.session import get_db
 from app.models import (
+    BuildReleaseGate,
     GeoPlace,
     Keyword,
+    LeadRoutingPolicy,
     MediaAsset,
     PageDraft,
+    PageIndexPromotion,
     PagePlan,
     Project,
     ProjectFactRevision,
@@ -33,6 +36,7 @@ from app.models import (
 )
 from app.schemas.workflow import (
     PROTECTED_CONTACT_FIELDS,
+    BuildLegalReviewIn,
     BuildPublishRequest,
     BuildRollbackRequest,
     FactRevisionCreate,
@@ -40,6 +44,7 @@ from app.schemas.workflow import (
     PageDraftDecision,
     PageDraftMediaAttachIn,
     PageDraftRequest,
+    PageIndexPromotionIn,
     PagePlanCreate,
     PagePlanDecision,
     PagePlanUpdate,
@@ -58,7 +63,15 @@ from app.services.domain_health import domain_probe
 from app.services.generation import create_page_draft
 from app.services.indexnow import new_indexnow_key
 from app.services.leads import get_blind, get_encryptor
+from app.services.metrics import record_qa_verdict, record_release_transition
+from app.services.operations import observe_alert, record_operational_event
 from app.services.qa import run_page_qa
+from app.services.release_gate import (
+    evaluate_build_release_gate,
+    legal_review_status,
+    serialize_release_gate,
+    store_release_gate,
+)
 from app.services.site_build_metadata import validate_page_metadata_snapshot
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
@@ -96,6 +109,26 @@ def _legal_publish_blockers(manifest: SiteManifest) -> list[str]:
         "privacy_email": "Set a public privacy/DSAR email before publish",
     }
     return [message for key, message in required.items() if not str(legal.get(key) or "").strip()]
+
+
+async def _lead_routing_publish_blockers(db: AsyncSession, site: Site) -> list[str]:
+    if getattr(site, "project_id", None) is None:
+        return []
+    states = list(
+        (
+            await db.execute(
+                select(LeadRoutingPolicy.state).where(
+                    LeadRoutingPolicy.tenant_id == site.tenant_id,
+                    LeadRoutingPolicy.site_id == site.id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if states and "active" not in states:
+        return ["Activate the reviewed lead routing policy before publish"]
+    return []
 
 
 async def _project_site_or_409(db: AsyncSession, project: Project) -> Site:
@@ -1280,6 +1313,20 @@ def _draft_manifest_hash(manifest: dict) -> str:
     )
 
 
+def _current_qa_run(draft: PageDraft) -> dict | None:
+    runs = draft.qa_runs or []
+    if not runs or not draft.content_hash:
+        return None
+    latest = runs[-1]
+    if (
+        not isinstance(latest, dict)
+        or latest.get("source_hash") != draft.content_hash
+        or latest.get("verdict") != draft.last_qa_verdict
+    ):
+        return None
+    return latest
+
+
 def _serialize_draft(draft: PageDraft) -> dict:
     return {
         "id": str(draft.id),
@@ -1341,12 +1388,12 @@ async def generate_page_draft(
             .limit(1)
         )
     ).scalar_one_or_none()
-    page_manifest, input_snapshot, candidate_text = create_page_draft(
+    page_manifest, input_snapshot, _candidate_text = create_page_draft(
         project=project,
         plan=plan,
         facts=facts,
     )
-    content_hash = sha256_hex(candidate_text)
+    content_hash = _draft_manifest_hash(page_manifest)
     draft = PageDraft(
         page_plan_id=plan.id,
         project_id=project.id,
@@ -1597,6 +1644,21 @@ async def run_draft_qa(
     }
     draft.qa_runs = [*(draft.qa_runs or []), qa_run]
     draft.last_qa_verdict = result["verdict"]
+    record_qa_verdict(verdict=result["verdict"])
+    record_operational_event(
+        db,
+        tenant_id=project.tenant_id,
+        event_type="qa",
+        severity="warning" if result["verdict"] in {"warn", "block"} else "info",
+        outcome={"pass": "success", "warn": "warning", "block": "failure"}[result["verdict"]],
+    )
+    if result["verdict"] == "block":
+        await observe_alert(
+            db,
+            tenant_id=project.tenant_id,
+            signal_code="qa-block",
+            active=True,
+        )
     await append_audit(
         db,
         action="page_draft.qa",
@@ -1628,8 +1690,11 @@ async def submit_draft_review(
     ).scalar_one_or_none()
     if not draft:
         raise HTTPException(status_code=404, detail="Page draft not found")
-    if draft.state != "draft" or not draft.last_qa_verdict:
-        raise HTTPException(status_code=409, detail={"blockers": ["Run QA before review"]})
+    if draft.state != "draft" or not _current_qa_run(draft):
+        raise HTTPException(
+            status_code=409,
+            detail={"blockers": ["Run QA for the current draft content before review"]},
+        )
     draft.state = "review"
     await append_audit(
         db,
@@ -1661,6 +1726,11 @@ async def apply_page_draft(
     if draft.state != "review":
         raise HTTPException(
             status_code=409, detail={"blockers": ["Submit the draft for review first"]}
+        )
+    if not _current_qa_run(draft):
+        raise HTTPException(
+            status_code=409,
+            detail={"blockers": ["Run QA for the current draft content before apply"]},
         )
     if draft.last_qa_verdict == "block":
         raise HTTPException(status_code=409, detail={"blockers": ["Resolve blocking QA findings"]})
@@ -1821,6 +1891,170 @@ async def reject_page_draft(
     return _serialize_draft(draft)
 
 
+def _serialize_index_promotion(promotion: PageIndexPromotion) -> dict:
+    return {
+        "id": str(promotion.id),
+        "slug": promotion.slug,
+        "source_hash": promotion.source_hash,
+        "qa_source_hash": promotion.qa_source_hash,
+        "reason": promotion.reason,
+        "decided_at": promotion.decided_at.isoformat() if promotion.decided_at else None,
+    }
+
+
+async def _index_promotion_candidates(
+    db: AsyncSession, *, project: Project, site: Site
+) -> list[dict]:
+    manifest = SiteManifest.model_validate(site.manifest)
+    drafts = list(
+        (
+            await db.execute(
+                select(PageDraft).where(
+                    PageDraft.project_id == project.id,
+                    PageDraft.state == "applied",
+                    PageDraft.content_hash.is_not(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    current_drafts = {
+        draft.content_hash: draft
+        for draft in drafts
+        if draft.content_hash
+        and _current_qa_run(draft)
+        and draft.last_qa_verdict == "pass"
+        and _draft_manifest_hash(draft.page_manifest or {}) == draft.content_hash
+    }
+    promotions = list(
+        (
+            await db.execute(
+                select(PageIndexPromotion)
+                .where(
+                    PageIndexPromotion.project_id == project.id,
+                    PageIndexPromotion.site_id == site.id,
+                )
+                .order_by(PageIndexPromotion.decided_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    approved = {(promotion.slug, promotion.source_hash): promotion for promotion in promotions}
+    result = []
+    for page in manifest.pages:
+        source_hash = _draft_manifest_hash(page.model_dump(mode="json"))
+        promotion = approved.get((page.slug, source_hash))
+        draft = current_drafts.get(source_hash)
+        result.append(
+            {
+                "slug": page.slug,
+                "source_hash": source_hash,
+                "qa_verdict": draft.last_qa_verdict if draft else None,
+                "status": "approved" if promotion else "eligible" if draft else "stale",
+                "promotion": _serialize_index_promotion(promotion) if promotion else None,
+            }
+        )
+    return result
+
+
+@router.get("/{project_id}/index-promotions")
+async def list_index_promotions(
+    project_id: UUID,
+    auth: AuthContext = Depends(
+        require_roles("superadmin", "tenant_admin", "manager", "editor", "viewer")
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    project = await _project_or_404(db, project_id, auth)
+    if not project.site_id:
+        return []
+    site = await _project_site_or_409(db, project)
+    return await _index_promotion_candidates(db, project=project, site=site)
+
+
+@router.post("/{project_id}/index-promotions", status_code=status.HTTP_201_CREATED)
+async def create_index_promotion(
+    project_id: UUID,
+    body: PageIndexPromotionIn,
+    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    if not body.confirmed:
+        raise HTTPException(
+            status_code=400, detail="Explicit index promotion confirmation is required"
+        )
+    project = await _project_or_404(db, project_id, auth)
+    site = await _project_site_or_409(db, project)
+    manifest = SiteManifest.model_validate(site.manifest)
+    page = next((item for item in manifest.pages if item.slug == body.slug), None)
+    if page is None:
+        raise HTTPException(status_code=404, detail="Current project page not found")
+    source_hash = _draft_manifest_hash(page.model_dump(mode="json"))
+    drafts = list(
+        (
+            await db.execute(
+                select(PageDraft)
+                .where(
+                    PageDraft.project_id == project.id,
+                    PageDraft.state == "applied",
+                    PageDraft.content_hash == source_hash,
+                )
+                .order_by(PageDraft.updated_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    draft = next(
+        (
+            item
+            for item in drafts
+            if item.page_manifest
+            and PageManifest.model_validate(item.page_manifest).slug == body.slug
+            and _current_qa_run(item)
+            and item.last_qa_verdict == "pass"
+        ),
+        None,
+    )
+    if draft is None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "blockers": ["Run passing QA for the current page content before index promotion"]
+            },
+        )
+    promotion = PageIndexPromotion(
+        tenant_id=project.tenant_id,
+        site_id=site.id,
+        project_id=project.id,
+        page_draft_id=draft.id,
+        slug=body.slug,
+        source_hash=source_hash,
+        qa_source_hash=draft.content_hash,
+        reason=body.reason.strip(),
+        decided_by=auth.user.id,
+    )
+    db.add(promotion)
+    await db.flush()
+    await append_audit(
+        db,
+        action="page.index.promote",
+        payload={
+            "project_id": str(project.id),
+            "site_id": str(site.id),
+            "page_draft_id": str(draft.id),
+            "slug": body.slug,
+            "source_hash": source_hash,
+        },
+        tenant_id=project.tenant_id,
+        actor_id=auth.user.id,
+    )
+    await db.commit()
+    return _serialize_index_promotion(promotion)
+
+
 @router.get("/{project_id}/builds")
 async def list_project_builds(
     project_id: UUID,
@@ -1845,6 +2079,22 @@ async def list_project_builds(
         .scalars()
         .all()
     )
+    gates = (
+        {
+            gate.build_id: gate
+            for gate in (
+                await db.execute(
+                    select(BuildReleaseGate).where(
+                        BuildReleaseGate.build_id.in_([build.id for build in builds])
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        }
+        if builds
+        else {}
+    )
     return [
         {
             "id": str(build.id),
@@ -1854,6 +2104,8 @@ async def list_project_builds(
             "pages_built": build.pages_built,
             "created_at": build.created_at.isoformat() if build.created_at else None,
             "activated_at": build.activated_at.isoformat() if build.activated_at else None,
+            "release_gate": serialize_release_gate(gates.get(build.id)),
+            "legal_review": legal_review_status(build),
         }
         for build in builds
     ]
@@ -1934,6 +2186,60 @@ def _selected_build_projection(
     return manifest, metadata_by_slug
 
 
+async def _candidate_index_states(
+    db: AsyncSession,
+    *,
+    project: Project,
+    site: Site,
+    manifest: SiteManifest,
+    rows: list[SitePage],
+) -> tuple[dict[str, str], dict[str, str], dict[str, datetime | None]]:
+    promotions = list(
+        (
+            await db.execute(
+                select(PageIndexPromotion)
+                .where(
+                    PageIndexPromotion.project_id == project.id,
+                    PageIndexPromotion.site_id == site.id,
+                )
+                .order_by(PageIndexPromotion.decided_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    approved = {(promotion.slug, promotion.source_hash): promotion for promotion in promotions}
+    existing = {row.slug: row for row in rows}
+    index_states: dict[str, str] = {}
+    source_hashes: dict[str, str] = {}
+    promoted_at: dict[str, datetime | None] = {}
+    for page in manifest.pages:
+        source_hash = _draft_manifest_hash(page.model_dump(mode="json"))
+        source_hashes[page.slug] = source_hash
+        promotion = approved.get((page.slug, source_hash))
+        previous = existing.get(page.slug)
+        legacy_current = (
+            previous is not None
+            and previous.index_state == "indexed"
+            and getattr(previous, "index_source_hash", None) is None
+            and _draft_manifest_hash(previous.manifest or {}) == source_hash
+        )
+        current_promotion = (
+            previous is not None
+            and previous.index_state == "indexed"
+            and getattr(previous, "index_source_hash", None) == source_hash
+        )
+        if promotion or legacy_current or current_promotion:
+            index_states[page.slug] = "indexed"
+            promoted_at[page.slug] = (
+                promotion.decided_at if promotion else getattr(previous, "promoted_at", None)
+            )
+        else:
+            index_states[page.slug] = "noindex"
+            promoted_at[page.slug] = None
+    return index_states, source_hashes, promoted_at
+
+
 async def _reconcile_site_page_projection(
     db: AsyncSession,
     *,
@@ -1961,12 +2267,20 @@ async def _reconcile_site_page_projection(
         page.manifest = page_manifest.model_dump(mode="json")
         page.publish_state = "published"
         page.index_state = metadata["index_state"]
+        page.index_source_hash = (
+            metadata.get("source_hash") if metadata["index_state"] == "indexed" else None
+        )
+        page.promoted_at = (
+            datetime.fromisoformat(metadata["promoted_at"]) if metadata.get("promoted_at") else None
+        )
         page.thin = metadata["thin"]
         page.content_chars = metadata["content_chars"]
     for slug, page in existing.items():
         if slug not in selected_slugs:
             page.publish_state = "archived"
             page.index_state = "noindex"
+            page.index_source_hash = None
+            page.promoted_at = None
 
 
 @router.post("/{project_id}/builds", status_code=status.HTTP_201_CREATED)
@@ -1985,7 +2299,13 @@ async def materialize_project_build(
     rows = list(
         (await db.execute(select(SitePage).where(SitePage.site_id == site.id))).scalars().all()
     )
-    index_states = {row.slug: row.index_state for row in rows}
+    index_states, source_hashes, promoted_at = await _candidate_index_states(
+        db,
+        project=project,
+        site=site,
+        manifest=manifest,
+        rows=rows,
+    )
     contacts = site.manifest.get("contacts") or {}
     context = {
         **(manifest.context or {}),
@@ -2009,7 +2329,18 @@ async def materialize_project_build(
             activate=False,
         )
     except Exception as exc:
+        record_release_transition(action="build", outcome="failed")
         raise HTTPException(status_code=422, detail=f"Candidate build failed: {exc}") from exc
+    page_metadata_snapshot = [
+        {
+            **item,
+            "source_hash": source_hashes[item["slug"]],
+            "promoted_at": (
+                promoted_at[item["slug"]].isoformat() if promoted_at[item["slug"]] else None
+            ),
+        }
+        for item in result["pages"]
+    ]
     plan_ids = [
         str(plan_id)
         for plan_id in (
@@ -2033,11 +2364,13 @@ async def materialize_project_build(
         duration_ms=int((time.perf_counter() - started) * 1000),
         log=f"candidate=true; indexed={result['indexed_count']}",
         manifest_snapshot=manifest.model_dump(mode="json"),
-        page_metadata_snapshot=result["pages"],
+        page_metadata_snapshot=page_metadata_snapshot,
         page_plan_ids=plan_ids,
         requested_by=auth.user.id,
     )
     db.add(build)
+    await db.flush()
+    gate = await store_release_gate(db, build=build, site=site, actor_id=auth.user.id)
     await append_audit(
         db,
         action="project.build.materialize",
@@ -2046,12 +2379,63 @@ async def materialize_project_build(
         actor_id=auth.user.id,
     )
     await db.commit()
+    record_release_transition(action="build", outcome="success")
     return {
         "id": str(build.id),
         "status": build.status,
         "build_hash": build.build_hash,
         "activated": False,
+        "release_gate": serialize_release_gate(gate),
     }
+
+
+@router.post("/{project_id}/builds/{build_id}/legal-review")
+async def review_project_build_legal(
+    project_id: UUID,
+    build_id: UUID,
+    body: BuildLegalReviewIn,
+    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    project = await _project_or_404(db, project_id, auth)
+    site = await _project_site_or_409(db, project)
+    build = (
+        await db.execute(
+            select(SiteBuild).where(
+                SiteBuild.id == build_id,
+                SiteBuild.project_id == project.id,
+                SiteBuild.tenant_id == project.tenant_id,
+                SiteBuild.site_id == site.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if not build or build.status != "ready":
+        raise HTTPException(status_code=409, detail="Select a ready candidate build")
+    review_state = legal_review_status(build)
+    build.legal_review = {
+        "state": body.decision,
+        "legal_snapshot_hash": review_state["snapshot_hash"],
+        "evidence_ref": body.evidence_ref.strip(),
+        "reviewed_at": datetime.now(UTC).isoformat(),
+        "reviewed_by": str(auth.user.id),
+    }
+    updated = legal_review_status(build)
+    await append_audit(
+        db,
+        action="project.build.legal_review",
+        payload={
+            "project_id": str(project.id),
+            "build_id": str(build.id),
+            "build_hash": build.build_hash,
+            "legal_snapshot_hash": updated["snapshot_hash"],
+            "decision": body.decision,
+            "evidence_ref": body.evidence_ref.strip(),
+        },
+        tenant_id=project.tenant_id,
+        actor_id=auth.user.id,
+    )
+    await db.commit()
+    return updated
 
 
 @router.get("/{project_id}/builds/{build_id}/preview/{preview_path:path}")
@@ -2134,9 +2518,13 @@ async def publish_project_build(
         manifest, metadata_by_slug = _selected_build_projection(build, site)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail={"blockers": [str(exc)]}) from exc
-    legal_blockers = _legal_publish_blockers(manifest)
-    if legal_blockers:
-        raise HTTPException(status_code=409, detail={"blockers": legal_blockers})
+    gate_evaluation = evaluate_build_release_gate(build, site)
+    legal_review = legal_review_status(build)
+    routing_blockers = await _lead_routing_publish_blockers(db, site)
+    blockers = [*gate_evaluation["blockers"], *legal_review["blockers"], *routing_blockers]
+    if blockers:
+        record_release_transition(action="publish", outcome="blocked")
+        raise HTTPException(status_code=409, detail={"blockers": blockers})
     old_hash = site.build_hash
     builder = SiteBuilder(Path(settings.sites_root))
     if not builder.activate(str(site.id), build.build_hash):
@@ -2146,11 +2534,15 @@ async def publish_project_build(
     )
     if not caddy.get("ok"):
         restored = builder.restore_activation(str(site.id), build.build_hash, old_hash)
-        detail = (
-            "Caddy configuration failed; release activation restored"
-            if restored
-            else "Caddy configuration failed; release activation recovery is unverified"
-        )
+        if restored:
+            detail = (
+                "Caddy configuration failed; candidate activation reverted"
+                if old_hash is None
+                else "Caddy configuration failed; previous release restored"
+            )
+        else:
+            detail = "Caddy configuration failed; release activation recovery is unverified"
+        record_release_transition(action="publish", outcome="failed")
         raise HTTPException(status_code=503, detail=detail)
     site.previous_build_hash = old_hash
     site.build_hash = build.build_hash
@@ -2177,6 +2569,7 @@ async def publish_project_build(
         actor_id=auth.user.id,
     )
     await db.commit()
+    record_release_transition(action="publish", outcome="success")
     return {
         "project_id": str(project.id),
         "site_id": str(site.id),
@@ -2215,6 +2608,10 @@ async def rollback_project_build(
         manifest, metadata_by_slug = _selected_build_projection(target, site)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail={"blockers": [str(exc)]}) from exc
+    legal_review = legal_review_status(target)
+    if legal_review["blockers"]:
+        record_release_transition(action="rollback", outcome="blocked")
+        raise HTTPException(status_code=409, detail={"blockers": legal_review["blockers"]})
     old_hash = site.build_hash
     builder = SiteBuilder(Path(settings.sites_root))
     if not builder.activate(str(site.id), body.build_hash):
@@ -2224,11 +2621,15 @@ async def rollback_project_build(
     )
     if not caddy.get("ok"):
         restored = builder.restore_activation(str(site.id), body.build_hash, old_hash)
-        detail = (
-            "Caddy configuration failed; release activation restored"
-            if restored
-            else "Caddy configuration failed; release activation recovery is unverified"
-        )
+        if restored:
+            detail = (
+                "Caddy configuration failed; candidate activation reverted"
+                if old_hash is None
+                else "Caddy configuration failed; previous release restored"
+            )
+        else:
+            detail = "Caddy configuration failed; release activation recovery is unverified"
+        record_release_transition(action="rollback", outcome="failed")
         raise HTTPException(status_code=503, detail=detail)
     site.previous_build_hash = old_hash
     site.build_hash = body.build_hash
@@ -2255,6 +2656,7 @@ async def rollback_project_build(
         actor_id=auth.user.id,
     )
     await db.commit()
+    record_release_transition(action="rollback", outcome="success")
     return {
         "project_id": str(project.id),
         "build_hash": body.build_hash,

@@ -24,6 +24,7 @@ export function SettingsPage() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [historyTotal, setHistoryTotal] = useState(0);
   const [history, setHistory] = useState<Session[] | null>(null);
+  const [historyOffset, setHistoryOffset] = useState(0);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [setup, setSetup] = useState<TotpSetup | null>(null);
   const [code, setCode] = useState("");
@@ -44,6 +45,7 @@ export function SettingsPage() {
     setSessions([...sessionSummary.active, ...sessionSummary.recent]);
     setHistoryTotal(sessionSummary.history_total);
     setHistory(null);
+    setHistoryOffset(0);
   }
 
   useEffect(() => {
@@ -63,12 +65,14 @@ export function SettingsPage() {
     }
   }
 
-  async function loadSessionHistory() {
+  async function loadSessionHistory(offset = 0) {
     setHistoryLoading(true);
     setError(null);
     try {
-      const result = await api<SessionHistory>("/api/v1/security/sessions/history?limit=100", {}, token);
+      const result = await api<SessionHistory>(`/api/v1/security/sessions/history?limit=25&offset=${offset}`, {}, token);
       setHistory(result.items);
+      setHistoryOffset(result.offset);
+      setHistoryTotal(result.total);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Не удалось загрузить историю сессий");
     } finally {
@@ -153,7 +157,10 @@ export function SettingsPage() {
           </table>
         </div>
         {historyTotal > 10 ? <button className="btn btn-ghost" type="button" disabled={historyLoading} onClick={() => void loadSessionHistory()}>{historyLoading ? "Загрузка истории…" : `Открыть историю (${historyTotal})`}</button> : null}
-        {history ? <div className="table-wrap"><table className="table"><thead><tr><th colSpan={3}>История завершённых сессий</th></tr></thead><tbody>{history.map((session) => <tr key={session.id}><td className="muted">{session.created_at?.slice(0, 19) || "—"}</td><td className="muted">{session.expires_at.slice(0, 19)}</td><td><StatusPill tone={session.revoked_at ? "danger" : "default"}>{session.revoked_at ? "отозвана" : "истекла"}</StatusPill></td></tr>)}</tbody></table></div> : null}
+        {history ? <>
+          <div className="table-wrap"><table className="table"><thead><tr><th colSpan={3}>История завершённых сессий</th></tr></thead><tbody>{history.map((session) => <tr key={session.id}><td className="muted">{session.created_at?.slice(0, 19) || "—"}</td><td className="muted">{session.expires_at.slice(0, 19)}</td><td><StatusPill tone={session.revoked_at ? "danger" : "default"}>{session.revoked_at ? "отозвана" : "истекла"}</StatusPill></td></tr>)}{history.length === 0 ? <tr><td colSpan={3} className="muted">Более ранних сессий нет</td></tr> : null}</tbody></table></div>
+          <div className="row"><span className="muted">Показано {history.length ? historyOffset + 1 : 0}–{Math.min(historyOffset + history.length, historyTotal)} из {historyTotal}</span><button className="btn btn-ghost" type="button" disabled={historyLoading || historyOffset === 0} onClick={() => void loadSessionHistory(Math.max(0, historyOffset - 25))}>Назад</button><button className="btn btn-ghost" type="button" disabled={historyLoading || historyOffset + history.length >= historyTotal} onClick={() => void loadSessionHistory(historyOffset + 25)}>Далее</button></div>
+        </> : null}
       </Surface>
       <Surface title="Системная диагностика"><div className="row"><StatusPill tone={health?.status === "ok" ? "ok" : "danger"}>API: {health?.status || "недоступен"}</StatusPill><StatusPill tone={readiness?.status === "ok" ? "ok" : "danger"}>PostgreSQL / Redis: {readiness?.status || "недоступны"}</StatusPill><span className="muted">Версия: {health?.version || "—"}</span><span className="muted">Режим: {health?.env || "—"}</span></div><p className="muted" style={{ marginBottom: 0 }}>Резервные копии и внешние сервисы проверяются только на сервере; панель не показывает и не хранит их секреты.</p></Surface>
       <ConfirmDialog

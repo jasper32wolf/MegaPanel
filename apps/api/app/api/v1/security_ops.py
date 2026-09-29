@@ -5,12 +5,12 @@ from uuid import UUID
 
 from app.api.deps import AuthContext, require_roles
 from app.db.session import get_db
-from app.models import AuthSession
-from app.services.audit import append_audit
+from app.models import AuditLog, AuthSession
+from app.services.audit import append_audit, verify_audit_chain
 from app.services.mfa import generate_totp_secret, provisioning_uri, verify_totp
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
@@ -233,6 +233,56 @@ async def revoke_session(
         )
         await db.commit()
     return {"id": str(target.id), "revoked": True}
+
+
+@router.get("/audit")
+async def list_audit_history(
+    action: str | None = Query(default=None, max_length=128),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=100),
+    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    statement = select(AuditLog)
+    if auth.role != "superadmin":
+        statement = statement.where(AuditLog.tenant_id == auth.tenant_id)
+    if action and action.strip():
+        statement = statement.where(AuditLog.action == action.strip())
+    total = await db.scalar(select(func.count()).select_from(statement.subquery()))
+    rows = list(
+        (await db.execute(statement.order_by(AuditLog.id.desc()).offset(offset).limit(limit)))
+        .scalars()
+        .all()
+    )
+    return {
+        "items": [
+            {
+                "id": entry.id,
+                "action": entry.action,
+                "actor_id": str(entry.actor_id) if entry.actor_id else None,
+                "created_at": entry.created_at.isoformat() if entry.created_at else None,
+                "record_hash": entry.record_hash,
+            }
+            for entry in rows
+        ],
+        "offset": offset,
+        "limit": limit,
+        "total": int(total or 0),
+    }
+
+
+@router.get("/audit/integrity")
+async def audit_integrity(
+    auth: AuthContext = Depends(require_roles("superadmin")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    entries = list((await db.execute(select(AuditLog).order_by(AuditLog.id))).scalars().all())
+    invalid_ids = verify_audit_chain(entries)
+    return {
+        "status": "valid" if not invalid_ids else "invalid",
+        "checked_records": len(entries),
+        "invalid_record_ids": invalid_ids,
+    }
 
 
 @router.get("/me")

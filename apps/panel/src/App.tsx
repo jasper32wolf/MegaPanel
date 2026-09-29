@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { Shell } from "./components/Shell";
 import { AIProvidersPage } from "./pages/AIProvidersPage";
 import { AIWorkspacePage } from "./pages/AIWorkspacePage";
+import { AuditPage } from "./pages/AuditPage";
 import { BlocksPage } from "./pages/BlocksPage";
 import { BulkPage } from "./pages/BulkPage";
 import { CompetitorsPage } from "./pages/CompetitorsPage";
@@ -51,6 +52,7 @@ export default function App() {
                 <Route path="/leads" element={<LeadsPage />} />
                 <Route path="/ops" element={<OpsPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
+                <Route path="/audit" element={<AuditPage />} />
                 <Route path="/system" element={<SystemOperationsPage />} />
                 <Route path="/ai" element={<AIWorkspacePage />} />
                 <Route path="/ai/providers" element={<AIProvidersPage />} />

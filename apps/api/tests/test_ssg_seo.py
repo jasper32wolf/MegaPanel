@@ -1,6 +1,7 @@
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
 from site_panel_shared.manifests import BlockDef, PageManifest, SiteManifest
 from site_panel_ssg import SiteBuilder, is_thin, render_robots_txt, render_sitemap
 
@@ -121,6 +122,48 @@ def test_activation_compensation_restores_previous_release(tmp_path: Path):
         "build_hash"
     ]
     assert (root / "previous" / "BUILD_HASH").read_text(encoding="utf-8").strip() == second[
+        "build_hash"
+    ]
+
+
+@pytest.mark.parametrize("broken_topology", ["marker", "missing_previous"])
+def test_activation_compensation_rejects_changed_topology(tmp_path: Path, broken_topology: str):
+    site_id = uuid4()
+    builder = SiteBuilder(tmp_path)
+
+    def site_for(title: str) -> SiteManifest:
+        return SiteManifest(
+            site_id=site_id,
+            tenant_id=uuid4(),
+            domain="restore.test",
+            pages=[
+                PageManifest(
+                    slug="/",
+                    title_template=title,
+                    h1_template=title,
+                    service="Услуги",
+                    blocks=[BlockDef(type="hero", hash_class="blk-x", html="<p>content</p>")],
+                )
+            ],
+        )
+
+    first = builder.build(site_for("Первая версия"))
+    second = builder.build(site_for("Вторая версия"))
+    root = tmp_path / str(site_id)
+    current = root / "current"
+    previous = root / "previous"
+    expected_current_marker = second["build_hash"]
+
+    if broken_topology == "marker":
+        expected_current_marker = "f" * 64
+        (current / "BUILD_HASH").write_text(expected_current_marker, encoding="utf-8")
+    else:
+        previous.rename(root / "unexpected-previous")
+
+    assert not builder.restore_activation(str(site_id), second["build_hash"], first["build_hash"])
+    assert (current / "BUILD_HASH").read_text(encoding="utf-8").strip() == expected_current_marker
+    expected_previous = previous if broken_topology == "marker" else root / "unexpected-previous"
+    assert (expected_previous / "BUILD_HASH").read_text(encoding="utf-8").strip() == first[
         "build_hash"
     ]
 

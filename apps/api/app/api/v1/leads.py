@@ -10,7 +10,13 @@ from app.api.deps import AuthContext, require_roles
 from app.core.rate_limit import client_ip, rate_limit_key, shared_lead_limiter
 from app.db.session import get_db
 from app.models import Site
-from app.models.leads import Consent, Lead, WebhookDelivery, WebhookDeliveryAttempt
+from app.models.leads import (
+    Consent,
+    Lead,
+    LeadDeliveryAggregate,
+    WebhookDelivery,
+    WebhookDeliveryAttempt,
+)
 from app.models.project import LeadOutcome
 from app.schemas.workflow import LeadOutcomeIn
 from app.services.audit import append_audit
@@ -22,7 +28,12 @@ from app.services.leads import (
     get_encryptor,
     qualify_lead_local,
 )
-from app.services.webhook_delivery import create_lead_deliveries, enqueue_delivery, resend_delivery
+from app.services.webhook_delivery import (
+    create_lead_deliveries,
+    enqueue_delivery,
+    recompute_lead_delivery_aggregate,
+    resend_delivery,
+)
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
@@ -108,7 +119,7 @@ def _delivery_status(deliveries: list[WebhookDelivery]) -> str | None:
 
 
 def _delivery_status_query():
-    return (
+    legacy_status = (
         select(
             case(
                 (func.bool_or(WebhookDelivery.status == "dead_letter"), "dead_letter"),
@@ -123,6 +134,28 @@ def _delivery_status_query():
         .correlate(Lead)
         .scalar_subquery()
     )
+    aggregate_status = (
+        select(LeadDeliveryAggregate.status)
+        .where(LeadDeliveryAggregate.lead_id == Lead.id)
+        .correlate(Lead)
+        .scalar_subquery()
+    )
+    return func.coalesce(aggregate_status, legacy_status)
+
+
+def _serialize_delivery_aggregate(aggregate: LeadDeliveryAggregate | None) -> dict | None:
+    if aggregate is None:
+        return None
+    return {
+        "status": aggregate.status,
+        "expected_count": aggregate.expected_count,
+        "delivered_count": aggregate.delivered_count,
+        "pending_count": aggregate.pending_count,
+        "attention_count": aggregate.attention_count,
+        "oldest_pending_at": (
+            aggregate.oldest_pending_at.isoformat() if aggregate.oldest_pending_at else None
+        ),
+    }
 
 
 @router.post("/public", status_code=201)
@@ -220,6 +253,7 @@ async def create_public_lead(
     deliveries: list[WebhookDelivery] = []
     if status != "spam":
         deliveries = await create_lead_deliveries(db, lead=lead, site=site)
+    delivery_aggregate = await recompute_lead_delivery_aggregate(db, lead=lead)
 
     await append_audit(
         db,
@@ -239,7 +273,7 @@ async def create_public_lead(
         "ok": True,
         "id": str(lead.id),
         "status": lead.status,
-        "delivery_status": _delivery_status(deliveries),
+        "delivery_status": delivery_aggregate.status,
     }
 
 
@@ -377,8 +411,15 @@ async def lead_inbox(
     if not auth.tenant_id and auth.role != "superadmin":
         raise HTTPException(status_code=403, detail="Tenant required")
     predicates = _lead_predicates(auth, status=status, site_id=site_id, q=q)
-    statement = select(Lead, Site.domain, _delivery_status_query().label("delivery_status")).join(
-        Site, Site.id == Lead.site_id
+    statement = (
+        select(
+            Lead,
+            Site.domain,
+            _delivery_status_query().label("delivery_status"),
+            LeadDeliveryAggregate,
+        )
+        .join(Site, Site.id == Lead.site_id)
+        .outerjoin(LeadDeliveryAggregate, LeadDeliveryAggregate.lead_id == Lead.id)
     )
     total_statement = select(func.count()).select_from(Lead).join(Site, Site.id == Lead.site_id)
     if predicates:
@@ -401,9 +442,10 @@ async def lead_inbox(
                 "qualification": lead.qualification,
                 "crm_status": lead.crm_status,
                 "delivery_status": delivery_status,
+                "delivery": _serialize_delivery_aggregate(aggregate),
                 "created_at": lead.created_at.isoformat() if lead.created_at else None,
             }
-            for lead, site_domain, delivery_status in rows
+            for lead, site_domain, delivery_status, aggregate in rows
         ],
         "offset": offset,
         "limit": limit,
@@ -493,12 +535,15 @@ async def lead_detail(
 ) -> dict:
     row = (
         await db.execute(
-            select(Lead, Site.domain).join(Site, Site.id == Lead.site_id).where(Lead.id == lead_id)
+            select(Lead, Site.domain, LeadDeliveryAggregate)
+            .join(Site, Site.id == Lead.site_id)
+            .outerjoin(LeadDeliveryAggregate, LeadDeliveryAggregate.lead_id == Lead.id)
+            .where(Lead.id == lead_id)
         )
     ).one_or_none()
     if not row:
         raise HTTPException(status_code=404, detail="Not found")
-    lead, site_domain = row
+    lead, site_domain, aggregate = row
     require_lead_owner(auth, lead)
     return {
         "id": str(lead.id),
@@ -511,6 +556,7 @@ async def lead_detail(
         "delivery_status": (
             await db.execute(select(_delivery_status_query()).where(Lead.id == lead.id))
         ).scalar_one_or_none(),
+        "delivery": _serialize_delivery_aggregate(aggregate),
         "utm": lead.utm or {},
         "notes": (lead.meta or {}).get("notes"),
         "created_at": lead.created_at.isoformat() if lead.created_at else None,
@@ -549,7 +595,9 @@ def _serialize_delivery(delivery: WebhookDelivery) -> dict:
     return {
         "id": str(delivery.id),
         "channel": delivery.channel,
-        "target": delivery.target_url if delivery.channel == "webhook" else "private_email",
+        "target": delivery.channel if delivery.channel == "webhook" else "private_email",
+        "required": getattr(delivery, "required", True),
+        "routing_policy_version": getattr(delivery, "routing_policy_version", None),
         "status": delivery.status,
         "attempt_count": delivery.attempt_count,
         "max_attempts": delivery.max_attempts,

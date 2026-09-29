@@ -5,6 +5,7 @@ import { ConfirmDialog, DataTable, EmptyState, PageHeader, StatusPill, Surface }
 
 type Project = { id: string; name: string; domain: string | null; niche: string | null; site_id: string | null; current_fact_revision_id: string | null; domain_check_meta: { dns_status?: string; ssl_status?: string; checked_at?: string } };
 type FactRevision = { id: string; version: number; state: string; facts: Record<string, unknown>; has_private_lead_email: boolean; source_notes: string | null };
+type LeadRoutingPolicy = { id: string; version: number; state: string; destinations: { id: string; target_key: string; channel: "email" | "webhook"; required: boolean; configured: boolean }[]; submitted_at: string | null; reviewed_at: string | null; decision_reason: string | null; created_at: string | null };
 type Keyword = { id: string; phrase: string; meta: Record<string, string> };
 type ProjectKeyword = { id: string; keyword_id: string; phrase: string; cluster: string | null; intent: string | null; priority: number | null };
 type SemanticCollection = { id: string; name: string; state: string; version: number; members: { project_keyword_id: string; geo_bindings: { project_geo_place_id: string }[] }[] };
@@ -15,7 +16,9 @@ type ClaimSlotBinding = { block_id: string; slot: string; claim_index: number };
 type Plan = { id: string; slug: string; objective: string; intent: string | null; kit_key: string; block_selection: { blocks?: string[]; claim_slot_bindings?: ClaimSlotBinding[] }; state: string; version: number; decision_reason: string | null };
 type Draft = { id: string; page_plan_id: string; revision: number; state: string; content_hash: string | null; last_qa_verdict: string | null; qa_runs: { verdict: string; findings: { verdict: string; rule: string; evidence: string }[] }[]; page_manifest: { blocks?: { type?: unknown }[] } & Record<string, unknown>; failure_message: string | null };
 type Coverage = { selected: number; covered: number; uncovered: { keyword_id: string; phrase: string }[]; plans: number };
-type Build = { id: string; status: string; build_hash: string | null; previous_build_hash: string | null; pages_built: number; created_at: string | null; activated_at: string | null };
+type Build = { id: string; status: string; build_hash: string | null; previous_build_hash: string | null; pages_built: number; created_at: string | null; activated_at: string | null; release_gate: { status: string; blockers: string[]; warnings: string[] } | null; legal_review: { status: "pass" | "block"; blockers: string[]; review: { state: string; evidence_ref: string | null; reviewed_at: string | null } } };
+type IndexPromotion = { id: string; reason: string; decided_at: string | null };
+type IndexPromotionCandidate = { slug: string; source_hash: string; qa_verdict: string | null; status: "approved" | "eligible" | "stale"; promotion: IndexPromotion | null };
 type AIProvider = { id: string; label: string; provider_id: string; enabled: boolean };
 type AIDraftQuote = { provider_id: string; model_id: string; estimated_cost_usd: number; max_cost_usd: number; input_snapshot_hash: string; pricing_source: string; pricing_observed_at: string };
 type AIRunBrief = { id: string; action: string; status: string; output: { brief?: Record<string, unknown>; page_draft_id?: string; slot_copy?: BlockSlotCopy }; error_code: string | null; prompt_hash: string; cost_usd: number | null };
@@ -54,6 +57,7 @@ export function ProjectWorkspacePage() {
   const [semanticSignals, setSemanticSignals] = useState<SemanticSignals | null>(null);
   const [semanticName, setSemanticName] = useState("Основная семантика");
   const [builds, setBuilds] = useState<Build[]>([]);
+  const [indexPromotions, setIndexPromotions] = useState<IndexPromotionCandidate[]>([]);
   const [aiProviders, setAiProviders] = useState<AIProvider[]>([]);
   const [aiProviderId, setAiProviderId] = useState("");
   const [aiModel, setAiModel] = useState("");
@@ -88,6 +92,10 @@ export function ProjectWorkspacePage() {
   const [address, setAddress] = useState("");
   const [workHours, setWorkHours] = useState("");
   const [privateLeadEmail, setPrivateLeadEmail] = useState("");
+  const [routingPolicies, setRoutingPolicies] = useState<LeadRoutingPolicy[]>([]);
+  const [routingEmail, setRoutingEmail] = useState("");
+  const [routingWebhookUrl, setRoutingWebhookUrl] = useState("");
+  const [routingWebhookSecret, setRoutingWebhookSecret] = useState("");
   const [privacyEmail, setPrivacyEmail] = useState("");
   const [legal, setLegal] = useState("");
   const [legalJurisdiction, setLegalJurisdiction] = useState("");
@@ -130,7 +138,7 @@ export function ProjectWorkspacePage() {
   }, [drafts, mediaDraftId]);
 
   async function load() {
-    const [nextProject, nextFacts, nextKeywords, nextProjectKeywords, nextPlaces, nextProjectGeo, nextPlans, nextDrafts, nextCoverage, nextBuilds, nextSeoRuns, nextSlotRuns, nextCollections, nextSignals] = await Promise.all([
+    const [nextProject, nextFacts, nextKeywords, nextProjectKeywords, nextPlaces, nextProjectGeo, nextPlans, nextDrafts, nextCoverage, nextBuilds, nextIndexPromotions, nextSeoRuns, nextSlotRuns, nextCollections, nextSignals] = await Promise.all([
       api<Project>(`/api/v1/projects/${projectId}`, {}, token),
       api<FactRevision[]>(`/api/v1/projects/${projectId}/facts`, {}, token),
       api<{ items: Keyword[] }>("/api/v1/keywords?limit=100", {}, token),
@@ -141,6 +149,7 @@ export function ProjectWorkspacePage() {
       api<Draft[]>(`/api/v1/projects/${projectId}/page-drafts`, {}, token),
       api<Coverage>(`/api/v1/projects/${projectId}/coverage`, {}, token),
       api<Build[]>(`/api/v1/projects/${projectId}/builds`, {}, token),
+      api<IndexPromotionCandidate[]>(`/api/v1/projects/${projectId}/index-promotions`, {}, token),
       api<AIRunBrief[]>(`/api/v1/projects/${projectId}/seo-briefs`, {}, token),
       api<AIRunBrief[]>(`/api/v1/projects/${projectId}/block-slot-proposals`, {}, token),
       api<SemanticCollection[]>(`/api/v1/projects/${projectId}/semantic-collections`, {}, token),
@@ -159,12 +168,19 @@ export function ProjectWorkspacePage() {
     setDrafts(nextDrafts);
     setCoverage(nextCoverage);
     setBuilds(nextBuilds);
+    setIndexPromotions(nextIndexPromotions);
     setSeoRuns(nextSeoRuns);
     setSeoRun((current) => nextSeoRuns.find((item) => item.id === current?.id) || nextSeoRuns[0] || null);
     setSlotRuns(nextSlotRuns);
     setSlotRun((current) => nextSlotRuns.find((item) => item.id === current?.id) || nextSlotRuns[0] || null);
     setSemanticCollections(nextCollections);
     setSemanticSignals(nextSignals);
+    if (nextProject.site_id) {
+      const routing = await api<{ items: LeadRoutingPolicy[] }>(`/api/v1/projects/${projectId}/lead-routing`, {}, token);
+      setRoutingPolicies(routing.items);
+    } else {
+      setRoutingPolicies([]);
+    }
   }
 
   useEffect(() => {
@@ -610,8 +626,104 @@ export function ProjectWorkspacePage() {
     await run("build", () => api(`/api/v1/projects/${projectId}/builds`, { method: "POST" }, token), "Candidate-сборка готова. Откройте приватный preview перед публикацией.");
   }
 
+  function reviewBuildLegal(build: Build) {
+    setConfirmation({
+      title: "Подтвердить legal review candidate-сборки?",
+      description: "Решение привязывается к legal snapshot этой candidate-сборки. Изменение facts потребует новую сборку и review.",
+      confirmLabel: "Подтвердить legal review",
+      inputLabel: "Ссылка или внутренний идентификатор evidence",
+      inputMinLength: 3,
+      onConfirm: (evidence_ref) => {
+        void run(
+          `legal-review:${build.id}`,
+          () => api(`/api/v1/projects/${projectId}/builds/${build.id}/legal-review`, { method: "POST", body: JSON.stringify({ decision: "approved", evidence_ref }) }, token),
+          "Legal review сохранён для immutable candidate. Перед публикацией проверьте preview.",
+        );
+      },
+    });
+  }
+
   async function checkDomain() {
     await run("domain-check", () => api(`/api/v1/projects/${projectId}/domain/check`, { method: "POST" }, token), "DNS-проверка сохранена. TLS проверяется после активации Caddy-vhost.");
+  }
+
+  function promoteForIndex(item: IndexPromotionCandidate) {
+    setConfirmation({
+      title: `Разрешить индексацию ${item.slug}?`,
+      description: "Решение привязывается к текущему QA и content hash. Оно попадёт только в следующую candidate-сборку; preview и публикация остаются отдельными действиями.",
+      confirmLabel: "Разрешить индексацию",
+      inputLabel: "Причина решения",
+      inputMinLength: 10,
+      onConfirm: (reason) => {
+        void run(
+          `index-promote:${item.slug}`,
+          () => api(`/api/v1/projects/${projectId}/index-promotions`, { method: "POST", body: JSON.stringify({ slug: item.slug, reason, confirmed: true }) }, token),
+          "Индексация разрешена для текущего content hash. Создайте новый candidate и проверьте приватный preview.",
+        );
+      },
+    });
+  }
+
+  async function createRoutingPolicy() {
+    const destinations = [] as { target_key: string; channel: "email" | "webhook"; required: boolean; recipient?: string; webhook_url?: string; webhook_secret?: string }[];
+    if (routingEmail.trim()) {
+      destinations.push({ target_key: "private_email", channel: "email", required: true, recipient: routingEmail.trim() });
+    }
+    if (routingWebhookUrl.trim() || routingWebhookSecret.trim()) {
+      destinations.push({ target_key: "site_webhook", channel: "webhook", required: false, webhook_url: routingWebhookUrl.trim(), webhook_secret: routingWebhookSecret });
+    }
+    if (!destinations.length) {
+      setError("Добавьте private email или полные URL и secret webhook-получателя.");
+      return;
+    }
+    await run(
+      "routing-create",
+      () => api(`/api/v1/projects/${projectId}/lead-routing`, { method: "POST", body: JSON.stringify({ destinations }) }, token),
+      "Создана draft policy маршрутизации. Отправьте её на review перед активацией.",
+    );
+    setRoutingWebhookSecret("");
+  }
+
+  async function submitRoutingPolicy(policy: LeadRoutingPolicy) {
+    await run(
+      `routing-submit:${policy.id}`,
+      () => api(`/api/v1/projects/${projectId}/lead-routing/${policy.id}/submit`, { method: "POST", body: JSON.stringify({ confirmed: true }) }, token),
+      "Policy маршрутизации отправлена на review.",
+    );
+  }
+
+  function rejectRoutingPolicy(policy: LeadRoutingPolicy) {
+    setConfirmation({
+      title: "Отклонить policy маршрутизации?",
+      description: "Получатели не будут активированы. Укажите причину для audit trail.",
+      confirmLabel: "Отклонить",
+      inputLabel: "Причина отклонения",
+      inputMinLength: 3,
+      dangerous: true,
+      onConfirm: (reason) => {
+        void run(
+          `routing-reject:${policy.id}`,
+          () => api(`/api/v1/projects/${projectId}/lead-routing/${policy.id}/reject`, { method: "POST", body: JSON.stringify({ confirmed: true, reason }) }, token),
+          "Policy маршрутизации отклонена.",
+        );
+      },
+    });
+  }
+
+  function activateRoutingPolicy(policy: LeadRoutingPolicy) {
+    setConfirmation({
+      title: "Активировать policy маршрутизации?",
+      description: "Новые заявки будут получать неизменяемые snapshots только этой policy. Уже созданные delivery не меняются.",
+      confirmLabel: "Активировать",
+      dangerous: true,
+      onConfirm: (reason) => {
+        void run(
+          `routing-activate:${policy.id}`,
+          () => api(`/api/v1/projects/${projectId}/lead-routing/${policy.id}/activate`, { method: "POST", body: JSON.stringify({ confirmed: true, reason: reason || undefined }) }, token),
+          "Policy маршрутизации активирована для новых заявок.",
+        );
+      },
+    });
   }
 
   function publishBuild(build: Build) {
@@ -675,7 +787,19 @@ export function ProjectWorkspacePage() {
         </form>
         {facts.length === 0 ? <EmptyState title="Факты ещё не сохранены" hint="Без подтверждённых фактов план страницы не перейдёт на проверку." /> : <div className="row"><StatusPill tone={latestFact?.state === "confirmed" ? "ok" : "warn"}>версия {latestFact?.version}: {latestFact?.state}</StatusPill>{latestFact?.state === "draft" ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => run(`confirm:${latestFact.id}`, () => api(`/api/v1/projects/${projectId}/facts/${latestFact.id}/confirm`, { method: "POST" }, token), "Факты подтверждены.")}>Подтвердить факты</button> : null}{latestFact?.state === "confirmed" ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void createCommercialPagePlans()}>{busy === "commercial-pages" ? "Создание…" : "Создать коммерческие PagePlan"}</button> : null}</div>}
       </Surface>
-      <Surface title="2. Семантика проекта">
+      <Surface title="2. Маршрутизация заявок">
+        <p className="muted">Policy хранит encrypted получателей и применяется только к новым заявкам после явной активации. Сохранённые адреса и webhook secret не отображаются повторно.</p>
+        {!project.site_id ? <EmptyState title="Сначала примените черновик к манифесту" hint="После создания site можно настроить маршрутизацию заявок до candidate и публикации." /> : <>
+          <div className="stack">
+            <label className="field">Private email получателя<input type="email" value={routingEmail} onChange={(event) => setRoutingEmail(event.target.value)} placeholder="leads@example.com" /><span className="muted">Отличается от публичного privacy email и никогда не показывается в сайте или inbox.</span></label>
+            <label className="field">Webhook URL (необязательно)<input value={routingWebhookUrl} onChange={(event) => setRoutingWebhookUrl(event.target.value)} placeholder="https://hooks.example.com/lead" /></label>
+            <label className="field">Webhook secret (необязательно)<input type="password" value={routingWebhookSecret} onChange={(event) => setRoutingWebhookSecret(event.target.value)} placeholder="Минимум 16 символов" autoComplete="new-password" /></label>
+            <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void createRoutingPolicy()}>{busy === "routing-create" ? "Сохранение…" : "Создать draft policy"}</button>
+          </div>
+          {routingPolicies.length === 0 ? <EmptyState title="Активной policy пока нет" hint="До явной активации сохраняется legacy delivery compatibility; настройте policy перед следующей публикацией." /> : <DataTable headers={["Версия", "Получатели", "Статус", "Действия"]}>{routingPolicies.map((policy) => <tr key={policy.id}><td>v{policy.version}</td><td>{policy.destinations.map((destination) => <span key={destination.id} className="row"><StatusPill tone={destination.configured ? "ok" : "danger"}>{destination.channel}</StatusPill><span>{destination.target_key}{destination.required ? " · required" : " · optional"}</span></span>)}</td><td><StatusPill tone={tone(policy.state)}>{policy.state}</StatusPill></td><td className="row">{policy.state === "draft" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void submitRoutingPolicy(policy)}>На review</button>}{policy.state === "review" && <><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => rejectRoutingPolicy(policy)}>Отклонить</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => activateRoutingPolicy(policy)}>Активировать</button></>}</td></tr>)}</DataTable>}
+        </>}
+      </Surface>
+      <Surface title="3. Семантика проекта">
         <p className="muted">Выберите уже импортированные ключевые фразы. Это не создаёт страницы и не запускает генерацию.</p>
         <DataTable headers={["", "Фраза", "Намерение"]}>{keywords.map((keyword) => <tr key={keyword.id}><td><input aria-label={`Выбрать ${keyword.phrase}`} type="checkbox" disabled={busy !== null} checked={selectedKeywordSet.has(keyword.id)} onChange={() => toggleKeyword(keyword.id)} /></td><td>{keyword.phrase}</td><td>{keyword.meta?.intent || "—"}</td></tr>)}</DataTable>
         {keywords.length === 0 && <EmptyState title="В библиотеке нет ключевых фраз" hint="Сначала импортируйте CSV в разделе «Семантика»." />}
@@ -769,10 +893,14 @@ export function ProjectWorkspacePage() {
       <Surface title="5. Черновики и проверка качества">
         {drafts.length === 0 ? <EmptyState title="Черновиков пока нет" hint="Одобрите план страницы, затем создайте детерминированный черновик." /> : <DataTable headers={["План", "Версия", "Статус", "QA", "Действия"]}>{drafts.map((draft) => <tr key={draft.id}><td>{plans.find((plan) => plan.id === draft.page_plan_id)?.slug || draft.page_plan_id}</td><td>{draft.revision}</td><td><StatusPill tone={tone(draft.state)}>{draft.state}</StatusPill>{draft.failure_message && <p className="error" role="alert">{draft.failure_message}</p>}</td><td><StatusPill tone={tone(draft.last_qa_verdict || "draft")}>{draft.last_qa_verdict || "не запускалась"}</StatusPill>{draft.qa_runs.at(-1)?.findings.map((finding) => <p className="muted" key={finding.rule}>{finding.rule}: {finding.evidence}</p>)}</td><td className="row">{draft.state === "draft" && <><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => qa(draft)}>Проверить</button>{draft.last_qa_verdict && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => submitDraft(draft)}>На ручную проверку</button>}</>}{draft.state === "review" && draft.last_qa_verdict !== "block" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => apply(draft)}>Применить</button>}</td></tr>)}</DataTable>}
       </Surface>
-      <Surface title="6. Candidate-сборки, preview и публикация">
+      <Surface title="6. Индексация страниц">
+        <p className="muted">Новые и изменённые страницы остаются noindex, пока оператор не подтвердит индексацию для текущего passing QA. Решение не меняет публичный сайт: оно требует следующую candidate-сборку, preview и отдельную публикацию.</p>
+        {!project.site_id ? <EmptyState title="Сначала примените черновик" hint="После применения страницы будут доступны для QA и явного решения об индексации." /> : indexPromotions.length === 0 ? <EmptyState title="В текущем манифесте нет страниц" /> : <DataTable headers={["Путь", "QA", "Статус", "Действие"]}>{indexPromotions.map((item) => <tr key={item.slug}><td>{item.slug}</td><td><StatusPill tone={tone(item.qa_verdict || "stale")}>{item.qa_verdict || "требуется QA"}</StatusPill></td><td><StatusPill tone={item.status === "approved" ? "ok" : item.status === "eligible" ? "accent" : "warn"}>{item.status === "approved" ? "разрешена" : item.status === "eligible" ? "можно подтвердить" : "устарело"}</StatusPill>{item.promotion?.decided_at && <p className="muted">решение: {new Date(item.promotion.decided_at).toLocaleString()}</p>}</td><td>{item.status === "eligible" ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => promoteForIndex(item)}>Разрешить индексацию</button> : <span className="muted">{item.status === "approved" ? "Создайте candidate для применения" : "Повторно примените и проверьте текущий черновик"}</span>}</td></tr>)}</DataTable>}
+      </Surface>
+      <Surface title="7. Candidate-сборки, preview и публикация">
         <p className="muted">Candidate создаётся без активации. Preview приватен, публикация и откат требуют отдельного подтверждения.</p>
         <div className="row"><button className="btn btn-ghost" type="button" disabled={busy !== null || !project.domain} onClick={checkDomain}>{busy === "domain-check" ? "Проверка DNS…" : "Проверить DNS"}</button><StatusPill tone={project.domain_check_meta?.dns_status === "ok" ? "ok" : "warn"}>DNS: {project.domain_check_meta?.dns_status || "не проверен"}</StatusPill><button className="btn" type="button" disabled={busy !== null || !project.site_id} onClick={materializeBuild}>{busy === "build" ? "Сборка…" : "Создать candidate-сборку"}</button>{!project.site_id && <span className="muted">Сначала примените черновик страницы.</span>}</div>
-        {builds.length === 0 ? <EmptyState title="Сборок пока нет" hint="После применения черновика создайте candidate-сборку." /> : <DataTable headers={["Статус", "Hash", "Страниц", "Действия"]}>{builds.map((build) => <tr key={build.id}><td><StatusPill tone={tone(build.status)}>{build.status}</StatusPill></td><td className="muted">{build.build_hash?.slice(0, 16) || "—"}</td><td>{build.pages_built}</td><td className="row">{build.build_hash && project.site_id && <a className="btn btn-ghost" href={`/api/v1/projects/${project.id}/builds/${build.id}/preview/`} target="_blank" rel="noreferrer">Preview</a>}{build.status === "ready" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => publishBuild(build)}>Опубликовать</button>}{build.status === "published" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => rollbackBuild(build)}>Откатить на эту сборку</button>}</td></tr>)}</DataTable>}
+        {builds.length === 0 ? <EmptyState title="Сборок пока нет" hint="После применения черновика создайте candidate-сборку." /> : <DataTable headers={["Статус", "Release gate", "Hash", "Страниц", "Действия"]}>{builds.map((build) => <tr key={build.id}><td><StatusPill tone={tone(build.status)}>{build.status}</StatusPill></td><td><StatusPill tone={build.release_gate?.status === "pass" ? "ok" : "warn"}>{build.release_gate?.status || "не проверен"}</StatusPill>{build.release_gate?.blockers.map((blocker) => <p className="error" key={blocker}>{blocker}</p>)}{build.release_gate?.warnings.map((warning) => <p className="muted" key={warning}>{warning}</p>)}<StatusPill tone={build.legal_review.status === "pass" ? "ok" : "warn"}>legal review: {build.legal_review.review.state}</StatusPill>{build.legal_review.blockers.map((blocker) => <p className="error" key={blocker}>{blocker}</p>)}</td><td className="muted">{build.build_hash?.slice(0, 16) || "—"}</td><td>{build.pages_built}</td><td className="row">{build.build_hash && project.site_id && <a className="btn btn-ghost" href={`/api/v1/projects/${project.id}/builds/${build.id}/preview/`} target="_blank" rel="noreferrer">Preview</a>}{build.status === "ready" && build.legal_review.status === "block" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => reviewBuildLegal(build)}>Legal review</button>}{build.status === "ready" && <button className="btn btn-ghost" type="button" disabled={busy !== null || build.release_gate?.status === "block" || build.legal_review.status === "block"} onClick={() => publishBuild(build)}>Опубликовать</button>}{build.status === "published" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => rollbackBuild(build)}>Откатить на эту сборку</button>}</td></tr>)}</DataTable>}
       </Surface>
       <Surface title="Следующий шаг"><p className="muted">После применения черновик меняет только манифест проекта. Candidate-сборка не становится публичной до явной публикации.</p>{project.site_id && <Link className="btn btn-ghost" to="/sites">Открыть сайт и сборки</Link>}</Surface>
       <ConfirmDialog
