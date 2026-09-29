@@ -429,7 +429,7 @@ def test_worker_delivery_uses_postgres_redis_and_no_external_webhook(monkeypatch
                 assert retry_delivery.next_attempt_at is None
                 assert retry_delivery.locked_until is None
                 assert retry_delivery.last_http_status == 500
-                assert retry_lead.crm_status == "dead_letter"
+                assert retry_lead.crm_status == "attention"
                 assert len(retry_attempts) == retry_delivery.max_attempts
                 assert [attempt.sequence for attempt in retry_attempts] == list(
                     range(1, retry_delivery.max_attempts + 1)
@@ -443,7 +443,7 @@ def test_worker_delivery_uses_postgres_redis_and_no_external_webhook(monkeypatch
                 assert retry_delivery.attempt_count == 0
                 assert retry_delivery.dead_lettered_at is None
                 assert retry_delivery.next_attempt_at is not None
-                assert retry_lead.crm_status == "queued"
+                assert retry_lead.crm_status == "pending"
 
             dispatch_response.clear()
             dispatch_response.update({"ok": True, "status": 202})
