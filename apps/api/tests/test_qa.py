@@ -67,6 +67,31 @@ def test_deterministic_draft_without_ai_provenance_is_not_rejected_by_ai_rules()
     assert not any(item["rule"].startswith("ai_") for item in result["findings"])
 
 
+def test_qa_blocks_email_in_gallery_and_block_media_alt_text():
+    asset_id = "11111111-1111-1111-1111-111111111111"
+    block_asset_id = "22222222-2222-2222-2222-222222222222"
+    result = run_page_qa(
+        page_manifest={
+            **base_page(),
+            "media": [
+                {"asset_id": asset_id, "stored_sha256": "a" * 64, "alt": "leads@example.test"}
+            ],
+            "blocks": [{"type": "hero", "hash_class": "hero", "html": "<p>Hero</p>"}],
+            "block_media": {
+                "hero": {
+                    "asset_id": block_asset_id,
+                    "stored_sha256": "b" * 64,
+                    "alt": "privacy@example.test",
+                }
+            },
+        },
+        input_snapshot=base_input(),
+        existing_texts=[],
+    )
+
+    assert any(item["rule"] == "public_email_leak" for item in result["findings"])
+
+
 def test_qa_blocks_claim_slot_mutation_against_the_frozen_fact_snapshot():
     page = {
         **base_page(),
