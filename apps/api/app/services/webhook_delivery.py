@@ -24,6 +24,7 @@ from app.models.leads import (
 from app.models.project import ProjectFactRevision
 from app.services.leads import dispatch_webhook, get_encryptor
 from app.services.metrics import record_delivery_transition
+from app.services.operations import record_operational_event
 from arq import create_pool
 from arq.connections import RedisSettings
 from sqlalchemy import func, select
@@ -363,6 +364,26 @@ async def due_delivery_ids(db: AsyncSession, *, limit: int = 50) -> list[UUID]:
     return list(result.scalars().all())
 
 
+def _record_delivery_event(db: AsyncSession, delivery: WebhookDelivery) -> None:
+    status = delivery.status
+    record_operational_event(
+        db,
+        tenant_id=delivery.tenant_id,
+        event_type="delivery",
+        severity="critical"
+        if status == "dead_letter"
+        else "warning"
+        if status == "retrying"
+        else "info",
+        outcome={
+            "delivered": "success",
+            "dead_letter": "failure",
+            "retrying": "warning",
+            "queued": "recovered",
+        }.get(status, "warning"),
+    )
+
+
 async def recover_expired_leases(db: AsyncSession) -> int:
     now = _now()
     rows = list(
@@ -385,6 +406,7 @@ async def recover_expired_leases(db: AsyncSession) -> int:
         if lead is not None:
             await recompute_lead_delivery_aggregate(db, lead=lead)
         record_delivery_transition(channel=delivery.channel, status="retrying", trigger="recovery")
+        _record_delivery_event(db, delivery)
     await db.commit()
     return len(rows)
 
@@ -547,6 +569,7 @@ async def process_delivery(
         attempt.status = "dead_letter"
     await recompute_lead_delivery_aggregate(db, lead=lead)
     record_delivery_transition(channel=delivery.channel, status=delivery.status, trigger=trigger)
+    _record_delivery_event(db, delivery)
     await db.commit()
     return {"status": delivery.status, "delivery_id": str(delivery.id), "attempt": sequence}
 
@@ -566,3 +589,4 @@ async def resend_delivery(db: AsyncSession, delivery: WebhookDelivery) -> None:
         await db.execute(select(Lead).where(Lead.id == delivery.lead_id).with_for_update())
     ).scalar_one()
     await recompute_lead_delivery_aggregate(db, lead=lead)
+    _record_delivery_event(db, delivery)

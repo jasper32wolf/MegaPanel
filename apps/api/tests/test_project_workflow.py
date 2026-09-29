@@ -13,10 +13,12 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 from app.api.v1 import projects
 from app.api.v1.projects import (
+    _asset_usage_status,
     _candidate_index_states,
     _current_qa_run,
     _draft_manifest_hash,
     _lead_routing_publish_blockers,
+    _manifest_asset_usage,
     _project_site_or_409,
     _public_fact_values,
     _reconcile_site_page_projection,
@@ -151,6 +153,55 @@ def _page_metadata(slug: str, *, index_state: str = "indexed", thin: bool = Fals
     }
 
 
+def test_asset_usage_projection_is_snapshot_derived_and_checks_current_hash():
+    tenant_id, site_id, asset_id = uuid4(), uuid4(), uuid4()
+    manifest = SiteManifest.model_validate(
+        {
+            "site_id": site_id,
+            "tenant_id": tenant_id,
+            "domain": "example.test",
+            "pages": [
+                {
+                    **_page_manifest("/", "Страница с media"),
+                    "media": [
+                        {
+                            "asset_id": asset_id,
+                            "stored_sha256": "a" * 64,
+                            "alt": "Изображение услуги",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    usage = _manifest_asset_usage(
+        manifest=manifest,
+        scope="candidate",
+        source={"build_id": "candidate-id", "build_hash": "b" * 64},
+    )
+
+    assert usage == [
+        {
+            "scope": "candidate",
+            "source": {"build_id": "candidate-id", "build_hash": "b" * 64},
+            "slug": "/",
+            "placement": "gallery",
+            "asset_id": str(asset_id),
+            "expected_sha256": "a" * 64,
+            "alt": "Изображение услуги",
+        }
+    ]
+    assert _asset_usage_status(None, "a" * 64) == "missing_asset"
+    asset = SimpleNamespace(
+        meta={
+            "provenance": {"kind": "manual_upload", "rights_confirmed": True},
+            "hashes": {"stored_sha256": "b" * 64},
+        }
+    )
+    assert _asset_usage_status(asset, "a" * 64) == "hash_mismatch"
+
+
 def test_materializing_candidate_does_not_mutate_active_site_page_projection(monkeypatch):
     tenant_id, project_id, site_id = uuid4(), uuid4(), uuid4()
     active_page = SimpleNamespace(
@@ -224,7 +275,18 @@ def test_materializing_candidate_does_not_mutate_active_site_page_projection(mon
     assert Builder.calls == [
         {"index_states": {"/": "noindex", "/new": "noindex"}, "assets": [], "activate": False}
     ]
-    assert {type(item).__name__ for item in db.added} == {"BuildReleaseGate", "SiteBuild"}
+    assert {type(item).__name__ for item in db.added} == {
+        "BuildReleaseGate",
+        "OperationalEvent",
+        "SiteBuild",
+    }
+    event = next(item for item in db.added if type(item).__name__ == "OperationalEvent")
+    assert (event.event_type, event.severity, event.outcome, event.quantity) == (
+        "release",
+        "info",
+        "success",
+        1,
+    )
     gate = next(item for item in db.added if type(item).__name__ == "BuildReleaseGate")
     assert gate.status == "block"
     assert "Set the legal organization before publish" in gate.blockers

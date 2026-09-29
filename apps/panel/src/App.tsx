@@ -15,6 +15,7 @@ import { LeadsPage } from "./pages/LeadsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { MediaPage } from "./pages/MediaPage";
 import { OpsPage } from "./pages/OpsPage";
+import { ProjectActivityPage } from "./pages/ProjectActivityPage";
 import { ProjectWorkspacePage } from "./pages/ProjectWorkspacePage";
 import { ProjectsPage } from "./pages/ProjectsPage";
 import { PromptsPage } from "./pages/PromptsPage";
@@ -40,6 +41,7 @@ export default function App() {
                 <Route path="/" element={<DashboardPage />} />
                 <Route path="/projects" element={<ProjectsPage />} />
                 <Route path="/projects/:projectId" element={<ProjectWorkspacePage />} />
+                <Route path="/projects/:projectId/activity" element={<ProjectActivityPage />} />
                 <Route path="/sites" element={<SitesPage />} />
                 <Route path="/keywords" element={<KeywordsPage />} />
                 <Route path="/competitors" element={<CompetitorsPage />} />

@@ -216,6 +216,9 @@ test("оператор создаёт и готовит candidate без пуб�
   if (await reason.isVisible()) await reason.fill("CI подтверждает тестовый warning override");
   await page.getByRole("dialog").getByRole("button", { name: "Применить" }).click();
   await expect(page.getByText("Сначала примените черновик страницы.")).not.toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "4.5. Использование media в snapshots", exact: true }),
+  ).toBeVisible();
 
   const createCandidate = page.getByRole("button", { name: "Создать candidate-сборку" });
   await expect(createCandidate).toBeVisible();
@@ -254,7 +257,10 @@ test("оператор создаёт и готовит candidate без пуб�
 
   const candidateRow = page.getByRole("row").filter({ has: preview });
   await expect(candidateRow.getByRole("cell", { name: "ready", exact: true })).toBeVisible();
-  await expect(candidateRow.getByRole("button", { name: "Опубликовать" })).toBeVisible();
+  const publish = candidateRow.getByRole("button", { name: "Опубликовать" });
+  await expect(publish).toBeVisible();
+  await expect(publish).toBeDisabled();
+  await expect(candidateRow.getByText("Set the legal organization before publish")).toBeVisible();
   expect(publishRequests).toEqual([]);
   await previewPage.close();
 

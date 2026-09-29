@@ -25,6 +25,9 @@ def _baseline(prompt_id: str):
 
 def _serialize(entry: PromptEntry, baseline=None) -> dict:
     effective = effective_prompt(baseline, entry) if baseline else None
+    stale = bool(
+        baseline and (entry.schema_json or {}).get("baseline_hash") != baseline.content_hash
+    )
     return {
         "id": str(entry.id),
         "key": entry.key,
@@ -32,6 +35,9 @@ def _serialize(entry: PromptEntry, baseline=None) -> dict:
         "instructions": entry.template,
         "active": entry.is_active,
         "state": entry.state,
+        "stale": stale,
+        "runtime_using_packaged_baseline": bool(entry.is_active and stale),
+        "activation_eligible": entry.state == "approved" and not stale,
         "baseline_hash": (entry.schema_json or {}).get("baseline_hash"),
         "effective_diff": "".join(
             unified_diff(

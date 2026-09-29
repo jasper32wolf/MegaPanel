@@ -25,6 +25,7 @@ type AIRunBrief = { id: string; action: string; status: string; output: { brief?
 type BlockSlotSchema = { block_id: string; slots: Record<string, { type: string; max_length: number }> };
 type BlockSlotCopy = { block_id: string; slots: Record<string, string | null>; fact_keys: string[]; warnings: string[] };
 type MediaAsset = { id: string; author: string | null; license: string | null; availability: "eligible" | "expired" | "rights_missing"; hashes: { stored_sha256?: string }; provenance: { rights_confirmed?: boolean; license_expires_at?: string | null } };
+type AssetUsage = { scope: "draft" | "candidate" | "published"; source: { draft_id?: string; revision?: number; build_id?: string; build_hash?: string | null }; slug: string; placement: string; asset_id: string; expected_sha256: string; alt: string; current_status: "verified" | "missing_asset" | "hash_mismatch" | "unavailable" };
 type Confirmation = {
   title: string;
   description: string;
@@ -82,6 +83,7 @@ export function ProjectWorkspacePage() {
   const [slotRun, setSlotRun] = useState<AIRunBrief | null>(null);
   const [slotRuns, setSlotRuns] = useState<AIRunBrief[]>([]);
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
+  const [assetUsage, setAssetUsage] = useState<AssetUsage[]>([]);
   const [mediaDraftId, setMediaDraftId] = useState("");
   const [mediaBlockId, setMediaBlockId] = useState("");
   const [mediaAssetId, setMediaAssetId] = useState("");
@@ -138,7 +140,7 @@ export function ProjectWorkspacePage() {
   }, [drafts, mediaDraftId]);
 
   async function load() {
-    const [nextProject, nextFacts, nextKeywords, nextProjectKeywords, nextPlaces, nextProjectGeo, nextPlans, nextDrafts, nextCoverage, nextBuilds, nextIndexPromotions, nextSeoRuns, nextSlotRuns, nextCollections, nextSignals] = await Promise.all([
+    const [nextProject, nextFacts, nextKeywords, nextProjectKeywords, nextPlaces, nextProjectGeo, nextPlans, nextDrafts, nextCoverage, nextBuilds, nextAssetUsage, nextIndexPromotions, nextSeoRuns, nextSlotRuns, nextCollections, nextSignals] = await Promise.all([
       api<Project>(`/api/v1/projects/${projectId}`, {}, token),
       api<FactRevision[]>(`/api/v1/projects/${projectId}/facts`, {}, token),
       api<{ items: Keyword[] }>("/api/v1/keywords?limit=100", {}, token),
@@ -149,6 +151,7 @@ export function ProjectWorkspacePage() {
       api<Draft[]>(`/api/v1/projects/${projectId}/page-drafts`, {}, token),
       api<Coverage>(`/api/v1/projects/${projectId}/coverage`, {}, token),
       api<Build[]>(`/api/v1/projects/${projectId}/builds`, {}, token),
+      api<AssetUsage[]>(`/api/v1/projects/${projectId}/asset-usage`, {}, token),
       api<IndexPromotionCandidate[]>(`/api/v1/projects/${projectId}/index-promotions`, {}, token),
       api<AIRunBrief[]>(`/api/v1/projects/${projectId}/seo-briefs`, {}, token),
       api<AIRunBrief[]>(`/api/v1/projects/${projectId}/block-slot-proposals`, {}, token),
@@ -168,6 +171,7 @@ export function ProjectWorkspacePage() {
     setDrafts(nextDrafts);
     setCoverage(nextCoverage);
     setBuilds(nextBuilds);
+    setAssetUsage(nextAssetUsage);
     setIndexPromotions(nextIndexPromotions);
     setSeoRuns(nextSeoRuns);
     setSeoRun((current) => nextSeoRuns.find((item) => item.id === current?.id) || nextSeoRuns[0] || null);
@@ -760,7 +764,7 @@ export function ProjectWorkspacePage() {
 
   return (
     <div aria-busy={busy !== null}>
-      <PageHeader title={project.name} description="Факты → семантика → география → план страниц → черновик и проверка качества. Публикация не выполняется автоматически." actions={<Link className="btn btn-ghost" to="/projects">К проектам</Link>} />
+      <PageHeader title={project.name} description="Факты → семантика → география → план страниц → черновик и проверка качества. Публикация не выполняется автоматически." actions={<div className="row"><Link className="btn btn-ghost" to={`/projects/${projectId}/activity`}>Activity</Link><Link className="btn btn-ghost" to="/projects">К проектам</Link></div>} />
       {error && <p className="error" role="alert">{error}</p>}
       {message && <p className="muted" aria-live="polite">{message}</p>}
       <Surface title="1. Факты бизнеса">
@@ -889,6 +893,10 @@ export function ProjectWorkspacePage() {
           <label className="field">Alt-текст<input value={mediaAlt} onChange={(event) => setMediaAlt(event.target.value)} maxLength={255} placeholder="Кратко и по делу опишите изображение" /></label>
           <button className="btn btn-ghost" type="button" disabled={busy !== null || !mediaDraftId || !mediaAssetId || !mediaAlt.trim()} onClick={() => void attachDraftMedia()}>{busy?.startsWith("draft-media:") ? "Прикрепление…" : "Прикрепить к draft"}</button>
         </div>
+      </Surface>
+      <Surface title="4.5. Использование media в snapshots">
+        <p className="muted">Это derived projection из draft, ready candidate и текущего опубликованного immutable snapshot. Current status проверяет живую запись, rights, expiry, hash и локальный файл; исторический release не переписывается при последующей недоступности ассета.</p>
+        {assetUsage.length === 0 ? <EmptyState title="В видимых draft и release нет прикреплённых media" hint="Использование появится после прикрепления файла к draft." /> : <DataTable headers={["Scope", "Страница", "Размещение", "Ассет", "Current status"]}>{assetUsage.map((usage) => <tr key={`${usage.scope}-${usage.source.draft_id || usage.source.build_id}-${usage.slug}-${usage.placement}-${usage.asset_id}`}><td><StatusPill tone={usage.scope === "published" ? "ok" : usage.scope === "candidate" ? "warn" : "accent"}>{usage.scope}</StatusPill></td><td>{usage.slug}</td><td>{usage.placement}</td><td>{usage.asset_id.slice(0, 8)} · {usage.expected_sha256.slice(0, 12)}</td><td><StatusPill tone={usage.current_status === "verified" ? "ok" : "danger"}>{usage.current_status}</StatusPill></td></tr>)}</DataTable>}
       </Surface>
       <Surface title="5. Черновики и проверка качества">
         {drafts.length === 0 ? <EmptyState title="Черновиков пока нет" hint="Одобрите план страницы, затем создайте детерминированный черновик." /> : <DataTable headers={["План", "Версия", "Статус", "QA", "Действия"]}>{drafts.map((draft) => <tr key={draft.id}><td>{plans.find((plan) => plan.id === draft.page_plan_id)?.slug || draft.page_plan_id}</td><td>{draft.revision}</td><td><StatusPill tone={tone(draft.state)}>{draft.state}</StatusPill>{draft.failure_message && <p className="error" role="alert">{draft.failure_message}</p>}</td><td><StatusPill tone={tone(draft.last_qa_verdict || "draft")}>{draft.last_qa_verdict || "не запускалась"}</StatusPill>{draft.qa_runs.at(-1)?.findings.map((finding) => <p className="muted" key={finding.rule}>{finding.rule}: {finding.evidence}</p>)}</td><td className="row">{draft.state === "draft" && <><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => qa(draft)}>Проверить</button>{draft.last_qa_verdict && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => submitDraft(draft)}>На ручную проверку</button>}</>}{draft.state === "review" && draft.last_qa_verdict !== "block" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => apply(draft)}>Применить</button>}</td></tr>)}</DataTable>}

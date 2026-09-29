@@ -15,6 +15,7 @@ from app.core.config import get_settings
 from app.core.security import sha256_hex
 from app.db.session import get_db
 from app.models import (
+    AuditLog,
     BuildReleaseGate,
     GeoPlace,
     Keyword,
@@ -73,12 +74,12 @@ from app.services.release_gate import (
     store_release_gate,
 )
 from app.services.site_build_metadata import validate_page_metadata_snapshot
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
 from site_panel_blocks import list_kits
 from site_panel_shared.manifests import PageManifest, SiteManifest
 from site_panel_ssg import BuildAsset, SiteBuilder
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
@@ -109,6 +110,20 @@ def _legal_publish_blockers(manifest: SiteManifest) -> list[str]:
         "privacy_email": "Set a public privacy/DSAR email before publish",
     }
     return [message for key, message in required.items() if not str(legal.get(key) or "").strip()]
+
+
+def _record_release_event(db: AsyncSession, *, tenant_id: UUID, outcome: str) -> None:
+    record_operational_event(
+        db,
+        tenant_id=tenant_id,
+        event_type="release",
+        severity="critical"
+        if outcome == "failure"
+        else "warning"
+        if outcome == "blocked"
+        else "info",
+        outcome={"success": "success", "failure": "failure", "blocked": "warning"}[outcome],
+    )
 
 
 async def _lead_routing_publish_blockers(db: AsyncSession, site: Site) -> list[str]:
@@ -466,6 +481,47 @@ async def get_project(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     return _serialize_project(await _project_or_404(db, project_id, auth))
+
+
+@router.get("/{project_id}/activity")
+async def project_activity(
+    project_id: UUID,
+    action: str | None = Query(default=None, max_length=128),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=25, ge=1, le=100),
+    auth: AuthContext = Depends(
+        require_roles("superadmin", "tenant_admin", "manager", "editor", "viewer")
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    project = await _project_or_404(db, project_id, auth)
+    statement = select(AuditLog).where(
+        AuditLog.tenant_id == project.tenant_id,
+        AuditLog.payload["project_id"].astext == str(project.id),
+    )
+    if action and action.strip():
+        statement = statement.where(AuditLog.action == action.strip())
+    total = await db.scalar(select(func.count()).select_from(statement.subquery()))
+    rows = list(
+        (await db.execute(statement.order_by(AuditLog.id.desc()).offset(offset).limit(limit)))
+        .scalars()
+        .all()
+    )
+    return {
+        "items": [
+            {
+                "id": entry.id,
+                "action": entry.action,
+                "actor_id": str(entry.actor_id) if entry.actor_id else None,
+                "created_at": entry.created_at.isoformat() if entry.created_at else None,
+                "record_hash": entry.record_hash,
+            }
+            for entry in rows
+        ],
+        "offset": offset,
+        "limit": limit,
+        "total": int(total or 0),
+    }
 
 
 @router.patch("/{project_id}")
@@ -2111,6 +2167,165 @@ async def list_project_builds(
     ]
 
 
+def _manifest_asset_usage(
+    *,
+    manifest: SiteManifest,
+    scope: str,
+    source: dict,
+) -> list[dict]:
+    usages = []
+    for page in manifest.pages:
+        for attachment in page.media:
+            usages.append(
+                {
+                    "scope": scope,
+                    "source": source,
+                    "slug": page.slug,
+                    "placement": "gallery",
+                    "asset_id": str(attachment.asset_id),
+                    "expected_sha256": attachment.stored_sha256,
+                    "alt": attachment.alt,
+                }
+            )
+        for block_id, attachment in page.block_media.items():
+            usages.append(
+                {
+                    "scope": scope,
+                    "source": source,
+                    "slug": page.slug,
+                    "placement": f"block:{block_id}",
+                    "asset_id": str(attachment.asset_id),
+                    "expected_sha256": attachment.stored_sha256,
+                    "alt": attachment.alt,
+                }
+            )
+    return usages
+
+
+def _asset_usage_status(asset: MediaAsset | None, expected_sha256: str) -> str:
+    if asset is None:
+        return "missing_asset"
+    try:
+        if _verified_media_hash(asset) != expected_sha256:
+            return "hash_mismatch"
+        _asset_path(asset)
+    except (HTTPException, ValueError):
+        return "unavailable"
+    return "verified"
+
+
+@router.get("/{project_id}/asset-usage")
+async def list_project_asset_usage(
+    project_id: UUID,
+    auth: AuthContext = Depends(
+        require_roles("superadmin", "tenant_admin", "manager", "editor", "viewer")
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    project = await _project_or_404(db, project_id, auth)
+    drafts = list(
+        (
+            await db.execute(
+                select(PageDraft).where(
+                    PageDraft.project_id == project.id,
+                    PageDraft.state.in_(("draft", "review")),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    builds = list(
+        (
+            await db.execute(
+                select(SiteBuild).where(
+                    SiteBuild.project_id == project.id,
+                    SiteBuild.tenant_id == project.tenant_id,
+                    SiteBuild.site_id == project.site_id,
+                    SiteBuild.status == "ready",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    site = await _project_site_or_409(db, project) if project.site_id else None
+    active_build = None
+    if site and site.build_hash:
+        active_build = (
+            await db.execute(
+                select(SiteBuild).where(
+                    SiteBuild.project_id == project.id,
+                    SiteBuild.tenant_id == project.tenant_id,
+                    SiteBuild.site_id == site.id,
+                    SiteBuild.build_hash == site.build_hash,
+                )
+            )
+        ).scalar_one_or_none()
+    usages = []
+    for draft in drafts:
+        try:
+            manifest = SiteManifest.model_validate(
+                {
+                    "site_id": site.id if site else uuid4(),
+                    "tenant_id": project.tenant_id,
+                    "domain": project.domain or "draft.example.test",
+                    "pages": [draft.page_manifest],
+                }
+            )
+        except ValueError:
+            continue
+        usages.extend(
+            _manifest_asset_usage(
+                manifest=manifest,
+                scope="draft",
+                source={"draft_id": str(draft.id), "revision": draft.revision},
+            )
+        )
+    for build in [
+        *builds,
+        *([active_build] if active_build and active_build not in builds else []),
+    ]:
+        try:
+            manifest = SiteManifest.model_validate(build.manifest_snapshot)
+        except ValueError:
+            continue
+        usages.extend(
+            _manifest_asset_usage(
+                manifest=manifest,
+                scope="published" if active_build is build else "candidate",
+                source={"build_id": str(build.id), "build_hash": build.build_hash},
+            )
+        )
+    asset_ids = {UUID(item["asset_id"]) for item in usages}
+    assets = (
+        list(
+            (
+                await db.execute(
+                    select(MediaAsset).where(
+                        MediaAsset.id.in_(asset_ids),
+                        MediaAsset.tenant_id == project.tenant_id,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if asset_ids
+        else []
+    )
+    by_id = {str(asset.id): asset for asset in assets}
+    return [
+        {
+            **item,
+            "current_status": _asset_usage_status(
+                by_id.get(item["asset_id"]), item["expected_sha256"]
+            ),
+        }
+        for item in usages
+    ]
+
+
 async def _build_assets_for_manifest(
     db: AsyncSession,
     *,
@@ -2330,6 +2545,7 @@ async def materialize_project_build(
         )
     except Exception as exc:
         record_release_transition(action="build", outcome="failed")
+        _record_release_event(db, tenant_id=project.tenant_id, outcome="failure")
         raise HTTPException(status_code=422, detail=f"Candidate build failed: {exc}") from exc
     page_metadata_snapshot = [
         {
@@ -2378,6 +2594,7 @@ async def materialize_project_build(
         tenant_id=project.tenant_id,
         actor_id=auth.user.id,
     )
+    _record_release_event(db, tenant_id=project.tenant_id, outcome="success")
     await db.commit()
     record_release_transition(action="build", outcome="success")
     return {
@@ -2568,6 +2785,7 @@ async def publish_project_build(
         tenant_id=project.tenant_id,
         actor_id=auth.user.id,
     )
+    _record_release_event(db, tenant_id=project.tenant_id, outcome="success")
     await db.commit()
     record_release_transition(action="publish", outcome="success")
     return {
@@ -2655,6 +2873,7 @@ async def rollback_project_build(
         tenant_id=project.tenant_id,
         actor_id=auth.user.id,
     )
+    _record_release_event(db, tenant_id=project.tenant_id, outcome="success")
     await db.commit()
     record_release_transition(action="rollback", outcome="success")
     return {
