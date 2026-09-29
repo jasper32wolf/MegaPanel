@@ -252,3 +252,63 @@ def test_candidate_build_does_not_activate_until_requested(tmp_path: Path):
     assert builder.activate(str(site_id), result["build_hash"])
     marker = tmp_path / str(site_id) / "current" / "BUILD_HASH"
     assert marker.read_text(encoding="utf-8").strip() == result["build_hash"]
+
+
+def test_first_activation_compensation_restores_candidate_release(tmp_path: Path):
+    site_id = uuid4()
+    site = SiteManifest(
+        site_id=site_id,
+        tenant_id=uuid4(),
+        domain="candidate.test",
+        pages=[
+            PageManifest(
+                slug="/",
+                title_template="{service}",
+                h1_template="{service}",
+                service="Ремонт",
+                unique_core="Достаточно длинный черновик для проверки компенсации активации.",
+            )
+        ],
+    )
+    builder = SiteBuilder(tmp_path)
+    result = builder.build(site, {"service": "Ремонт"}, activate=False)
+    root = tmp_path / str(site_id)
+
+    assert builder.activate(str(site_id), result["build_hash"])
+    assert builder.restore_activation(str(site_id), result["build_hash"], None)
+
+    assert not (root / "current").exists()
+    assert not (root / "previous").exists()
+    assert (root / "releases" / result["build_hash"] / "BUILD_HASH").read_text(
+        encoding="utf-8"
+    ).strip() == result["build_hash"]
+
+
+def test_first_activation_compensation_rejects_unexpected_previous(tmp_path: Path):
+    site_id = uuid4()
+    site = SiteManifest(
+        site_id=site_id,
+        tenant_id=uuid4(),
+        domain="candidate.test",
+        pages=[
+            PageManifest(
+                slug="/",
+                title_template="{service}",
+                h1_template="{service}",
+                service="Ремонт",
+                unique_core="Достаточно длинный черновик для проверки защитного условия.",
+            )
+        ],
+    )
+    builder = SiteBuilder(tmp_path)
+    result = builder.build(site, {"service": "Ремонт"}, activate=False)
+    root = tmp_path / str(site_id)
+
+    assert builder.activate(str(site_id), result["build_hash"])
+    (root / "previous").mkdir()
+
+    assert not builder.restore_activation(str(site_id), result["build_hash"], None)
+    assert (root / "current" / "BUILD_HASH").read_text(encoding="utf-8").strip() == result[
+        "build_hash"
+    ]
+    assert (root / "previous").is_dir()

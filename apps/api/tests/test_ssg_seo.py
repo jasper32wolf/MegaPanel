@@ -92,6 +92,85 @@ def test_ssg_build_keeps_previous_release_for_rollback(tmp_path: Path):
     assert "Первая версия" in (current / "index.html").read_text(encoding="utf-8")
 
 
+def test_activation_compensation_restores_previous_release(tmp_path: Path):
+    site_id = uuid4()
+    builder = SiteBuilder(tmp_path)
+
+    def site_for(title: str) -> SiteManifest:
+        return SiteManifest(
+            site_id=site_id,
+            tenant_id=uuid4(),
+            domain="restore.test",
+            pages=[
+                PageManifest(
+                    slug="/",
+                    title_template=title,
+                    h1_template=title,
+                    service="Услуги",
+                    blocks=[BlockDef(type="hero", hash_class="blk-x", html="<p>content</p>")],
+                )
+            ],
+        )
+
+    first = builder.build(site_for("Первая версия"))
+    second = builder.build(site_for("Вторая версия"))
+    root = tmp_path / str(site_id)
+
+    assert builder.restore_activation(str(site_id), second["build_hash"], first["build_hash"])
+    assert (root / "current" / "BUILD_HASH").read_text(encoding="utf-8").strip() == first[
+        "build_hash"
+    ]
+    assert (root / "previous" / "BUILD_HASH").read_text(encoding="utf-8").strip() == second[
+        "build_hash"
+    ]
+
+
+def test_directory_activation_compensation_restores_topology(tmp_path: Path, monkeypatch):
+    site_id = uuid4()
+    builder = SiteBuilder(tmp_path)
+    monkeypatch.setattr(builder, "_replace_link", lambda *_args: False)
+
+    def site_for(title: str) -> SiteManifest:
+        return SiteManifest(
+            site_id=site_id,
+            tenant_id=uuid4(),
+            domain="restore.test",
+            pages=[
+                PageManifest(
+                    slug="/",
+                    title_template=title,
+                    h1_template=title,
+                    service="Услуги",
+                    blocks=[BlockDef(type="hero", hash_class="blk-x", html="<p>content</p>")],
+                )
+            ],
+        )
+
+    first = builder.build(site_for("Первая версия"))
+    second = builder.build(site_for("Вторая версия"))
+    root = tmp_path / str(site_id)
+    temporary = root / ".restore-activation"
+    temporary.mkdir()
+
+    assert not (root / "current").is_symlink()
+    assert not builder.restore_activation(str(site_id), second["build_hash"], first["build_hash"])
+    assert (root / "current" / "BUILD_HASH").read_text(encoding="utf-8").strip() == second[
+        "build_hash"
+    ]
+    assert (root / "previous" / "BUILD_HASH").read_text(encoding="utf-8").strip() == first[
+        "build_hash"
+    ]
+    temporary.rmdir()
+
+    assert builder.restore_activation(str(site_id), second["build_hash"], first["build_hash"])
+    assert (root / "current" / "BUILD_HASH").read_text(encoding="utf-8").strip() == first[
+        "build_hash"
+    ]
+    assert (root / "previous" / "BUILD_HASH").read_text(encoding="utf-8").strip() == second[
+        "build_hash"
+    ]
+
+
 def test_sitemap_escapes_xml_locations():
     sitemap = render_sitemap("example.test", ["/service?a=1&b=2"])
 

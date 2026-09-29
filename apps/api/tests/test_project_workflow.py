@@ -605,12 +605,19 @@ def test_publish_caddy_failure_restores_release_without_projection_mutation(monk
 
     class Builder:
         activations: list[tuple[str, str]] = []
+        restorations: list[tuple[str, str, str | None]] = []
 
         def __init__(self, _root):
             pass
 
         def activate(self, site_key: str, build_hash: str) -> bool:
             self.activations.append((site_key, build_hash))
+            return True
+
+        def restore_activation(
+            self, site_key: str, candidate_hash: str, old_hash: str | None
+        ) -> bool:
+            self.restorations.append((site_key, candidate_hash, old_hash))
             return True
 
     class Caddy:
@@ -625,7 +632,7 @@ def test_publish_caddy_failure_restores_release_without_projection_mutation(monk
     monkeypatch.setattr(projects, "CaddyClient", Caddy)
     monkeypatch.setattr(projects, "append_audit", audit)
 
-    with pytest.raises(HTTPException, match="previous release restored") as exc_info:
+    with pytest.raises(HTTPException, match="release activation restored") as exc_info:
         asyncio.run(
             publish_project_build(
                 project_id,
@@ -637,10 +644,101 @@ def test_publish_caddy_failure_restores_release_without_projection_mutation(monk
         )
 
     assert exc_info.value.status_code == 503
-    assert Builder.activations == [(str(site_id), "b" * 64), (str(site_id), "a" * 64)]
+    assert Builder.activations == [(str(site_id), "b" * 64)]
+    assert Builder.restorations == [(str(site_id), "b" * 64, "a" * 64)]
     assert (site.build_hash, site.publish_state, build.status, build.activated_at) == (
         "a" * 64,
         "published",
+        "ready",
+        None,
+    )
+    assert db.added == []
+    assert db.committed is False
+    audit.assert_not_awaited()
+
+
+def test_first_publish_caddy_failure_compensates_without_persistence(monkeypatch):
+    tenant_id, project_id, site_id, build_id = (uuid4() for _ in range(4))
+    snapshot = _build_manifest_snapshot(site_id, tenant_id, [_page_manifest("/", "Candidate")])
+    snapshot["legal"] = {
+        "org": "ООО Тест",
+        "address": "Казань",
+        "jurisdiction": "Российская Федерация",
+        "privacy_email": "privacy@example.com",
+    }
+    project = SimpleNamespace(
+        id=project_id,
+        tenant_id=tenant_id,
+        site_id=site_id,
+        domain="example.test",
+        domain_check_meta={"dns_status": "ok"},
+    )
+    site = SimpleNamespace(
+        id=site_id,
+        tenant_id=tenant_id,
+        domain="example.test",
+        build_hash=None,
+        previous_build_hash=None,
+        publish_state="draft",
+    )
+    build = SimpleNamespace(
+        id=build_id,
+        project_id=project_id,
+        tenant_id=tenant_id,
+        site_id=site_id,
+        status="ready",
+        build_hash="b" * 64,
+        manifest_snapshot=snapshot,
+        page_metadata_snapshot=[_page_metadata("/")],
+        activated_at=None,
+    )
+
+    class Builder:
+        activations: list[tuple[str, str]] = []
+        restorations: list[tuple[str, str, str | None]] = []
+
+        def __init__(self, _root):
+            pass
+
+        def activate(self, site_key: str, build_hash: str) -> bool:
+            self.activations.append((site_key, build_hash))
+            return True
+
+        def restore_activation(
+            self, site_key: str, candidate_hash: str, old_hash: str | None
+        ) -> bool:
+            self.restorations.append((site_key, candidate_hash, old_hash))
+            return False
+
+    class Caddy:
+        async def upsert_site_vhost(self, *_args):
+            return {"ok": False}
+
+    db = BuildWorkflowDatabase([build])
+    audit = AsyncMock()
+    monkeypatch.setattr(projects, "_project_or_404", AsyncMock(return_value=project))
+    monkeypatch.setattr(projects, "_project_site_or_409", AsyncMock(return_value=site))
+    monkeypatch.setattr(projects, "SiteBuilder", Builder)
+    monkeypatch.setattr(projects, "CaddyClient", Caddy)
+    monkeypatch.setattr(projects, "append_audit", audit)
+
+    with pytest.raises(HTTPException, match="recovery is unverified") as exc_info:
+        asyncio.run(
+            publish_project_build(
+                project_id,
+                build_id,
+                BuildPublishRequest(confirmed=True),
+                object(),
+                db,
+            )
+        )
+
+    assert exc_info.value.status_code == 503
+    assert Builder.activations == [(str(site_id), "b" * 64)]
+    assert Builder.restorations == [(str(site_id), "b" * 64, None)]
+    assert (site.build_hash, site.publish_state, build.status, build.activated_at) == (
+        None,
+        "draft",
         "ready",
         None,
     )
@@ -675,12 +773,19 @@ def test_rollback_caddy_failure_restores_release_without_projection_mutation(mon
 
     class Builder:
         activations: list[tuple[str, str]] = []
+        restorations: list[tuple[str, str, str | None]] = []
 
         def __init__(self, _root):
             pass
 
         def activate(self, site_key: str, build_hash: str) -> bool:
             self.activations.append((site_key, build_hash))
+            return True
+
+        def restore_activation(
+            self, site_key: str, candidate_hash: str, old_hash: str | None
+        ) -> bool:
+            self.restorations.append((site_key, candidate_hash, old_hash))
             return True
 
     class Caddy:
@@ -695,7 +800,7 @@ def test_rollback_caddy_failure_restores_release_without_projection_mutation(mon
     monkeypatch.setattr(projects, "CaddyClient", Caddy)
     monkeypatch.setattr(projects, "append_audit", audit)
 
-    with pytest.raises(HTTPException, match="previous release restored") as exc_info:
+    with pytest.raises(HTTPException, match="release activation restored") as exc_info:
         asyncio.run(
             rollback_project_build(
                 project_id,
@@ -706,7 +811,8 @@ def test_rollback_caddy_failure_restores_release_without_projection_mutation(mon
         )
 
     assert exc_info.value.status_code == 503
-    assert Builder.activations == [(str(site_id), "a" * 64), (str(site_id), "b" * 64)]
+    assert Builder.activations == [(str(site_id), "a" * 64)]
+    assert Builder.restorations == [(str(site_id), "a" * 64, "b" * 64)]
     assert (site.build_hash, site.publish_state, target.status, target.activated_at) == (
         "b" * 64,
         "published",

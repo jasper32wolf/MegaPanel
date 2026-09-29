@@ -2145,11 +2145,13 @@ async def publish_project_build(
         site.domain, str(Path(settings.caddy_sites_root) / str(site.id) / "current")
     )
     if not caddy.get("ok"):
-        if old_hash:
-            builder.activate(str(site.id), old_hash)
-        raise HTTPException(
-            status_code=503, detail="Caddy configuration failed; previous release restored"
+        restored = builder.restore_activation(str(site.id), build.build_hash, old_hash)
+        detail = (
+            "Caddy configuration failed; release activation restored"
+            if restored
+            else "Caddy configuration failed; release activation recovery is unverified"
         )
+        raise HTTPException(status_code=503, detail=detail)
     site.previous_build_hash = old_hash
     site.build_hash = build.build_hash
     site.publish_state = "published"
@@ -2221,11 +2223,13 @@ async def rollback_project_build(
         site.domain, str(Path(settings.caddy_sites_root) / str(site.id) / "current")
     )
     if not caddy.get("ok"):
-        if old_hash:
-            builder.activate(str(site.id), old_hash)
-        raise HTTPException(
-            status_code=503, detail="Caddy configuration failed; previous release restored"
+        restored = builder.restore_activation(str(site.id), body.build_hash, old_hash)
+        detail = (
+            "Caddy configuration failed; release activation restored"
+            if restored
+            else "Caddy configuration failed; release activation recovery is unverified"
         )
+        raise HTTPException(status_code=503, detail=detail)
     site.previous_build_hash = old_hash
     site.build_hash = body.build_hash
     site.publish_state = "published"

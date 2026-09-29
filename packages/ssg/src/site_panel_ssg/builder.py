@@ -304,21 +304,103 @@ class SiteBuilder:
             current.rename(previous)
         release.rename(current)
 
+    @staticmethod
+    def _matches_build(path: Path, build_hash: str) -> bool:
+        marker = path / "BUILD_HASH"
+        try:
+            return (
+                path.is_dir()
+                and marker.is_file()
+                and marker.read_text(encoding="utf-8").strip() == build_hash
+            )
+        except OSError:
+            return False
+
+    @staticmethod
+    def _link_points_to(path: Path, target: Path) -> bool:
+        try:
+            return path.is_symlink() and path.resolve(strict=True) == target.resolve(strict=True)
+        except OSError:
+            return False
+
     def activate(self, site_id: str, build_hash: str) -> bool:
         root = self.output_root / str(site_id)
         release = root / "releases" / build_hash
-        marker = release / "BUILD_HASH"
-        if (
-            not release.is_dir()
-            or not marker.is_file()
-            or marker.read_text(encoding="utf-8").strip() != build_hash
-        ):
+        if not self._matches_build(release, build_hash):
             return False
         self._activate_release(root, release)
-        current_marker = root / "current" / "BUILD_HASH"
-        return (
-            current_marker.is_file()
-            and current_marker.read_text(encoding="utf-8").strip() == build_hash
+        return self._matches_build(root / "current", build_hash)
+
+    def restore_activation(self, site_id: str, candidate_hash: str, old_hash: str | None) -> bool:
+        root = self.output_root / str(site_id)
+        releases = root / "releases"
+        current = root / "current"
+        previous = root / "previous"
+        candidate_release = releases / candidate_hash
+
+        if not self._matches_build(current, candidate_hash):
+            return False
+
+        if old_hash is None:
+            if _exists(previous):
+                return False
+            if current.is_symlink():
+                if not (
+                    self._matches_build(candidate_release, candidate_hash)
+                    and self._link_points_to(current, candidate_release)
+                ):
+                    return False
+                try:
+                    current.unlink()
+                except OSError:
+                    return False
+            else:
+                if not current.is_dir() or _exists(candidate_release):
+                    return False
+                try:
+                    current.rename(candidate_release)
+                except OSError:
+                    return False
+            return not _exists(current) and self._matches_build(candidate_release, candidate_hash)
+
+        old_release = releases / old_hash
+        if not self._matches_build(previous, old_hash):
+            return False
+
+        if current.is_symlink() or previous.is_symlink():
+            if not (
+                current.is_symlink()
+                and previous.is_symlink()
+                and self._matches_build(candidate_release, candidate_hash)
+                and self._matches_build(old_release, old_hash)
+                and self._link_points_to(current, candidate_release)
+                and self._link_points_to(previous, old_release)
+            ):
+                return False
+            if not self._replace_link(current, old_release):
+                return False
+            if not self._replace_link(previous, candidate_release):
+                return False
+        else:
+            if (
+                not current.is_dir()
+                or not previous.is_dir()
+                or _exists(candidate_release)
+                or _exists(old_release)
+            ):
+                return False
+            temporary = root / ".restore-activation"
+            if _exists(temporary):
+                return False
+            try:
+                current.rename(temporary)
+                previous.rename(current)
+                temporary.rename(previous)
+            except OSError:
+                return False
+
+        return self._matches_build(current, old_hash) and self._matches_build(
+            previous, candidate_hash
         )
 
     def release_path(self, site_id: str, build_hash: str) -> Path:
