@@ -67,6 +67,16 @@ def test_deterministic_draft_without_ai_provenance_is_not_rejected_by_ai_rules()
     assert not any(item["rule"].startswith("ai_") for item in result["findings"])
 
 
+def test_qa_blocks_email_in_rendered_service_field():
+    result = run_page_qa(
+        page_manifest={**base_page(), "service": "leads@example.test"},
+        input_snapshot=base_input(),
+        existing_texts=[],
+    )
+
+    assert any(item["rule"] == "public_email_leak" for item in result["findings"])
+
+
 def test_qa_blocks_email_in_custom_schema_org_faq():
     result = run_page_qa(
         page_manifest={
