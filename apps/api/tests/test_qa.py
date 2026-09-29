@@ -67,6 +67,19 @@ def test_deterministic_draft_without_ai_provenance_is_not_rejected_by_ai_rules()
     assert not any(item["rule"].startswith("ai_") for item in result["findings"])
 
 
+def test_qa_blocks_email_in_custom_schema_org_faq():
+    result = run_page_qa(
+        page_manifest={
+            **base_page(),
+            "schema_org": {"faq": [{"q": "Как связаться?", "a": "Пишите leads@example.test"}]},
+        },
+        input_snapshot=base_input(),
+        existing_texts=[],
+    )
+
+    assert any(item["rule"] == "public_email_leak" for item in result["findings"])
+
+
 def test_qa_blocks_email_in_gallery_and_block_media_alt_text():
     asset_id = "11111111-1111-1111-1111-111111111111"
     block_asset_id = "22222222-2222-2222-2222-222222222222"
