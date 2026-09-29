@@ -292,7 +292,7 @@ jobs:
             --header 'Content-Type: application/json' \
             --data "{\"site_id\":\"20000000-0000-0000-0000-000000000001\",\"lead_token\":\"compose-smoke-lead-token-00000001\",\"phone\":\"+79990000000\",\"email\":\"lead@example.test\",\"name\":\"Compose client\",\"message\":\"Compose encrypted lead\",\"page_slug\":\"/district/\",\"form_ts\":${lead_form_ts},\"idempotency_key\":\"compose-smoke-lead-key-0001\",\"consent\":true}" \
             https://site.localhost/api/v1/leads/public >/tmp/site-panel-compose-lead.json
-          python3 -c 'import json; result = json.load(open("/tmp/site-panel-compose-lead.json")); assert result["ok"] is True and result["delivery_status"] is None'
+          python3 -c 'import json; result = json.load(open("/tmp/site-panel-compose-lead.json")); assert result["ok"] is True and result["delivery_status"] == "not_configured"'
           docker compose -f infra/docker/docker-compose.production.yml --env-file .env exec -T api python - <<'PY'
           import asyncio
           from uuid import UUID

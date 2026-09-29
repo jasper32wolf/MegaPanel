@@ -374,7 +374,7 @@ def test_worker_delivery_uses_postgres_redis_and_no_external_webhook(monkeypatch
                 assert delivery.next_attempt_at is None
                 assert delivery.locked_until is None
                 assert delivery.last_http_status == 202
-                assert refreshed_lead.crm_status == "sent"
+                assert refreshed_lead.crm_status == "delivered"
                 assert len(attempts) == 1
                 assert attempts[0].sequence == 1
                 assert attempts[0].trigger == "automatic"
@@ -474,7 +474,7 @@ def test_worker_delivery_uses_postgres_redis_and_no_external_webhook(monkeypatch
                 assert recovered_delivery.delivered_at is not None
                 assert recovered_delivery.next_attempt_at is None
                 assert recovered_delivery.last_http_status == 202
-                assert recovered_lead.crm_status == "sent"
+                assert recovered_lead.crm_status == "delivered"
                 assert len(recovered_attempts) == retry_delivery.max_attempts + 1
                 assert recovered_attempts[-1].sequence == retry_delivery.max_attempts + 1
                 assert recovered_attempts[-1].trigger == "manual"
