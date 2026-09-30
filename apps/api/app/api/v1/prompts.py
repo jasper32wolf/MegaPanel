@@ -23,11 +23,46 @@ def _baseline(prompt_id: str):
     return next((item for item in list_prompts() if item.prompt_id == prompt_id), None)
 
 
-def _serialize(entry: PromptEntry, baseline=None) -> dict:
+def _activation_readiness(
+    entry: PromptEntry,
+    baseline,
+    runs: list[PromptEvaluationRun],
+    evaluation: dict | None,
+) -> dict:
+    if baseline is None:
+        return {"eligible": False, "blockers": ["baseline_unavailable"]}
+    if entry.state != "approved":
+        return {"eligible": False, "blockers": ["not_approved"]}
+    if (entry.schema_json or {}).get("baseline_hash") != baseline.content_hash:
+        return {"eligible": False, "blockers": ["baseline_changed"]}
+    if evaluation is None:
+        return {"eligible": False, "blockers": ["fixture_unavailable"]}
+
+    effective = effective_prompt(baseline, entry)
+    current_runs = [
+        run
+        for run in runs
+        if run.baseline_hash == baseline.content_hash
+        and run.effective_prompt_hash == effective.content_hash
+    ]
+    matching_runs = [run for run in current_runs if run.fixture_hash == evaluation["fixture_hash"]]
+    if any(run.status == "passed" for run in matching_runs):
+        return {"eligible": True, "blockers": []}
+    if not runs:
+        return {"eligible": False, "blockers": ["evaluation_missing"]}
+    if not current_runs:
+        return {"eligible": False, "blockers": ["prompt_changed"]}
+    if not matching_runs:
+        return {"eligible": False, "blockers": ["fixture_changed"]}
+    return {"eligible": False, "blockers": ["evaluation_failed"]}
+
+
+def _serialize(entry: PromptEntry, baseline=None, activation: dict | None = None) -> dict:
     effective = effective_prompt(baseline, entry) if baseline else None
     stale = bool(
         baseline and (entry.schema_json or {}).get("baseline_hash") != baseline.content_hash
     )
+    activation = activation or {"eligible": False, "blockers": ["readiness_unavailable"]}
     return {
         "id": str(entry.id),
         "key": entry.key,
@@ -37,7 +72,8 @@ def _serialize(entry: PromptEntry, baseline=None) -> dict:
         "state": entry.state,
         "stale": stale,
         "runtime_using_packaged_baseline": bool(entry.is_active and stale),
-        "activation_eligible": entry.state == "approved" and not stale,
+        "activation": activation,
+        "activation_eligible": activation["eligible"],
         "baseline_hash": (entry.schema_json or {}).get("baseline_hash"),
         "effective_diff": "".join(
             unified_diff(
@@ -124,6 +160,29 @@ async def list_managed_prompts(
     by_key: dict[str, list[PromptEntry]] = {}
     for revision in revisions:
         by_key.setdefault(revision.key, []).append(revision)
+    runs_by_revision: dict[UUID, list[PromptEvaluationRun]] = {}
+    if revisions:
+        runs = list(
+            (
+                await db.execute(
+                    select(PromptEvaluationRun).where(
+                        PromptEvaluationRun.tenant_id == auth.tenant_id,
+                        PromptEvaluationRun.prompt_entry_id.in_([item.id for item in revisions]),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for run in runs:
+            runs_by_revision.setdefault(run.prompt_entry_id, []).append(run)
+    prompts = list_prompts()
+    evaluation_by_prompt: dict[str, dict | None] = {}
+    for baseline in prompts:
+        try:
+            evaluation_by_prompt[baseline.prompt_id] = run_offline_prompt_evaluation(baseline)
+        except ValueError:
+            evaluation_by_prompt[baseline.prompt_id] = None
     return [
         {
             "id": baseline.prompt_id,
@@ -131,10 +190,20 @@ async def list_managed_prompts(
             "baseline_hash": baseline.content_hash,
             "path": "/".join(baseline.path.parts[-3:]),
             "revisions": [
-                _serialize(item, baseline) for item in by_key.get(baseline.prompt_id, [])
+                _serialize(
+                    item,
+                    baseline,
+                    _activation_readiness(
+                        item,
+                        baseline,
+                        runs_by_revision.get(item.id, []),
+                        evaluation_by_prompt[baseline.prompt_id],
+                    ),
+                )
+                for item in by_key.get(baseline.prompt_id, [])
             ],
         }
-        for baseline in list_prompts()
+        for baseline in prompts
     ]
 
 

@@ -32,14 +32,24 @@ const models = [
 ];
 
 async function mockAuth(page: Page) {
+  let authenticated = false;
   await page.route("**/api/v1/security/me", (route) =>
-    route.fulfill({ status: 401, contentType: "application/json", body: '{"detail":"not authenticated"}' }),
+    route.fulfill({
+      status: authenticated ? 200 : 401,
+      contentType: "application/json",
+      body: authenticated ? "{}" : '{"detail":"not authenticated"}',
+    }),
   );
-  await page.route("**/api/v1/auth/login", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: '{"ok":true}' }),
-  );
+  await page.route("**/api/v1/auth/login", (route) => {
+    authenticated = true;
+    return route.fulfill({ status: 200, contentType: "application/json", body: '{"ok":true}' });
+  });
   await page.route("**/api/v1/auth/refresh", (route) =>
-    route.fulfill({ status: 401, contentType: "application/json", body: '{"detail":"not authenticated"}' }),
+    route.fulfill({
+      status: authenticated ? 200 : 401,
+      contentType: "application/json",
+      body: authenticated ? "{}" : '{"detail":"not authenticated"}',
+    }),
   );
   await page.goto("/login");
   await page.getByLabel("Email").fill("operator@example.test");
@@ -116,12 +126,98 @@ test("semantic coverage остаётся read-only advisory обзором", asy
     }),
   );
 
-  await page.goto(`/projects/${projectId}/semantic-coverage`);
+  await page.evaluate((path) => {
+    window.history.pushState({}, "", path);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }, `/projects/${projectId}/semantic-coverage`);
   await expect(page.getByRole("heading", { name: "Coverage proof: semantic coverage" })).toBeVisible();
   await expect(page.getByText("planned (draft/review)")).toBeVisible();
   await expect(page.getByText("Unmapped plans: /legacy (draft). They do not count as semantic coverage.")).toBeVisible();
   await expect(page.getByText("не создаёт drafts, не применяет изменения, не запускает build и не публикует сайт")).toBeVisible();
   await expect(page.getByRole("button", { name: /Создать|Применить|Собрать|Опубликовать/ })).toHaveCount(0);
+});
+
+test("prompt history показывает stale evidence и блокирует активацию", async ({ page }) => {
+  await mockAuth(page);
+  const promptId = "architecture/propose-site-map";
+  const revisionId = "44444444-4444-4444-8444-444444444444";
+  await page.route("**/api/v1/ai/prompts", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([{
+        id: promptId,
+        baseline_version: "1",
+        baseline_hash: "current-baseline-hash",
+        path: "prompts/ai/architecture/propose-site-map.md",
+        revisions: [{
+          id: revisionId,
+          key: promptId,
+          version: 2,
+          instructions: "Показывайте ограничения.",
+          active: false,
+          state: "approved",
+          stale: false,
+          runtime_using_packaged_baseline: false,
+          baseline_hash: "current-baseline-hash",
+          activation: { eligible: false, blockers: ["fixture_changed"] },
+          activation_eligible: false,
+          effective_diff: null,
+          created_at: "2026-09-30T12:00:00Z",
+          submitted_at: null,
+          reviewed_at: "2026-09-30T12:01:00Z",
+          decision_reason: null,
+        }],
+      }]),
+    }),
+  );
+  await page.route("**/api/v1/ai/prompts/**/evaluations", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([
+        {
+          id: "run-current",
+          status: "passed",
+          baseline_hash: "current-baseline-hash",
+          effective_prompt_hash: "effective-hash",
+          fixture_hash: "old-fixture-hash",
+          ruleset_version: "offline-fixture-v1",
+          case_count: 2,
+          passed_count: 2,
+          error: null,
+          completed_at: "2026-09-30T12:02:00Z",
+          cases: [{ name: "current-contract", status: "passed", assertion_keys: ["safe"], diagnostic: null }],
+        },
+        {
+          id: "run-failed",
+          status: "failed",
+          baseline_hash: "old-baseline-hash",
+          effective_prompt_hash: "old-effective-hash",
+          fixture_hash: "old-fixture-hash",
+          ruleset_version: "offline-fixture-v1",
+          case_count: 2,
+          passed_count: 0,
+          error: "fixture contract failed",
+          completed_at: "2026-09-29T12:02:00Z",
+          cases: [{ name: "old-contract", status: "failed", assertion_keys: ["safe"], diagnostic: "contract mismatch" }],
+        },
+      ]),
+    }),
+  );
+
+  await page.getByRole("link", { name: "Системные prompts" }).click();
+  await expect(page.getByRole("heading", { name: "Системные prompts" })).toBeVisible();
+  await expect(page.getByText("Сохранённая evaluation относится к предыдущей версии fixture.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Активировать" })).toBeDisabled();
+  await page.getByRole("button", { name: "Показать history" }).click();
+  await expect(page.getByText("Evaluation history · 2 run(s)")).toBeVisible();
+  await page.getByText("Evaluation history · 2 run(s)").click();
+  await expect(page.getByText("fixture contract failed")).toBeVisible();
+  await page.getByText("Fixture cases").first().click();
+  await page.getByText("Fixture cases").nth(1).click();
+  await expect(page.getByText("current-contract")).toBeVisible();
+  await expect(page.getByText("old-contract")).toBeVisible();
 });
 
 test("AI workspace показывает queued, running и pending approval через polling", async ({ page }) => {

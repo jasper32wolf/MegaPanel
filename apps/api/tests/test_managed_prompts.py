@@ -94,6 +94,103 @@ def test_prompt_revision_serialization_marks_stale_runtime_fallback():
     assert serialized["activation_eligible"] is False
 
 
+def test_activation_readiness_requires_current_passing_fixture_evidence():
+    from app.api.v1.prompts import _activation_readiness
+
+    baseline = load_prompt("architecture/propose-site-map.md")
+    entry = SimpleNamespace(
+        id=uuid4(),
+        version=2,
+        template="Объясняйте ограничения до предложений.",
+        state="approved",
+        schema_json={"baseline_hash": baseline.content_hash},
+    )
+    effective_hash = effective_prompt(baseline, entry).content_hash
+    evaluation = {"fixture_hash": "f" * 64}
+
+    assert _activation_readiness(entry, baseline, [], evaluation) == {
+        "eligible": False,
+        "blockers": ["evaluation_missing"],
+    }
+    assert _activation_readiness(
+        entry,
+        baseline,
+        [
+            SimpleNamespace(
+                baseline_hash=baseline.content_hash,
+                effective_prompt_hash="e" * 64,
+                fixture_hash=evaluation["fixture_hash"],
+                status="passed",
+            )
+        ],
+        evaluation,
+    ) == {"eligible": False, "blockers": ["prompt_changed"]}
+    assert _activation_readiness(
+        entry,
+        baseline,
+        [
+            SimpleNamespace(
+                baseline_hash=baseline.content_hash,
+                effective_prompt_hash=effective_hash,
+                fixture_hash="o" * 64,
+                status="passed",
+            )
+        ],
+        evaluation,
+    ) == {"eligible": False, "blockers": ["fixture_changed"]}
+    assert _activation_readiness(
+        entry,
+        baseline,
+        [
+            SimpleNamespace(
+                baseline_hash=baseline.content_hash,
+                effective_prompt_hash=effective_hash,
+                fixture_hash=evaluation["fixture_hash"],
+                status="failed",
+            )
+        ],
+        evaluation,
+    ) == {"eligible": False, "blockers": ["evaluation_failed"]}
+    assert _activation_readiness(
+        entry,
+        baseline,
+        [
+            SimpleNamespace(
+                baseline_hash=baseline.content_hash,
+                effective_prompt_hash=effective_hash,
+                fixture_hash=evaluation["fixture_hash"],
+                status="passed",
+            )
+        ],
+        evaluation,
+    ) == {"eligible": True, "blockers": []}
+
+
+def test_activation_readiness_explains_stale_baseline_and_fixture_unavailable():
+    from app.api.v1.prompts import _activation_readiness
+
+    baseline = load_prompt("architecture/propose-site-map.md")
+    stale = SimpleNamespace(
+        id=uuid4(), version=1, template="Устаревшая revision.", state="approved", schema_json={}
+    )
+    approved = SimpleNamespace(
+        id=uuid4(),
+        version=2,
+        template="Текущая revision.",
+        state="approved",
+        schema_json={"baseline_hash": baseline.content_hash},
+    )
+
+    assert _activation_readiness(stale, baseline, [], None) == {
+        "eligible": False,
+        "blockers": ["baseline_changed"],
+    }
+    assert _activation_readiness(approved, baseline, [], None) == {
+        "eligible": False,
+        "blockers": ["fixture_unavailable"],
+    }
+
+
 def test_content_ai_actions_use_managed_prompt_composition():
     source = (Path(__file__).parents[1] / "app" / "api" / "v1" / "ai_content.py").read_text(
         encoding="utf-8"
@@ -115,6 +212,7 @@ def test_managed_prompt_routes_are_registered():
     assert "get" in paths["/api/v1/ai/prompts"]
     assert "post" in paths["/api/v1/ai/prompts/{prompt_id}/revisions"]
     assert "post" in paths["/api/v1/ai/prompts/{prompt_id}/revisions/{revision_id}/activate"]
+    assert "get" in paths["/api/v1/ai/prompts/{prompt_id}/revisions/{revision_id}/evaluations"]
     assert "get" in paths["/api/v1/ai/prompt-assets"]
 
 
