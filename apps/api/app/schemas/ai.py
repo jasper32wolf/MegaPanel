@@ -166,10 +166,15 @@ class AIBlockSlotCopyOut(BaseModel):
     warnings: list[str] = Field(default_factory=list, max_length=20)
 
 
+AIRunStatus = Literal[
+    "reserved", "running", "pending_approval", "approved", "rejected", "completed", "failed"
+]
+
+
 class AIRunOut(BaseModel):
     id: UUID
     action: str
-    status: str
+    status: AIRunStatus
     provider_id: str | None
     model_id: str | None
     prompt_id: str
@@ -189,7 +194,7 @@ class AIRunSummary(BaseModel):
     id: UUID
     project_id: UUID | None
     action: str
-    status: str
+    status: AIRunStatus
     provider_id: str | None
     model_id: str | None
     prompt_id: str
@@ -200,6 +205,8 @@ class AIRunSummary(BaseModel):
     cost_usd: float | None
     error_code: str | None
     created_at: str | None
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class SEOBriefOut(BaseModel):
@@ -233,7 +240,7 @@ class PageProposal(BaseModel):
 
 class ArchitectureProposalOut(BaseModel):
     run_id: UUID
-    status: Literal["pending_approval", "approved", "rejected", "failed"]
+    status: AIRunStatus
     pages: list[PageProposal]
     prompt_id: str
     prompt_version: str
@@ -245,3 +252,5 @@ class ArchitectureProposalOut(BaseModel):
     page_plan_ids: list[UUID] = Field(default_factory=list)
     page_plans_imported: bool = False
     error_code: str | None = None
+
+    model_config = ConfigDict(extra="forbid")

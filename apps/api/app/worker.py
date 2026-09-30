@@ -5,11 +5,20 @@ import uuid
 import structlog
 from arq import cron
 from arq.connections import RedisSettings
+from sqlalchemy import select
 
+from app.api.v1.ai_providers import _adapter
+from app.api.v1.ai_workspace import _actual_cost, _usage_payload, _validate_proposal
 from app.core.config import get_settings
 from app.db.session import open_db_session
+from app.models import AIProviderConnection, AIRun
+from app.providers import ProviderError, StructuredRequest
+from app.services.ai_secrets import decrypt_provider_key
+from app.services.audit import append_audit
 from app.services.webhook_delivery import due_delivery_ids, process_delivery, recover_expired_leases
 from app.services.worker_heartbeat import record_worker_heartbeat
+
+# Provider requests are intentionally made only by this worker, never by the API route.
 
 logger = structlog.get_logger("worker")
 settings = get_settings()
@@ -54,12 +63,124 @@ async def webhook_delivery_sweep_task(ctx: dict) -> dict:
         return {"error": str(exc)}
 
 
+async def architecture_proposal_task(ctx: dict, run_id: str) -> dict:
+    """Execute one reserved architecture run; safe to invoke repeatedly."""
+    async with open_db_session() as session:
+        run = (
+            await session.execute(
+                select(AIRun).where(AIRun.id == uuid.UUID(run_id)).with_for_update()
+            )
+        ).scalar_one_or_none()
+        if run is None:
+            return {"status": "missing", "run_id": run_id}
+        if run.status != "reserved":
+            return {"status": run.status, "run_id": run_id, "duplicate": True}
+        envelope = dict(run.execution_envelope or {})
+        run.status = "running"
+        run.error_code = None
+        await session.commit()
+
+        if envelope.get("tenant_id") != str(run.tenant_id):
+            run.status = "failed"
+            run.error_code = "tenant_scope_violation"
+            await session.commit()
+            return {"status": run.status, "run_id": run_id, "error_code": run.error_code}
+        estimated_cost = float(run.cost_usd or 0.0)
+        pricing = envelope.get("pricing") or {}
+        max_cost = float(envelope.get("max_cost_usd") or 0.0)
+        try:
+            connection = await session.get(
+                AIProviderConnection, uuid.UUID(envelope["provider_connection_id"])
+            )
+            if not connection or not connection.enabled:
+                raise RuntimeError("provider_connection_unavailable")
+            adapter = _adapter(connection, decrypt_provider_key(connection.encrypted_api_key))
+            response = await adapter.generate_structured(
+                StructuredRequest(
+                    model=envelope["model"],
+                    system_prompt=envelope["system_prompt"],
+                    user_prompt=envelope["user_prompt"],
+                    output_schema=envelope["output_schema"],
+                    temperature=float(envelope.get("temperature", 0.2)),
+                    max_tokens=int(envelope["max_output_tokens"]),
+                )
+            )
+            validation = envelope["validation"]
+            pages = _validate_proposal(
+                response.data,
+                keyword_ids=set(validation["keyword_ids"]),
+                geo_ids=set(validation["geo_ids"]),
+                fact_keys=set(validation["fact_keys"]),
+                catalogs={key: set(value) for key, value in validation["catalogs"].items()},
+            )
+            usage = _usage_payload(response.usage)
+            actual_cost = max(
+                estimated_cost,
+                _actual_cost(response.usage, pricing, estimated_cost),
+            )
+            cost_exceeded = actual_cost > max_cost
+            run.provider_id = response.provider_id
+            run.model_id = response.model
+            run.request_id = response.request_id
+            run.output = {"pages": pages}
+            run.usage = usage
+            run.cost_usd = actual_cost
+            run.error_code = (
+                "actual_cost_exceeded_limit"
+                if cost_exceeded
+                else "usage_unavailable"
+                if not response.usage.known
+                else None
+            )
+            run.status = "failed" if cost_exceeded else "pending_approval"
+            audit_action = (
+                "ai.architecture.proposal.cost_limit_exceeded"
+                if cost_exceeded
+                else "ai.architecture.proposal.created"
+            )
+        except ProviderError as exc:
+            run.status = "failed"
+            run.error_code = exc.code
+            run.usage = _usage_payload(exc.usage)
+            run.cost_usd = max(
+                estimated_cost,
+                _actual_cost(exc.usage, pricing, estimated_cost),
+            )
+            run.request_id = exc.request_id
+            audit_action = "ai.run.failed"
+        except (ValueError, TypeError):
+            run.status = "failed"
+            run.error_code = "invalid_ai_output"
+            response_usage = locals().get("response")
+            usage_obj = response_usage.usage if response_usage else None
+            run.usage = _usage_payload(usage_obj)
+            run.cost_usd = max(estimated_cost, _actual_cost(usage_obj, pricing, estimated_cost))
+            run.request_id = response_usage.request_id if response_usage else None
+            audit_action = "ai.run.failed"
+        except Exception:  # noqa: BLE001
+            run.status = "failed"
+            run.error_code = "provider_execution_failed"
+            # Unknown provider spend is charged at least at the reservation.
+            run.cost_usd = estimated_cost
+            audit_action = "ai.run.failed"
+        await append_audit(
+            session,
+            action=audit_action,
+            payload={"run_id": run_id, "status": run.status, "error_code": run.error_code},
+            tenant_id=run.tenant_id,
+            actor_id=None,
+        )
+        await session.commit()
+        return {"status": run.status, "run_id": run_id, "error_code": run.error_code}
+
+
 class WorkerSettings:
     functions = [
         healthcheck_task,
         worker_heartbeat_task,
         webhook_delivery_task,
         webhook_delivery_sweep_task,
+        architecture_proposal_task,
     ]
     cron_jobs = [
         cron(

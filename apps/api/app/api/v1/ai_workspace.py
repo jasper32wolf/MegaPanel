@@ -8,11 +8,10 @@ from typing import Any
 from uuid import UUID
 
 from app.api.deps import AuthContext, require_roles
-from app.api.v1.ai_providers import _adapter
 from app.api.v1.projects import _confirmed_facts, _project_or_404, _selection_snapshots
 from app.db.session import get_db
 from app.models import AIProviderConnection, AIRun, KnowledgeDoc, PagePlan, Project
-from app.providers import ProviderError, StructuredRequest, Usage
+from app.providers import Usage
 from app.schemas.ai import (
     AIRunOut,
     AIRunSummary,
@@ -23,7 +22,7 @@ from app.schemas.ai import (
 )
 from app.schemas.workflow import normalize_page_plan_slug
 from app.services.ai_data_policy import public_fact_rows, safe_provider_context
-from app.services.ai_secrets import decrypt_provider_key
+from app.services.ai_queue import enqueue_ai_run
 from app.services.audit import append_audit
 from app.services.competitor import evidence_provider_rows
 from app.services.managed_prompts import active_prompt
@@ -126,6 +125,7 @@ async def _reserve_ai_run(
     snapshot: dict[str, Any],
     estimated_cost_usd: float,
     action: str,
+    execution_envelope: dict[str, Any] | None = None,
 ) -> AIRun:
     from app.services.ai_budget import reserve_ai_budget
 
@@ -146,6 +146,7 @@ async def _reserve_ai_run(
         prompt_hash=prompt.content_hash,
         input_snapshot_hash=_hash_snapshot(snapshot),
         input_snapshot=snapshot,
+        execution_envelope=execution_envelope or {},
         output={},
         usage={},
         cost_usd=estimated_cost_usd,
@@ -499,7 +500,25 @@ async def propose_architecture(
         "provider_budget_confirmed": True,
         "estimate_confirmed_by_operator": body.confirmed_estimated_cost_usd,
     }
-    reservation = await _reserve_ai_run(
+    envelope = {
+        "tenant_id": str(auth.tenant_id),
+        "provider_connection_id": str(connection.id),
+        "model": body.model,
+        "system_prompt": prompt.content,
+        "user_prompt": user_prompt,
+        "output_schema": {"type": "object", "required": ["pages"]},
+        "temperature": 0.2,
+        "max_output_tokens": body.max_output_tokens,
+        "max_cost_usd": body.max_cost_usd,
+        "pricing": pricing,
+        "validation": {
+            "keyword_ids": sorted(item["keyword_id"] for item in keyword_snapshot["items"]),
+            "geo_ids": sorted(item["geo_id"] for item in geo_snapshot["items"]),
+            "fact_keys": sorted(row["fact_key"] for row in snapshot["confirmed_facts"]),
+            "catalogs": {key: sorted(value) for key, value in catalogs.items()},
+        },
+    }
+    run = await _reserve_ai_run(
         db=db,
         auth=auth,
         project_id=project_id,
@@ -509,120 +528,22 @@ async def propose_architecture(
         snapshot=snapshot,
         estimated_cost_usd=estimated_cost,
         action="architecture.site-map",
+        execution_envelope=envelope,
     )
-    adapter = _adapter(connection, decrypt_provider_key(connection.encrypted_api_key))
-    response = None
     try:
-        response = await adapter.generate_structured(
-            StructuredRequest(
-                model=body.model,
-                system_prompt=prompt.content,
-                user_prompt=user_prompt,
-                output_schema={"type": "object", "required": ["pages"]},
-                temperature=0.2,
-                max_tokens=body.max_output_tokens,
-            )
+        await enqueue_ai_run(run.id)
+    except Exception:  # noqa: BLE001
+        # Keep the reservation as conservative accounting: no provider call occurred.
+        run.status = "failed"
+        run.error_code = "queue_unavailable"
+        await append_audit(
+            db,
+            action="ai.run.queue_failed",
+            payload={"run_id": str(run.id), "error_code": "queue_unavailable"},
+            tenant_id=auth.tenant_id,
+            actor_id=auth.user.id,
         )
-        page_proposals = _validate_proposal(
-            response.data,
-            keyword_ids={item["keyword_id"] for item in keyword_snapshot["items"]},
-            geo_ids={item["geo_id"] for item in geo_snapshot["items"]},
-            fact_keys={row["fact_key"] for row in snapshot["confirmed_facts"]},
-            catalogs=catalogs,
-        )
-    except ProviderError as exc:
-        await _record_failed_run(
-            db=db,
-            auth=auth,
-            project_id=project_id,
-            provider_id=connection.provider_id,
-            model_id=body.model,
-            prompt=prompt,
-            snapshot=snapshot,
-            error_code=exc.code,
-            usage=_usage_payload(exc.usage),
-            cost_usd=_actual_cost(exc.usage, pricing, estimated_cost),
-            request_id=exc.request_id,
-            reservation=reservation,
-        )
-        raise HTTPException(status_code=502, detail={"code": exc.code}) from exc
-    except (ValueError, TypeError) as exc:
-        usage = _usage_payload(response.usage if response is not None else None)
-        actual_cost = _actual_cost(
-            response.usage if response is not None else None,
-            pricing,
-            estimated_cost,
-        )
-        request_id = response.request_id if response is not None else None
-        await _record_failed_run(
-            db=db,
-            auth=auth,
-            project_id=project_id,
-            provider_id=connection.provider_id,
-            model_id=body.model,
-            prompt=prompt,
-            snapshot=snapshot,
-            error_code="invalid_ai_output",
-            usage=usage,
-            cost_usd=actual_cost,
-            request_id=request_id,
-            reservation=reservation,
-        )
-        raise HTTPException(status_code=502, detail={"code": "invalid_ai_output"}) from exc
-
-    await db.delete(reservation)
-    snapshot_hash = _hash_snapshot(snapshot)
-    actual_cost = _actual_cost(response.usage, pricing, estimated_cost)
-    cost_exceeded = actual_cost > body.max_cost_usd
-    run = AIRun(
-        tenant_id=auth.tenant_id,
-        project_id=project_id,
-        action="architecture.site-map",
-        status="failed" if cost_exceeded else "pending_approval",
-        provider_id=response.provider_id,
-        model_id=response.model,
-        prompt_id=prompt.prompt_id,
-        prompt_version=prompt.version,
-        prompt_hash=prompt.content_hash,
-        input_snapshot_hash=snapshot_hash,
-        request_id=response.request_id,
-        input_snapshot=snapshot,
-        output={"pages": page_proposals},
-        usage=_usage_payload(response.usage),
-        cost_usd=actual_cost,
-        error_code=(
-            "actual_cost_exceeded_limit"
-            if cost_exceeded
-            else "usage_unavailable"
-            if not response.usage.known
-            else None
-        ),
-    )
-    db.add(run)
-    await db.flush()
-    await append_audit(
-        db,
-        action=(
-            "ai.architecture.proposal.cost_limit_exceeded"
-            if cost_exceeded
-            else "ai.architecture.proposal.created"
-        ),
-        payload={
-            "run_id": str(run.id),
-            "project_id": str(project_id),
-            "provider_id": response.provider_id,
-            "model_id": response.model,
-            "prompt_id": prompt.prompt_id,
-            "prompt_version": prompt.version,
-            "prompt_hash": prompt.content_hash,
-            "estimated_cost_usd": round(estimated_cost, 8),
-            "actual_cost_usd": round(actual_cost, 8),
-            "requires_operator_approval": True,
-        },
-        tenant_id=auth.tenant_id,
-        actor_id=auth.user.id,
-    )
-    await db.commit()
+        await db.commit()
     await db.refresh(run)
     return _proposal_out(run)
 

@@ -52,6 +52,9 @@ class AIRun(Base):
     input_snapshot_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     request_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     input_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    # Frozen, provider-ready request data. It intentionally excludes credentials and is
+    # never changed after reservation; the worker receives only the run id.
+    execution_envelope: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     output: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     usage: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     cost_usd: Mapped[float | None] = mapped_column(nullable=True)
