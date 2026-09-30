@@ -13,10 +13,22 @@ type Provider = {
 };
 
 type ProviderTest = { ok: boolean; provider_id: string; message?: string; code?: string };
+type ProviderModel = {
+  provider_id: string;
+  model_id: string;
+  display_name: string;
+  input_price_usd_per_million: number | null;
+  output_price_usd_per_million: number | null;
+  is_free: boolean | null;
+  metadata_source: string | null;
+};
 
 export function AIProvidersPage() {
   const { token } = useAuth();
   const [providers, setProviders] = useState<Provider[]>([]);
+  const [providerModels, setProviderModels] = useState<Record<string, ProviderModel[]>>({});
+  const [modelsLoading, setModelsLoading] = useState<string | null>(null);
+  const [modelErrors, setModelErrors] = useState<Record<string, string>>({});
   const [providerId, setProviderId] = useState("zhipu_glm");
   const [kind, setKind] = useState<Provider["kind"]>("native");
   const [label, setLabel] = useState("GLM / Zhipu");
@@ -33,6 +45,22 @@ export function AIProvidersPage() {
 
   async function load() {
     setProviders(await api<Provider[]>("/api/v1/ai/providers", {}, token));
+  }
+
+  async function refreshModels(provider: Provider) {
+    setModelsLoading(provider.id);
+    setModelErrors((current) => ({ ...current, [provider.id]: "" }));
+    try {
+      const listed = await api<ProviderModel[]>(`/api/v1/ai/providers/${provider.id}/models`, {}, token);
+      setProviderModels((current) => ({ ...current, [provider.id]: listed }));
+    } catch (cause) {
+      setModelErrors((current) => ({
+        ...current,
+        [provider.id]: cause instanceof Error ? cause.message : "Не удалось получить список моделей",
+      }));
+    } finally {
+      setModelsLoading(null);
+    }
   }
 
   useEffect(() => {
@@ -75,6 +103,9 @@ export function AIProvidersPage() {
     try {
       if (action === "delete") {
         await api<void>(`/api/v1/ai/providers/${provider.id}`, { method: "DELETE" }, token);
+        setProviderModels((current) => Object.fromEntries(
+          Object.entries(current).filter(([key]) => key !== provider.id),
+        ));
       } else {
         const result = await api<Provider | ProviderTest>(`/api/v1/ai/providers/${provider.id}/${action}`, { method: "POST" }, token);
         if (action === "test") {
@@ -135,7 +166,7 @@ export function AIProvidersPage() {
         </form>
       </Surface>
       <Surface title="Подключения">
-        {providers.length === 0 ? <p className="muted">Подключений пока нет.</p> : <div className="table-wrap"><table className="table"><thead><tr><th>Провайдер</th><th>Endpoint</th><th>Ключ</th><th>Состояние</th><th>Действия</th></tr></thead><tbody>{providers.map((provider) => <tr key={provider.id}><td><strong>{provider.label}</strong><p className="muted">{provider.provider_id} · {provider.kind}</p></td><td className="muted">{provider.base_url || "native"}</td><td><code>••••{provider.credential_last4 || "—"}</code></td><td><StatusPill tone={provider.enabled ? "ok" : "warn"}>{provider.enabled ? "активен" : "выключен"}</StatusPill></td><td><div className="row"><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => changeProvider(provider, "test")}>Проверить конфигурацию</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => provider.enabled ? changeProvider(provider, "disable") : setConfirmation({ provider, action: "activate" })}>{provider.enabled ? "Отключить" : "Активировать"}</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => setRotationId(rotationId === provider.id ? null : provider.id)}>Заменить ключ</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => setConfirmation({ provider, action: "delete" })}>Удалить</button></div>{rotationId === provider.id && <form className="stack" onSubmit={(event) => { event.preventDefault(); void replaceKey(provider); }}><label className="field">Новый API key<input type="password" value={replacementKey} onChange={(event) => setReplacementKey(event.target.value)} autoComplete="new-password" required /></label><div className="row"><button className="btn" type="submit" disabled={busy !== null || !replacementKey}>{busy === `rotate:${provider.id}` ? "Замена…" : "Сохранить новый ключ"}</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => { setRotationId(null); setReplacementKey(""); }}>Отмена</button></div></form>}</td></tr>)}</tbody></table></div>}
+        {providers.length === 0 ? <p className="muted">Подключений пока нет.</p> : <div className="table-wrap"><table className="table"><thead><tr><th>Провайдер</th><th>Endpoint</th><th>Ключ</th><th>Состояние</th><th>Действия</th></tr></thead><tbody>{providers.map((provider) => <tr key={provider.id}><td><strong>{provider.label}</strong><p className="muted">{provider.provider_id} · {provider.kind}</p></td><td className="muted">{provider.base_url || "native"}</td><td><code>••••{provider.credential_last4 || "—"}</code></td><td><StatusPill tone={provider.enabled ? "ok" : "warn"}>{provider.enabled ? "активен" : "выключен"}</StatusPill></td><td><div className="row"><button className="btn btn-ghost" type="button" disabled={busy !== null || modelsLoading === provider.id} onClick={() => void refreshModels(provider)}>{modelsLoading === provider.id ? "Обновление моделей…" : "Обновить модели"}</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => changeProvider(provider, "test")}>Проверить конфигурацию</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => provider.enabled ? changeProvider(provider, "disable") : setConfirmation({ provider, action: "activate" })}>{provider.enabled ? "Отключить" : "Активировать"}</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => setRotationId(rotationId === provider.id ? null : provider.id)}>Заменить ключ</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => setConfirmation({ provider, action: "delete" })}>Удалить</button></div>{modelErrors[provider.id] && <p className="error" role="alert">{modelErrors[provider.id]}</p>}{providerModels[provider.id] && <div className="stack"><strong>Доступные модели ({providerModels[provider.id].length})</strong>{providerModels[provider.id].length === 0 ? <p className="muted">Провайдер не вернул допустимых моделей.</p> : <ul>{providerModels[provider.id].map((model) => <li key={model.model_id}><code>{model.model_id}</code>{model.metadata_source && <span className="muted"> · {model.metadata_source}</span>}{model.input_price_usd_per_million !== null && <span className="muted"> · input ${model.input_price_usd_per_million}/M</span>}{model.output_price_usd_per_million !== null && <span className="muted"> · output ${model.output_price_usd_per_million}/M</span>}</li>)}</ul>}</div>}{rotationId === provider.id && <form className="stack" onSubmit={(event) => { event.preventDefault(); void replaceKey(provider); }}><label className="field">Новый API key<input type="password" value={replacementKey} onChange={(event) => setReplacementKey(event.target.value)} autoComplete="new-password" required /></label><div className="row"><button className="btn" type="submit" disabled={busy !== null || !replacementKey}>{busy === `rotate:${provider.id}` ? "Замена…" : "Сохранить новый ключ"}</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => { setRotationId(null); setReplacementKey(""); }}>Отмена</button></div></form>}</td></tr>)}</tbody></table></div>}
       </Surface>
       <ConfirmDialog
         open={confirmation !== null}

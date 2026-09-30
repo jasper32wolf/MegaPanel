@@ -20,6 +20,8 @@ from app.services.hardening import egress
 
 Transport = Callable[[httpx.Request], Awaitable[httpx.Response]]
 MAX_RESPONSE_BYTES = 1_048_576
+MAX_DISCOVERED_MODELS = 100
+MAX_MODEL_ID_LENGTH = 256
 
 
 def _usage(data: dict[str, Any]) -> Usage:
@@ -38,6 +40,18 @@ def _usage(data: dict[str, Any]) -> Usage:
         )
     except (TypeError, ValueError):
         return Usage()
+
+
+def _model_id(value: object) -> str | None:
+    """Return a bounded display-safe provider model ID, or discard it."""
+    if not isinstance(value, str):
+        return None
+    model_id = value.strip()
+    if not model_id or len(model_id) > MAX_MODEL_ID_LENGTH:
+        return None
+    if any(ord(character) < 32 or ord(character) == 127 for character in model_id):
+        return None
+    return model_id
 
 
 class OpenAICompatibleAdapter:
@@ -72,7 +86,13 @@ class OpenAICompatibleAdapter:
                 return item.capabilities
         return ProviderCapabilities(structured_output=True)
 
-    async def _request(self, payload: dict[str, Any]) -> tuple[dict[str, Any], httpx.Response]:
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        payload: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], httpx.Response]:
         try:
             egress.assert_allowed(self.base_url)
             if self._client is None:
@@ -81,14 +101,20 @@ class OpenAICompatibleAdapter:
             raise ProviderError(
                 "egress_blocked", "Provider endpoint failed the egress policy"
             ) from exc
-        headers = {"Content-Type": "application/json"}
+
+        headers = {"Accept": "application/json"}
+        if payload is not None:
+            headers["Content-Type"] = "application/json"
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
         own_client = self._client is None
         client = self._client or httpx.AsyncClient(timeout=self._timeout, follow_redirects=False)
         try:
             async with client.stream(
-                "POST", f"{self.base_url}/chat/completions", headers=headers, json=payload
+                method,
+                f"{self.base_url}{path}",
+                headers=headers,
+                json=payload,
             ) as response:
                 try:
                     content_length = int(response.headers.get("content-length", "0"))
@@ -125,6 +151,8 @@ class OpenAICompatibleAdapter:
                     raise ProviderError(
                         "invalid_response", "Provider returned invalid JSON"
                     ) from exc
+                if not isinstance(data, dict):
+                    raise ProviderError("invalid_response", "Provider returned an invalid JSON object")
                 return data, response
         except httpx.TimeoutException as exc:
             raise ProviderError("timeout", "Provider request timed out", retryable=True) from exc
@@ -150,7 +178,7 @@ class OpenAICompatibleAdapter:
             "max_tokens": request.max_tokens,
             "response_format": {"type": "json_object"},
         }
-        data, response = await self._request(payload)
+        data, response = await self._request("POST", "/chat/completions", payload=payload)
         usage = _usage(data)
         request_id = response.headers.get("x-request-id") or data.get("id")
         try:
@@ -181,4 +209,31 @@ class OpenAICompatibleAdapter:
         )
 
     async def list_models(self) -> list[ProviderModel]:
-        return list(self._default_models)
+        # Built-in/native adapters deliberately retain their static catalog behavior.
+        if self.kind != ProviderKind.OPENAI_COMPATIBLE:
+            return list(self._default_models)
+
+        data, _response = await self._request("GET", "/models")
+        rows = data.get("data")
+        if not isinstance(rows, list):
+            raise ProviderError("invalid_response", "Provider returned an invalid model list")
+
+        models: list[ProviderModel] = []
+        seen: set[str] = set()
+        for row in rows:
+            model_id = _model_id(row.get("id") if isinstance(row, dict) else None)
+            if model_id is None or model_id in seen:
+                continue
+            seen.add(model_id)
+            models.append(
+                ProviderModel(
+                    provider_id=self.provider_id,
+                    model_id=model_id,
+                    display_name=model_id,
+                    capabilities=self.model_capabilities(model_id),
+                    metadata_source="provider_discovery",
+                )
+            )
+            if len(models) == MAX_DISCOVERED_MODELS:
+                break
+        return models

@@ -210,6 +210,100 @@ def test_provider_rejects_oversized_response(monkeypatch) -> None:
     asyncio.run(run())
 
 
+def test_openai_compatible_discovers_bounded_models_with_get_headers_and_path(monkeypatch) -> None:
+    monkeypatch.setattr(egress, "allowlist", egress.allowlist | {"provider.test"})
+    observed: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        observed.append(request)
+        return httpx.Response(
+            200,
+            json={"data": [{"id": " z-model "}, {"id": "z-model"}, {"id": "bad\\nmodel"}, {"id": 4}]},
+        )
+
+    async def run() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            adapter = OpenAICompatibleAdapter(
+                provider_id="gateway",
+                base_url="https://provider.test/v1",
+                api_key="secret-value",
+                client=client,
+            )
+            result = await adapter.list_models()
+            assert [model.model_id for model in result] == ["z-model"]
+            assert result[0].metadata_source == "provider_discovery"
+
+    asyncio.run(run())
+    assert observed[0].method == "GET"
+    assert observed[0].url.path == "/v1/models"
+    assert observed[0].headers["authorization"] == "Bearer secret-value"
+    assert observed[0].headers["accept"] == "application/json"
+    assert "content-type" not in observed[0].headers
+
+
+def test_openai_compatible_discovery_caps_models_and_rejects_invalid_shape(monkeypatch) -> None:
+    monkeypatch.setattr(egress, "allowlist", egress.allowlist | {"provider.test"})
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [{"id": f"model-{index}"} for index in range(150)]})
+
+    async def run() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            adapter = OpenAICompatibleAdapter(
+                provider_id="gateway", base_url="https://provider.test/v1", api_key="key", client=client
+            )
+            assert len(await adapter.list_models()) == 100
+
+    asyncio.run(run())
+
+    async def malformed(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": {"id": "model-a"}})
+
+    async def check_malformed() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(malformed)) as client:
+            adapter = OpenAICompatibleAdapter(
+                provider_id="gateway", base_url="https://provider.test/v1", api_key="key", client=client
+            )
+            with pytest.raises(ProviderError, match="invalid model list"):
+                await adapter.list_models()
+
+    asyncio.run(check_malformed())
+
+
+def test_openai_compatible_discovery_normalizes_errors_without_secrets(monkeypatch) -> None:
+    monkeypatch.setattr(egress, "allowlist", egress.allowlist | {"provider.test"})
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"error": "secret-value"})
+
+    async def run() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            adapter = OpenAICompatibleAdapter(
+                provider_id="gateway", base_url="https://provider.test/v1", api_key="secret-value", client=client
+            )
+            with pytest.raises(ProviderError) as caught:
+                await adapter.list_models()
+            assert caught.value.code == "unauthorized"
+            assert "secret-value" not in str(caught.value)
+
+    asyncio.run(run())
+
+
+def test_native_openai_compatible_adapter_keeps_static_models(monkeypatch) -> None:
+    adapter = ZhipuGLMAdapter(api_key="key")
+    original = adapter._request
+
+    async def fail(*_args, **_kwargs):
+        raise AssertionError("native static listing must not call /models")
+
+    adapter._request = fail
+    try:
+        result = asyncio.run(adapter.list_models())
+    finally:
+        adapter._request = original
+    assert [model.model_id for model in result] == ["glm-4-flash"]
+
+
 def test_glm_declares_native_provider_and_model() -> None:
     adapter = ZhipuGLMAdapter(api_key="key")
     assert adapter.provider_id == "zhipu_glm"

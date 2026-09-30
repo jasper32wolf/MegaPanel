@@ -11,6 +11,7 @@ from app.models import AIProviderConnection
 from app.providers import (
     OpenAICompatibleAdapter,
     ProviderCapabilities,
+    ProviderError,
     ProviderModel,
     registry,
 )
@@ -29,6 +30,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
+MAX_LISTED_MODELS = 100
+
+
+def _safe_model_id(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    model_id = value.strip()
+    if not model_id or len(model_id) > 256:
+        return None
+    if any(ord(character) < 32 or ord(character) == 127 for character in model_id):
+        return None
+    return model_id
 
 
 def _pricing_hash(pricing: dict) -> str:
@@ -324,17 +337,29 @@ async def list_provider_models(
     if not connection:
         raise HTTPException(status_code=404, detail="Provider connection not found")
     adapter = _adapter(connection, decrypt_provider_key(connection.encrypted_api_key))
-    listed = {model.model_id: model for model in await adapter.list_models()}
+    try:
+        discovered = await adapter.list_models()
+    except ProviderError as exc:
+        # Do not expose upstream responses, endpoint details, or credentials to operators.
+        raise HTTPException(status_code=502, detail="Provider model discovery failed") from exc
+
+    listed: dict[str, ProviderModel] = {}
+    for model in discovered:
+        model_id = _safe_model_id(model.model_id)
+        if model_id is not None:
+            listed.setdefault(model_id, model)
     for model_id in connection.model_ids:
-        listed.setdefault(
-            model_id,
-            ProviderModel(
-                provider_id=connection.provider_id,
-                model_id=model_id,
-                display_name=model_id,
-                capabilities=adapter.model_capabilities(model_id),
-            ),
-        )
+        safe_model_id = _safe_model_id(model_id)
+        if safe_model_id is not None:
+            listed.setdefault(
+                safe_model_id,
+                ProviderModel(
+                    provider_id=connection.provider_id,
+                    model_id=safe_model_id,
+                    display_name=safe_model_id,
+                    capabilities=adapter.model_capabilities(safe_model_id),
+                ),
+            )
     pricing_by_model = (connection.metadata_json or {}).get("model_pricing", {})
     return [
         ProviderModelOut(
@@ -356,5 +381,5 @@ async def list_provider_models(
                 "observed_at", model.metadata_observed_at
             ),
         )
-        for model in listed.values()
+        for _, model in sorted(listed.items())[:MAX_LISTED_MODELS]
     ]
