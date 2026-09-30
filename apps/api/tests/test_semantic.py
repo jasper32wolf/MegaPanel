@@ -77,7 +77,10 @@ async def test_semantic_signals_distinguishes_approved_planned_uncovered_unbound
     project_id = uuid4()
     collection_id = uuid4()
     covered_member_id, planned_member_id, uncovered_member_id, unbound_member_id = (
-        uuid4(), uuid4(), uuid4(), uuid4()
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
     )
     covered_binding_id, planned_binding_id, uncovered_binding_id = uuid4(), uuid4(), uuid4()
     project = SimpleNamespace(id=project_id, tenant_id=uuid4())
