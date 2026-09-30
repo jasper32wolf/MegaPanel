@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import httpx
 import pytest
 from app.providers import (
+    AnthropicAdapter,
     OpenAICompatibleAdapter,
     ProviderCapabilities,
     ProviderError,
     ProviderModel,
+    StructuredOutputMode,
     StructuredRequest,
     ZhipuGLMAdapter,
 )
@@ -322,3 +325,150 @@ def test_glm_declares_native_provider_and_model() -> None:
     assert adapter.provider_id == "zhipu_glm"
     assert adapter.kind.value == "native"
     assert adapter.model_capabilities("glm-4-flash").structured_output
+
+
+def test_openai_schema_mode_sends_exact_json_schema_format(monkeypatch) -> None:
+    monkeypatch.setattr(egress, "allowlist", egress.allowlist | {"provider.test"})
+    observed: list[dict] = []
+
+    async def handler(http_request: httpx.Request) -> httpx.Response:
+        observed.append(json.loads(http_request.content))
+        return httpx.Response(
+            200,
+            headers={"x-request-id": "req-schema"},
+            json={"choices": [{"message": {"content": '{"pages": []}'}}]},
+        )
+
+    async def run() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            adapter = OpenAICompatibleAdapter(
+                provider_id="gateway",
+                base_url="https://provider.test/v1",
+                api_key="secret-value",
+                default_models=(
+                    ProviderModel(
+                        provider_id="gateway",
+                        model_id="test-model",
+                        display_name="Test",
+                        capabilities=ProviderCapabilities(
+                            structured_output=True,
+                            structured_output_mode=StructuredOutputMode.JSON_SCHEMA,
+                        ),
+                    ),
+                ),
+                client=client,
+            )
+            await adapter.generate_structured(request())
+
+    asyncio.run(run())
+    assert observed[0]["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "response",
+            "strict": True,
+            "schema": {"type": "object"},
+        },
+    }
+
+
+def test_schema_validation_happens_before_provider_network_call(monkeypatch) -> None:
+    monkeypatch.setattr(egress, "allowlist", egress.allowlist | {"provider.test"})
+    called = False
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal called
+        called = True
+        return httpx.Response(500)
+
+    async def run() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            adapter = OpenAICompatibleAdapter(
+                provider_id="gateway",
+                base_url="https://provider.test/v1",
+                api_key="secret-value",
+                client=client,
+            )
+            with pytest.raises(ProviderError) as caught:
+                await adapter.generate_structured(
+                    StructuredRequest(
+                        model="test-model",
+                        system_prompt="Return JSON",
+                        user_prompt="{}",
+                        output_schema={"x": "y" * (64 * 1024)},
+                    )
+                )
+            assert caught.value.code == "invalid_output_schema"
+
+    asyncio.run(run())
+    assert called is False
+
+
+def test_unknown_gateway_retains_json_object_fallback(monkeypatch) -> None:
+    monkeypatch.setattr(egress, "allowlist", egress.allowlist | {"provider.test"})
+    observed: list[dict] = []
+
+    async def handler(http_request: httpx.Request) -> httpx.Response:
+        observed.append(json.loads(http_request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "{}"}}]})
+
+    async def run() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            adapter = OpenAICompatibleAdapter(
+                provider_id="unknown",
+                base_url="https://provider.test/v1",
+                api_key="secret-value",
+                client=client,
+            )
+            await adapter.generate_structured(request())
+
+    asyncio.run(run())
+    assert observed[0]["response_format"] == {"type": "json_object"}
+    assert "secret-value" not in json.dumps(observed[0]["response_format"])
+
+
+def test_anthropic_native_mode_sends_output_config_only_when_declared(monkeypatch) -> None:
+    monkeypatch.setattr(egress, "assert_public_dns", lambda _url: None)
+    observed: list[dict] = []
+
+    async def handler(http_request: httpx.Request) -> httpx.Response:
+        observed.append(json.loads(http_request.content))
+        return httpx.Response(
+            200,
+            headers={"request-id": "req-anthropic"},
+            json={
+                "content": [{"type": "text", "text": "{}"}],
+                "usage": {"input_tokens": 2, "output_tokens": 3},
+            },
+        )
+
+    async def run() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            adapter = AnthropicAdapter(api_key="secret-value", client=client)
+            adapter._models = (
+                ProviderModel(
+                    provider_id="anthropic",
+                    model_id="native-model",
+                    display_name="Native",
+                    capabilities=ProviderCapabilities(
+                        structured_output=True,
+                        structured_output_mode=StructuredOutputMode.NATIVE,
+                    ),
+                ),
+            )
+            result = await adapter.generate_structured(
+                StructuredRequest(
+                    model="native-model",
+                    system_prompt="Return JSON",
+                    user_prompt="{}",
+                    output_schema={"type": "object"},
+                )
+            )
+            assert result.request_id == "req-anthropic"
+            assert result.usage.input_tokens == 2
+            assert result.usage.output_tokens == 3
+
+    asyncio.run(run())
+    assert observed[0]["output_config"] == {
+        "format": {"type": "json_schema", "schema": {"type": "object"}}
+    }
+    assert "secret-value" not in json.dumps(observed[0])

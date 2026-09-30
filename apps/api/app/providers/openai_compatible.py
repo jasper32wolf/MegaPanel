@@ -12,9 +12,11 @@ from app.providers.base import (
     ProviderError,
     ProviderKind,
     ProviderModel,
+    StructuredOutputMode,
     StructuredRequest,
     StructuredResponse,
     Usage,
+    normalize_output_schema,
 )
 from app.services.hardening import egress
 
@@ -86,7 +88,12 @@ class OpenAICompatibleAdapter:
         for item in self._default_models:
             if item.model_id == model:
                 return item.capabilities
-        return ProviderCapabilities(structured_output=True)
+        # Discovery has no trustworthy per-model capability metadata.  Keep the
+        # legacy JSON-object contract, never infer strict schema support.
+        return ProviderCapabilities(
+            structured_output=True,
+            structured_output_mode=StructuredOutputMode.JSON_OBJECT,
+        )
 
     async def _request(
         self,
@@ -168,10 +175,30 @@ class OpenAICompatibleAdapter:
 
     async def generate_structured(self, request: StructuredRequest) -> StructuredResponse:
         capabilities = self.model_capabilities(request.model)
-        if not capabilities.structured_output:
+        if (
+            not capabilities.structured_output
+            or capabilities.structured_output_mode == StructuredOutputMode.UNSUPPORTED
+        ):
             raise ProviderError(
                 "unsupported_capability", "Selected model does not support structured output"
             )
+        try:
+            output_schema = normalize_output_schema(request.output_schema)
+        except ValueError as exc:
+            raise ProviderError("invalid_output_schema", str(exc)) from exc
+
+        if capabilities.structured_output_mode == StructuredOutputMode.JSON_SCHEMA:
+            response_format: dict[str, Any] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "response",
+                    "strict": True,
+                    "schema": output_schema,
+                },
+            }
+        else:
+            # Unknown gateways and models retain the interoperable legacy mode.
+            response_format = {"type": "json_object"}
         payload: dict[str, Any] = {
             "model": request.model,
             "messages": [
@@ -180,7 +207,7 @@ class OpenAICompatibleAdapter:
             ],
             "temperature": request.temperature,
             "max_tokens": request.max_tokens,
-            "response_format": {"type": "json_object"},
+            "response_format": response_format,
         }
         data, response = await self._request("POST", "/chat/completions", payload=payload)
         usage = _usage(data)

@@ -5,9 +5,11 @@ from app.providers.base import (
     ProviderError,
     ProviderKind,
     ProviderModel,
+    StructuredOutputMode,
     StructuredRequest,
     StructuredResponse,
     Usage,
+    normalize_output_schema,
 )
 from app.providers.deepseek import DeepSeekAdapter
 from app.providers.openai import OpenAIAdapter
@@ -26,12 +28,14 @@ __all__ = [
     "ProviderCapabilities",
     "ProviderError",
     "ProviderKind",
+    "StructuredOutputMode",
     "ProviderModel",
     "ProviderRegistry",
     "register_builtin_providers",
     "StructuredRequest",
     "StructuredResponse",
     "Usage",
+    "normalize_output_schema",
     "ZhipuGLMAdapter",
     "registry",
 ]

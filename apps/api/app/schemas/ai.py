@@ -9,6 +9,9 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
 class ProviderCapabilitiesOut(BaseModel):
     structured_output: bool
+    structured_output_mode: Literal[
+        "json_object", "json_schema", "native", "unsupported"
+    ] = "unsupported"
     streaming: bool
     model_listing: bool
     max_context_tokens: int | None = None

@@ -10,9 +10,11 @@ from app.providers.base import (
     ProviderError,
     ProviderKind,
     ProviderModel,
+    StructuredOutputMode,
     StructuredRequest,
     StructuredResponse,
     Usage,
+    normalize_output_schema,
 )
 from app.services.hardening import egress
 
@@ -54,14 +56,48 @@ class AnthropicAdapter:
                 provider_id=self.provider_id,
                 model_id=model,
                 display_name=model,
-                capabilities=ProviderCapabilities(structured_output=True, streaming=True),
+                capabilities=ProviderCapabilities(
+                    structured_output=True,
+                    structured_output_mode=StructuredOutputMode.JSON_OBJECT,
+                    streaming=True,
+                ),
             ),
         )
 
     def model_capabilities(self, model: str) -> ProviderCapabilities:
-        return ProviderCapabilities(structured_output=True, streaming=True)
+        for item in self._models:
+            if item.model_id == model:
+                return item.capabilities
+        # Do not infer native output_config support for unknown model IDs.
+        return ProviderCapabilities(
+            structured_output=True,
+            structured_output_mode=StructuredOutputMode.JSON_OBJECT,
+            streaming=True,
+        )
 
     async def generate_structured(self, request: StructuredRequest) -> StructuredResponse:
+        capabilities = self.model_capabilities(request.model)
+        if (
+            not capabilities.structured_output
+            or capabilities.structured_output_mode == StructuredOutputMode.UNSUPPORTED
+        ):
+            raise ProviderError(
+                "unsupported_capability", "Selected model does not support structured output"
+            )
+        try:
+            output_schema = normalize_output_schema(request.output_schema)
+        except ValueError as exc:
+            raise ProviderError("invalid_output_schema", str(exc)) from exc
+        payload: dict[str, Any] = {
+            "model": request.model,
+            "max_tokens": request.max_tokens,
+            "system": request.system_prompt,
+            "messages": [{"role": "user", "content": request.user_prompt}],
+        }
+        if capabilities.structured_output_mode == StructuredOutputMode.NATIVE:
+            payload["output_config"] = {
+                "format": {"type": "json_schema", "schema": output_schema}
+            }
         try:
             egress.assert_allowed("https://api.anthropic.com/v1/messages")
             await egress.assert_public_dns("https://api.anthropic.com/v1/messages")
@@ -80,12 +116,7 @@ class AnthropicAdapter:
                     "anthropic-version": "2023-06-01",
                     "content-type": "application/json",
                 },
-                json={
-                    "model": request.model,
-                    "max_tokens": request.max_tokens,
-                    "system": request.system_prompt,
-                    "messages": [{"role": "user", "content": request.user_prompt}],
-                },
+                json=payload,
             ) as response:
                 if response.status_code in {408, 409, 425, 429} or response.status_code >= 500:
                     raise ProviderError(
