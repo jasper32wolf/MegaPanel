@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
 from app.services.release_gate import (
     RELEASE_GATE_RULESET_VERSION,
     build_snapshot_hash,
@@ -125,6 +126,44 @@ def test_legal_review_is_bound_to_its_candidate_legal_snapshot():
     assert legal_review_status(build)["status"] == "pass"
     build.manifest_snapshot["legal"]["address"] = "Москва"
     assert legal_review_status(build)["status"] == "block"
+
+
+def test_rejected_legal_review_keeps_reason_and_guidance_without_passing_gate():
+    _site, build = _site_and_build()
+    build.build_hash = "b" * 64
+    build.legal_review = {
+        "state": "rejected",
+        "legal_snapshot_hash": legal_snapshot_hash(build),
+        "evidence_ref": "LEGAL-124",
+        "reason": "Юридический адрес требует подтверждения.",
+        "replacement_guidance": "Обновите подтверждённые legal facts и создайте новый candidate.",
+        "reviewed_at": "2026-10-01T12:00:00+00:00",
+    }
+
+    result = legal_review_status(build)
+
+    assert result["status"] == "block"
+    assert result["review"] == {
+        "state": "rejected",
+        "evidence_ref": "LEGAL-124",
+        "reason": "Юридический адрес требует подтверждения.",
+        "replacement_guidance": "Обновите подтверждённые legal facts и создайте новый candidate.",
+        "reviewed_at": "2026-10-01T12:00:00+00:00",
+    }
+
+
+def test_rejected_legal_review_requires_reason():
+    from app.schemas.workflow import BuildLegalReviewIn
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="requires a reason"):
+        BuildLegalReviewIn(decision="rejected", evidence_ref="LEGAL-125")
+    with pytest.raises(ValidationError, match="requires remediation guidance"):
+        BuildLegalReviewIn(
+            decision="rejected",
+            evidence_ref="LEGAL-125",
+            reason="Нужна дополнительная проверка.",
+        )
 
 
 def test_release_gate_migration_follows_prompt_evaluation_head():

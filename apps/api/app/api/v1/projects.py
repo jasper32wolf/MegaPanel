@@ -2151,6 +2151,42 @@ async def list_project_builds(
         if builds
         else {}
     )
+    legal_events = (
+        list(
+            (
+                await db.execute(
+                    select(AuditLog)
+                    .where(
+                        AuditLog.tenant_id == project.tenant_id,
+                        AuditLog.action == "project.build.legal_review",
+                        AuditLog.payload["project_id"].astext == str(project.id),
+                        AuditLog.payload["build_id"].astext.in_(
+                            [str(build.id) for build in builds]
+                        ),
+                    )
+                    .order_by(AuditLog.id.desc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if builds
+        else []
+    )
+    legal_history: dict[str, list[dict]] = {}
+    for event in legal_events:
+        payload = event.payload or {}
+        legal_history.setdefault(payload.get("build_id", ""), []).append(
+            {
+                "decision": payload.get("decision"),
+                "evidence_ref": payload.get("evidence_ref"),
+                "reason": payload.get("reason"),
+                "replacement_guidance": payload.get("replacement_guidance"),
+                "legal_snapshot_hash": payload.get("legal_snapshot_hash"),
+                "actor_id": str(event.actor_id) if event.actor_id else None,
+                "reviewed_at": event.created_at.isoformat() if event.created_at else None,
+            }
+        )
     return [
         {
             "id": str(build.id),
@@ -2161,7 +2197,10 @@ async def list_project_builds(
             "created_at": build.created_at.isoformat() if build.created_at else None,
             "activated_at": build.activated_at.isoformat() if build.activated_at else None,
             "release_gate": serialize_release_gate(gates.get(build.id)),
-            "legal_review": legal_review_status(build),
+            "legal_review": {
+                **legal_review_status(build),
+                "history": legal_history.get(str(build.id), []),
+            },
         }
         for build in builds
     ]
@@ -2633,6 +2672,10 @@ async def review_project_build_legal(
         "state": body.decision,
         "legal_snapshot_hash": review_state["snapshot_hash"],
         "evidence_ref": body.evidence_ref.strip(),
+        "reason": body.reason.strip() if body.reason else None,
+        "replacement_guidance": (
+            body.replacement_guidance.strip() if body.replacement_guidance else None
+        ),
         "reviewed_at": datetime.now(UTC).isoformat(),
         "reviewed_by": str(auth.user.id),
     }
@@ -2647,6 +2690,10 @@ async def review_project_build_legal(
             "legal_snapshot_hash": updated["snapshot_hash"],
             "decision": body.decision,
             "evidence_ref": body.evidence_ref.strip(),
+            "reason": body.reason.strip() if body.reason else None,
+            "replacement_guidance": (
+                body.replacement_guidance.strip() if body.replacement_guidance else None
+            ),
         },
         tenant_id=project.tenant_id,
         actor_id=auth.user.id,

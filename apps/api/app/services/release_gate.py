@@ -32,7 +32,13 @@ def legal_review_status(build: SiteBuild) -> dict:
         return {
             "status": "pass",
             "snapshot_hash": legal_snapshot_hash(build),
-            "review": {"state": "legacy", "evidence_ref": None, "reviewed_at": None},
+            "review": {
+                "state": "legacy",
+                "evidence_ref": None,
+                "reason": None,
+                "replacement_guidance": None,
+                "reviewed_at": None,
+            },
             "blockers": [],
         }
     review = build.legal_review or {}
@@ -50,6 +56,8 @@ def legal_review_status(build: SiteBuild) -> dict:
         "review": {
             "state": review.get("state") or "pending",
             "evidence_ref": review.get("evidence_ref") or None,
+            "reason": review.get("reason") or None,
+            "replacement_guidance": review.get("replacement_guidance") or None,
             "reviewed_at": review.get("reviewed_at") or None,
         },
         "blockers": [] if approved else ["Approve the legal review for this candidate build"],

@@ -137,6 +137,47 @@ test("semantic coverage остаётся read-only advisory обзором", asy
   await expect(page.getByRole("button", { name: /Создать|Применить|Собрать|Опубликовать/ })).toHaveCount(0);
 });
 
+test("legal rejection сохраняет reason и manual remediation без публикации", async ({ page }) => {
+  await mockAuth(page);
+  const projectId = "55555555-5555-4555-8555-555555555555";
+  const buildId = "66666666-6666-4666-8666-666666666666";
+  let legalReviewBody: Record<string, unknown> | null = null;
+  await page.route("**/api/v1/**", async (route) => {
+    const url = new URL(route.request().url());
+    if (route.request().method() === "POST" && url.pathname.endsWith(`/builds/${buildId}/legal-review`)) {
+      legalReviewBody = route.request().postDataJSON() as Record<string, unknown>;
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ status: "block" }) });
+    }
+    if (url.pathname === `/api/v1/projects/${projectId}`) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ id: projectId, name: "Legal proof", domain: "proof.test", niche: null, site_id: "site-proof", current_fact_revision_id: null, domain_check_meta: {} }) });
+    }
+    if (url.pathname.endsWith("/coverage")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ selected: 0, covered: 0, uncovered: [], plans: 0 }) });
+    if (url.pathname.endsWith("/semantic-signals")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ totals: { members: 0, bindings: 0, covered: 0, planned: 0, uncovered: 0, unbound: 0 }, cannibalization: [], unmapped_plans: [] }) });
+    if (url.pathname.endsWith("/lead-routing")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [] }) });
+    if (url.pathname.endsWith("/builds")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([{ id: buildId, status: "ready", build_hash: "b".repeat(64), previous_build_hash: null, pages_built: 1, created_at: "2026-10-01T12:00:00Z", activated_at: null, release_gate: { status: "pass", blockers: [], warnings: [] }, legal_review: { status: "block", blockers: ["Approve the legal review for this candidate build"], review: { state: "pending", evidence_ref: null, reason: null, replacement_guidance: null, reviewed_at: null }, history: [] } }]) });
+    if (url.pathname === "/api/v1/keywords") return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [] }) });
+    return route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+
+  await page.evaluate((path) => {
+    window.history.pushState({}, "", path);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }, `/projects/${projectId}`);
+  await expect(page.getByText("Legal proof")).toBeVisible();
+  await page.getByLabel("Причина отклонения").fill("Юридический адрес требует подтверждения.");
+  await page.getByLabel("Рекомендация по исправлению").fill("Обновите подтверждённые facts и создайте новый candidate.");
+  await page.getByRole("button", { name: "Отклонить legal review" }).click();
+  await page.getByLabel("Ссылка или внутренний идентификатор evidence").fill("LEGAL-PROOF-1");
+  await page.getByRole("button", { name: "Подтвердить отклонение" }).click();
+  await expect.poll(() => legalReviewBody).not.toBeNull();
+  expect(legalReviewBody).toMatchObject({
+    decision: "rejected",
+    evidence_ref: "LEGAL-PROOF-1",
+    reason: "Юридический адрес требует подтверждения.",
+    replacement_guidance: "Обновите подтверждённые facts и создайте новый candidate.",
+  });
+});
+
 test("prompt history показывает stale evidence и блокирует активацию", async ({ page }) => {
   await mockAuth(page);
   const promptId = "architecture/propose-site-map";

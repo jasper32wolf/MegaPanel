@@ -320,6 +320,18 @@ class PageDraftDecision(BaseModel):
 class BuildLegalReviewIn(BaseModel):
     decision: Literal["approved", "rejected"]
     evidence_ref: str = Field(min_length=3, max_length=255)
+    reason: str | None = Field(default=None, min_length=3, max_length=2000)
+    replacement_guidance: str | None = Field(default=None, min_length=3, max_length=2000)
+
+    @model_validator(mode="after")
+    def require_rejection_context(self):
+        if self.decision != "rejected":
+            return self
+        if not self.reason or not self.reason.strip():
+            raise ValueError("Rejected legal review requires a reason")
+        if not self.replacement_guidance or not self.replacement_guidance.strip():
+            raise ValueError("Rejected legal review requires remediation guidance")
+        return self
 
 
 class PageIndexPromotionIn(BaseModel):
