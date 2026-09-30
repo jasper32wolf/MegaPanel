@@ -605,7 +605,18 @@ jobs:
             scripts/bootstrap-github-deploy.sh \
             scripts/tests/test_release_manager.sh
           python3 scripts/validate_production_env.py --help >/dev/null
-          bash scripts/tests/test_release_manager.sh
+      - name: Controlled release and restore harness
+        run: |
+          set -euo pipefail
+          bash scripts/tests/test_release_manager.sh | tee "$RUNNER_TEMP/site-panel-release-harness.log"
+      - name: Upload release harness evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-harness-evidence
+          path: ${{ runner.temp }}/site-panel-release-harness.log
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Validate production Caddyfile
         run: |
           docker run --rm \

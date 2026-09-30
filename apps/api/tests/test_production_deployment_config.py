@@ -203,6 +203,21 @@ def test_ci_proves_upgrade_path_from_0031_to_current_head():
     assert "get_current_head()" in command
 
 
+def test_ci_publishes_controlled_release_restore_harness_evidence():
+    workflow = yaml.safe_load(CI_PATH.read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["release-automation"]["steps"]
+    harness = next(
+        step for step in steps if step.get("name") == "Controlled release and restore harness"
+    )
+    artifact = next(step for step in steps if step.get("name") == "Upload release harness evidence")
+
+    assert "bash scripts/tests/test_release_manager.sh" in harness["run"]
+    assert "site-panel-release-harness.log" in harness["run"]
+    assert artifact["uses"] == "actions/upload-artifact@v4"
+    assert artifact["with"]["name"] == "release-harness-evidence"
+    assert artifact["with"]["retention-days"] == 14
+
+
 def test_ci_runs_authenticated_production_compose_smoke_through_caddy():
     workflow = yaml.safe_load(CI_PATH.read_text(encoding="utf-8"))
     job = workflow["jobs"]["production-compose-smoke"]
