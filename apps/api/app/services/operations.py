@@ -4,7 +4,9 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from app.models.operations import AlertIncident, OperationalEvent
-from sqlalchemy import select
+from app.models.project import PageDraft
+from app.services.audit import append_audit
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 EVENT_TYPES = frozenset({"delivery", "qa", "release", "system", "worker"})
@@ -119,6 +121,54 @@ async def observe_alert(
         incident.status = "resolved"
         incident.resolved_at = now
     return incident
+
+
+async def auto_resolve_inactive_incidents(db: AsyncSession) -> int:
+    incidents = list(
+        (
+            await db.execute(
+                select(AlertIncident)
+                .where(
+                    AlertIncident.signal_code == "qa-block",
+                    AlertIncident.status.in_(("open", "acknowledged")),
+                )
+                .order_by(AlertIncident.opened_at, AlertIncident.id)
+                .with_for_update(skip_locked=True)
+            )
+        ).scalars()
+    )
+    if not incidents:
+        return 0
+
+    tenant_ids = {incident.tenant_id for incident in incidents}
+    blocking_counts = dict(
+        (
+            await db.execute(
+                select(PageDraft.tenant_id, func.count(PageDraft.id))
+                .where(
+                    PageDraft.tenant_id.in_(tenant_ids),
+                    PageDraft.last_qa_verdict == "block",
+                )
+                .group_by(PageDraft.tenant_id)
+            )
+        ).all()
+    )
+    resolved = 0
+    for incident in incidents:
+        if blocking_counts.get(incident.tenant_id, 0) > 0:
+            continue
+        await transition_incident(db, incident=incident, action="resolve")
+        await append_audit(
+            db,
+            action="operational_incident.auto_resolve",
+            payload={"incident_id": str(incident.id), "signal_code": incident.signal_code},
+            tenant_id=incident.tenant_id,
+            actor_id=None,
+        )
+        resolved += 1
+    if resolved:
+        await db.commit()
+    return resolved
 
 
 async def transition_incident(

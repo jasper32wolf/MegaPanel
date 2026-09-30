@@ -24,7 +24,12 @@ from app.services.webhook_delivery import (
     resend_delivery,
     wire_payload,
 )
-from app.worker import WorkerSettings, webhook_delivery_task, worker_heartbeat_task
+from app.worker import (
+    WorkerSettings,
+    operational_incident_auto_resolve_task,
+    webhook_delivery_task,
+    worker_heartbeat_task,
+)
 from arq.constants import default_queue_name
 from arq.worker import Worker
 from httpx import ASGITransport, AsyncClient
@@ -66,12 +71,38 @@ def test_worker_registers_durable_delivery_tasks():
         "worker_heartbeat_task",
         "webhook_delivery_task",
         "webhook_delivery_sweep_task",
+        "operational_incident_auto_resolve_task",
     } <= names
     heartbeat_job = next(
         job for job in WorkerSettings.cron_jobs if job.coroutine is worker_heartbeat_task
     )
     assert heartbeat_job.run_at_startup is True
     assert heartbeat_job.second == set(range(0, 60, 30))
+    evaluator_job = next(
+        job
+        for job in WorkerSettings.cron_jobs
+        if job.coroutine is operational_incident_auto_resolve_task
+    )
+    assert evaluator_job.minute == {0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}
+
+
+def test_worker_auto_resolution_delegates_to_database_service(monkeypatch):
+    session = object()
+    received: list[object] = []
+
+    @asynccontextmanager
+    async def fake_open_db_session():
+        yield session
+
+    async def fake_evaluate(value: object) -> int:
+        received.append(value)
+        return 3
+
+    monkeypatch.setattr("app.worker.open_db_session", fake_open_db_session)
+    monkeypatch.setattr("app.worker.auto_resolve_inactive_incidents", fake_evaluate)
+
+    assert asyncio.run(operational_incident_auto_resolve_task({})) == {"resolved": 3}
+    assert received == [session]
 
 
 def test_worker_heartbeat_uses_persisted_database_signal(monkeypatch):

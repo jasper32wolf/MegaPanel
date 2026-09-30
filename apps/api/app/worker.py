@@ -15,6 +15,7 @@ from app.models import AIProviderConnection, AIRun
 from app.providers import ProviderError, StructuredRequest
 from app.services.ai_secrets import decrypt_provider_key
 from app.services.audit import append_audit
+from app.services.operations import auto_resolve_inactive_incidents
 from app.services.webhook_delivery import due_delivery_ids, process_delivery, recover_expired_leases
 from app.services.worker_heartbeat import record_worker_heartbeat
 
@@ -61,6 +62,13 @@ async def webhook_delivery_sweep_task(ctx: dict) -> dict:
     except Exception as exc:  # noqa: BLE001
         logger.error("webhook_delivery_sweep_failed", error=str(exc))
         return {"error": str(exc)}
+
+
+async def operational_incident_auto_resolve_task(ctx: dict) -> dict:
+    async with open_db_session() as session:
+        resolved = await auto_resolve_inactive_incidents(session)
+    logger.info("operational_incidents_auto_resolved", resolved=resolved)
+    return {"resolved": resolved}
 
 
 async def architecture_proposal_task(ctx: dict, run_id: str) -> dict:
@@ -181,6 +189,7 @@ class WorkerSettings:
         webhook_delivery_task,
         webhook_delivery_sweep_task,
         architecture_proposal_task,
+        operational_incident_auto_resolve_task,
     ]
     cron_jobs = [
         cron(
@@ -189,6 +198,10 @@ class WorkerSettings:
             run_at_startup=True,
         ),
         cron(webhook_delivery_sweep_task, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}),
+        cron(
+            operational_incident_auto_resolve_task,
+            minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55},
+        ),
     ]
     redis_settings = RedisSettings.from_dsn(settings.redis_url)
     max_jobs = 10
