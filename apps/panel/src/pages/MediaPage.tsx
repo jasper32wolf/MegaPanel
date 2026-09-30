@@ -191,7 +191,7 @@ export function MediaPage() {
           <p className="muted" style={{ margin: 0 }}>Решение привязано к текущему сохранённому SHA-256. Оно не изменяет уже созданные релизы и не заменяет файл автоматически.</p>
           <div className="row"><button className="btn" type="submit" disabled={busy}>{busy ? "Сохранение…" : "Сохранить решение"}</button><button className="btn secondary" type="button" onClick={() => setReviewAssetId(null)} disabled={busy}>Отмена</button></div>
         </form>
-      </Surface>
+      </Surface>}
     </div>
   );
 }

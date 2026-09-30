@@ -86,5 +86,5 @@ test("manager records a route-mocked rejected media review without replacement",
     evidence: "Review ticket MR-1",
   });
   await expect(page.getByText("проверка отклонена")).toBeVisible();
-  await expect(page.getByText("Ручная замена: Upload a licensed replacement manually")).toBeVisible();
+  await expect(page.getByText("Ручная замена: Upload a licensed replacement manually", { exact: true })).toBeVisible();
 });

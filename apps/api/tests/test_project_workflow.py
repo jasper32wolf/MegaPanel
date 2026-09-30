@@ -1353,9 +1353,7 @@ def test_rejected_media_blocks_new_candidate_build_only(monkeypatch):
             "pages": [
                 {
                     **_page_manifest("/", "Страница с проверяемым медиа"),
-                    "media": [
-                        {"asset_id": asset_id, "stored_sha256": "a" * 64, "alt": "Фото"}
-                    ],
+                    "media": [{"asset_id": asset_id, "stored_sha256": "a" * 64, "alt": "Фото"}],
                 }
             ],
         }
