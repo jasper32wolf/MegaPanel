@@ -427,7 +427,10 @@ def test_unknown_gateway_retains_json_object_fallback(monkeypatch) -> None:
 
 
 def test_anthropic_native_mode_sends_output_config_only_when_declared(monkeypatch) -> None:
-    monkeypatch.setattr(egress, "assert_public_dns", lambda _url: None)
+    async def allow_public_dns(_url: str) -> None:
+        return None
+
+    monkeypatch.setattr(egress, "assert_public_dns", allow_public_dns)
     observed: list[dict] = []
 
     async def handler(http_request: httpx.Request) -> httpx.Response:

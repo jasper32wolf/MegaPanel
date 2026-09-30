@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Protocol
 
-
 MAX_OUTPUT_SCHEMA_BYTES = 64 * 1024
 MAX_OUTPUT_SCHEMA_DEPTH = 12
 

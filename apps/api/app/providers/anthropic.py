@@ -95,9 +95,7 @@ class AnthropicAdapter:
             "messages": [{"role": "user", "content": request.user_prompt}],
         }
         if capabilities.structured_output_mode == StructuredOutputMode.NATIVE:
-            payload["output_config"] = {
-                "format": {"type": "json_schema", "schema": output_schema}
-            }
+            payload["output_config"] = {"format": {"type": "json_schema", "schema": output_schema}}
         try:
             egress.assert_allowed("https://api.anthropic.com/v1/messages")
             await egress.assert_public_dns("https://api.anthropic.com/v1/messages")
