@@ -14,6 +14,7 @@ from alembic.script import ScriptDirectory
 from app.api.v1 import projects
 from app.api.v1.projects import (
     _asset_usage_status,
+    _build_assets_for_manifest,
     _candidate_index_states,
     _current_qa_run,
     _draft_manifest_hash,
@@ -1229,8 +1230,10 @@ def test_draft_media_attachment_snapshots_hash_and_resets_qa(monkeypatch):
             self.committed = True
 
     db = Session()
+    review_gate = AsyncMock()
     monkeypatch.setattr(projects, "_project_or_404", AsyncMock(return_value=project))
     monkeypatch.setattr(projects, "_asset_path", lambda _: Path("asset.webp"))
+    monkeypatch.setattr(projects, "ensure_media_review_allows_use", review_gate)
     monkeypatch.setattr(projects, "append_audit", AsyncMock())
     auth = SimpleNamespace(tenant_id=tenant_id, user=SimpleNamespace(id=uuid4()))
 
@@ -1251,6 +1254,12 @@ def test_draft_media_attachment_snapshots_hash_and_resets_qa(monkeypatch):
     assert draft.last_qa_verdict is None
     assert draft.qa_override == {}
     assert draft.content_hash != "old"
+    review_gate.assert_awaited_once_with(
+        db,
+        tenant_id=tenant_id,
+        asset_id=asset_id,
+        stored_sha256="a" * 64,
+    )
     assert db.committed
 
 
@@ -1304,6 +1313,7 @@ def test_draft_block_media_attachment_snapshots_hash_and_resets_qa(monkeypatch):
     db = Session()
     monkeypatch.setattr(projects, "_project_or_404", AsyncMock(return_value=project))
     monkeypatch.setattr(projects, "_asset_path", lambda _: Path("asset.webp"))
+    monkeypatch.setattr(projects, "ensure_media_review_allows_use", AsyncMock())
     monkeypatch.setattr(projects, "append_audit", AsyncMock())
     auth = SimpleNamespace(tenant_id=tenant_id, user=SimpleNamespace(id=uuid4()))
 
@@ -1331,6 +1341,49 @@ def test_draft_block_media_attachment_snapshots_hash_and_resets_qa(monkeypatch):
     assert draft.qa_override == {}
     assert draft.content_hash != "old"
     assert db.committed
+
+
+def test_rejected_media_blocks_new_candidate_build_only(monkeypatch):
+    tenant_id, site_id, asset_id = uuid4(), uuid4(), uuid4()
+    manifest = SiteManifest.model_validate(
+        {
+            "site_id": site_id,
+            "tenant_id": tenant_id,
+            "domain": "example.test",
+            "pages": [
+                {
+                    **_page_manifest("/", "Страница с проверяемым медиа"),
+                    "media": [
+                        {"asset_id": asset_id, "stored_sha256": "a" * 64, "alt": "Фото"}
+                    ],
+                }
+            ],
+        }
+    )
+    asset = SimpleNamespace(
+        id=asset_id,
+        tenant_id=tenant_id,
+        content_type="image/webp",
+        meta={
+            "provenance": {"kind": "manual_upload", "rights_confirmed": True},
+            "hashes": {"stored_sha256": "a" * 64},
+        },
+    )
+
+    class Session:
+        async def execute(self, _statement):
+            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [asset]))
+
+    monkeypatch.setattr(projects, "_asset_path", lambda _: Path("asset.webp"))
+    monkeypatch.setattr(
+        projects,
+        "ensure_media_review_allows_use",
+        AsyncMock(side_effect=ValueError("Media asset was rejected for this stored file")),
+    )
+
+    with pytest.raises(HTTPException, match="Media asset blocker") as exc_info:
+        asyncio.run(_build_assets_for_manifest(Session(), manifest=manifest, tenant_id=tenant_id))
+    assert exc_info.value.status_code == 422
 
 
 def test_draft_media_attachment_rejects_non_draft(monkeypatch):

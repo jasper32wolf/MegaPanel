@@ -17,9 +17,34 @@ type MediaAsset = {
   availability: "eligible" | "expired" | "rights_missing";
 };
 
+type MediaReviewDecision = {
+  id: number;
+  decision: "approved" | "rejected";
+  stored_sha256: string;
+  reason: string | null;
+  manual_replacement_guidance: string | null;
+  evidence: string | null;
+  actor_id: string | null;
+  created_at: string | null;
+  record_hash: string;
+};
+
+type MediaReviewHistory = {
+  asset_id: string;
+  stored_sha256: string;
+  current: MediaReviewDecision | null;
+  items: MediaReviewDecision[];
+};
+
 export function MediaPage() {
   const { token } = useAuth();
   const [assets, setAssets] = useState<MediaAsset[]>([]);
+  const [reviews, setReviews] = useState<Record<string, MediaReviewHistory>>({});
+  const [reviewAssetId, setReviewAssetId] = useState<string | null>(null);
+  const [decision, setDecision] = useState<"approved" | "rejected">("approved");
+  const [reviewReason, setReviewReason] = useState("");
+  const [replacementGuidance, setReplacementGuidance] = useState("");
+  const [reviewEvidence, setReviewEvidence] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [rightsBasis, setRightsBasis] = useState("own");
   const [sourceUrl, setSourceUrl] = useState("");
@@ -34,7 +59,54 @@ export function MediaPage() {
   const [busy, setBusy] = useState(false);
 
   async function load() {
-    setAssets(await api<MediaAsset[]>("/api/v1/media", {}, token));
+    const nextAssets = await api<MediaAsset[]>("/api/v1/media", {}, token);
+    setAssets(nextAssets);
+    const results = await Promise.all(nextAssets.map(async (asset) => {
+      try {
+        return await api<MediaReviewHistory>(`/api/v1/media/${asset.id}/review-decisions`, {}, token);
+      } catch {
+        return null;
+      }
+    }));
+    setReviews(Object.fromEntries(results.filter((item): item is MediaReviewHistory => item !== null).map((item) => [item.asset_id, item])));
+  }
+
+  async function submitReview(event: FormEvent) {
+    event.preventDefault();
+    if (!reviewAssetId) return;
+    if (decision === "rejected" && (!reviewReason.trim() || !replacementGuidance.trim())) {
+      setError("Для отклонения укажите причину и ручную инструкцию по замене.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await api<MediaReviewDecision>(`/api/v1/media/${reviewAssetId}/review-decisions`, {
+        method: "POST",
+        body: JSON.stringify({
+          decision,
+          reason: reviewReason || null,
+          manual_replacement_guidance: replacementGuidance || null,
+          evidence: reviewEvidence || null,
+        }),
+      }, token);
+      setReviewReason("");
+      setReplacementGuidance("");
+      setReviewEvidence("");
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Не удалось сохранить решение по медиа");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function openReview(asset: MediaAsset) {
+    setReviewAssetId(asset.id);
+    setDecision("approved");
+    setReviewReason("");
+    setReplacementGuidance("");
+    setReviewEvidence("");
   }
 
   useEffect(() => {
@@ -95,7 +167,30 @@ export function MediaPage() {
         </form>
       </Surface>
       <Surface title="Файлы">
-        {assets.length === 0 ? <EmptyState title="Медиатека пуста" hint="После загрузки изображения появятся здесь." /> : <div className="kit-grid">{assets.map((asset) => <article className="kit-card" key={asset.id}><img src={asset.path} alt="" style={{ width: "100%", maxHeight: 180, objectFit: "cover", borderRadius: 6 }} /><div><strong>{asset.author || "Без указанного автора"}</strong><p className="muted" style={{ marginBottom: 0 }}>{asset.source || "Источник не указан"}</p></div><div className="row"><StatusPill tone="accent">{asset.license || "—"}</StatusPill><StatusPill tone={asset.availability === "eligible" ? "ok" : "danger"}>{asset.availability === "eligible" ? "доступен для draft" : asset.availability === "expired" ? "лицензия истекла" : "нет подтверждённых прав"}</StatusPill>{asset.normalized && <StatusPill tone="warn">нормализован</StatusPill>}</div><p className="muted" style={{ margin: 0 }}>pHash: {asset.phash || "—"}</p><p className="muted" style={{ margin: 0 }}>SHA-256: {asset.hashes.stored_sha256?.slice(0, 16) || "—"}</p>{asset.provenance.license_expires_at && <p className="muted" style={{ margin: 0 }}>Лицензия до: {asset.provenance.license_expires_at}</p>}</article>)}</div>}
+        {assets.length === 0 ? <EmptyState title="Медиатека пуста" hint="После загрузки изображения появятся здесь." /> : <div className="kit-grid">{assets.map((asset) => {
+          const review = reviews[asset.id];
+          const current = review?.current;
+          return <article className="kit-card" key={asset.id}>
+            <img src={asset.path} alt="" style={{ width: "100%", maxHeight: 180, objectFit: "cover", borderRadius: 6 }} />
+            <div><strong>{asset.author || "Без указанного автора"}</strong><p className="muted" style={{ marginBottom: 0 }}>{asset.source || "Источник не указан"}</p></div>
+            <div className="row"><StatusPill tone="accent">{asset.license || "—"}</StatusPill><StatusPill tone={asset.availability === "eligible" ? "ok" : "danger"}>{asset.availability === "eligible" ? "доступен для draft" : asset.availability === "expired" ? "лицензия истекла" : "нет подтверждённых прав"}</StatusPill>{asset.normalized && <StatusPill tone="warn">нормализован</StatusPill>}</div>
+            <p className="muted" style={{ margin: 0 }}>pHash: {asset.phash || "—"}</p><p className="muted" style={{ margin: 0 }}>SHA-256: {asset.hashes.stored_sha256?.slice(0, 16) || "—"}</p>
+            {current ? <><StatusPill tone={current.decision === "approved" ? "ok" : "danger"}>{current.decision === "approved" ? "проверка одобрена" : "проверка отклонена"}</StatusPill><p className="muted" style={{ margin: 0 }}>Текущая проверка: {current.created_at ? new Date(current.created_at).toLocaleString() : "—"}</p>{current.reason && <p className="muted" style={{ margin: 0 }}>Причина: {current.reason}</p>}{current.manual_replacement_guidance && <p className="muted" style={{ margin: 0 }}>Ручная замена: {current.manual_replacement_guidance}</p>}</> : <p className="muted" style={{ margin: 0 }}>Решение проверки ещё не записано.</p>}
+            {asset.provenance.license_expires_at && <p className="muted" style={{ margin: 0 }}>Лицензия до: {asset.provenance.license_expires_at}</p>}
+            <button className="btn secondary" type="button" onClick={() => openReview(asset)}>Записать решение проверки</button>
+            {review && review.items.length > 0 && <details><summary>История проверок ({review.items.length})</summary><div className="stack">{review.items.map((item) => <div key={item.id} className="muted"><strong>{item.decision === "approved" ? "Одобрено" : "Отклонено"}</strong> · SHA {item.stored_sha256.slice(0, 16)} · {item.created_at ? new Date(item.created_at).toLocaleString() : "—"}{item.reason && <><br />Причина: {item.reason}</>}{item.manual_replacement_guidance && <><br />Ручная замена: {item.manual_replacement_guidance}</>}{item.evidence && <><br />Доказательство: {item.evidence}</>}</div>)}</div></details>}
+          </article>;
+        })}</div>}
+      </Surface>
+      {reviewAssetId && <Surface title="Решение проверки медиа">
+        <form onSubmit={submitReview} className="stack">
+          <label className="field">Решение<select value={decision} onChange={(event) => setDecision(event.target.value as "approved" | "rejected")}><option value="approved">Одобрить</option><option value="rejected">Отклонить</option></select></label>
+          <label className="field">Причина {decision === "rejected" ? "(обязательно)" : "(необязательно)"}<textarea value={reviewReason} onChange={(event) => setReviewReason(event.target.value)} required={decision === "rejected"} /></label>
+          <label className="field">Инструкция по ручной замене {decision === "rejected" ? "(обязательно)" : "(необязательно)"}<textarea value={replacementGuidance} onChange={(event) => setReplacementGuidance(event.target.value)} required={decision === "rejected"} placeholder="Опишите, какой файл оператор должен загрузить вручную; автозамена не выполняется." /></label>
+          <label className="field">Доказательство / ссылка на проверку (необязательно)<textarea value={reviewEvidence} onChange={(event) => setReviewEvidence(event.target.value)} /></label>
+          <p className="muted" style={{ margin: 0 }}>Решение привязано к текущему сохранённому SHA-256. Оно не изменяет уже созданные релизы и не заменяет файл автоматически.</p>
+          <div className="row"><button className="btn" type="submit" disabled={busy}>{busy ? "Сохранение…" : "Сохранить решение"}</button><button className="btn secondary" type="button" onClick={() => setReviewAssetId(null)} disabled={busy}>Отмена</button></div>
+        </form>
       </Surface>
     </div>
   );

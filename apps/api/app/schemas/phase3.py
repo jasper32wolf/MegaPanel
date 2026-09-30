@@ -105,6 +105,22 @@ class ManualAssetProvenance(BaseModel):
         return self
 
 
+class MediaReviewDecisionIn(BaseModel):
+    decision: Literal["approved", "rejected"]
+    reason: str | None = Field(default=None, max_length=1000)
+    manual_replacement_guidance: str | None = Field(default=None, max_length=1000)
+    evidence: str | None = Field(default=None, max_length=1000)
+
+    @model_validator(mode="after")
+    def validate_rejection(self) -> MediaReviewDecisionIn:
+        if self.decision == "rejected":
+            if not self.reason or not self.reason.strip():
+                raise ValueError("Rejected media requires a reason")
+            if not self.manual_replacement_guidance or not self.manual_replacement_guidance.strip():
+                raise ValueError("Rejected media requires manual replacement guidance")
+        return self
+
+
 class MediaOut(BaseModel):
     id: UUID
     tenant_id: UUID

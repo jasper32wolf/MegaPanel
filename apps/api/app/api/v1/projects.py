@@ -10,7 +10,7 @@ from uuid import UUID, uuid4
 
 from app.api.deps import AuthContext, require_roles
 from app.api.v1.domains import normalize_hostname
-from app.api.v1.media import _asset_path
+from app.api.v1.media import _asset_path, ensure_media_review_allows_use
 from app.core.config import get_settings
 from app.core.security import sha256_hex
 from app.db.session import get_db
@@ -1516,6 +1516,12 @@ async def attach_draft_media(
     try:
         _asset_path(asset)
         stored_sha256 = _verified_media_hash(asset)
+        await ensure_media_review_allows_use(
+            db,
+            tenant_id=project.tenant_id,
+            asset_id=asset.id,
+            stored_sha256=stored_sha256,
+        )
         page = PageManifest.model_validate(draft.page_manifest or {})
         manifest = PageManifest.model_validate(
             {
@@ -1584,6 +1590,12 @@ async def attach_draft_block_media(
     try:
         _asset_path(asset)
         stored_sha256 = _verified_media_hash(asset)
+        await ensure_media_review_allows_use(
+            db,
+            tenant_id=project.tenant_id,
+            asset_id=asset.id,
+            stored_sha256=stored_sha256,
+        )
         page = PageManifest.model_validate(draft.page_manifest or {})
         manifest = PageManifest.model_validate(
             {
@@ -2401,6 +2413,12 @@ async def _build_assets_for_manifest(
             stored_sha256 = _verified_media_hash(asset)
             if stored_sha256 != expected_hashes[asset.id]:
                 raise ValueError("Media asset changed after draft review")
+            await ensure_media_review_allows_use(
+                db,
+                tenant_id=tenant_id,
+                asset_id=asset.id,
+                stored_sha256=stored_sha256,
+            )
             build_assets.append(
                 BuildAsset(
                     asset_id=asset.id,

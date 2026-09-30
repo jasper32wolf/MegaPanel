@@ -1,10 +1,19 @@
+import asyncio
 from datetime import date, timedelta
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
-from app.api.v1.media import MAX_BYTES, _asset_out
-from app.schemas.phase3 import ManualAssetProvenance
+from app.api.v1 import media
+from app.api.v1.media import (
+    MAX_BYTES,
+    _asset_out,
+    create_media_review_decision,
+    ensure_media_review_allows_use,
+)
+from app.schemas.phase3 import ManualAssetProvenance, MediaReviewDecisionIn
+from fastapi import HTTPException
 from pydantic import ValidationError
 
 
@@ -124,3 +133,133 @@ def test_media_availability_projects_expired_and_malformed_provenance():
 
     assert _asset_out(expired)["availability"] == "expired"
     assert _asset_out(malformed)["availability"] == "rights_missing"
+
+
+def test_rejected_media_review_requires_reason_and_manual_replacement_guidance():
+    with pytest.raises(ValidationError, match="reason"):
+        MediaReviewDecisionIn(
+            decision="rejected", manual_replacement_guidance="Upload a new original"
+        )
+    with pytest.raises(ValidationError, match="manual replacement guidance"):
+        MediaReviewDecisionIn(decision="rejected", reason="Rights evidence is insufficient")
+
+
+def test_media_review_decision_is_audited_against_current_stored_hash(monkeypatch):
+    tenant_id, asset_id, actor_id = uuid4(), uuid4(), uuid4()
+    asset = SimpleNamespace(
+        id=asset_id,
+        tenant_id=tenant_id,
+        meta={"hashes": {"stored_sha256": "a" * 64}},
+    )
+    entry = SimpleNamespace(
+        id=19,
+        payload={},
+        actor_id=actor_id,
+        created_at=None,
+        record_hash="b" * 64,
+    )
+
+    class Session:
+        committed = False
+
+        async def execute(self, _statement):
+            return SimpleNamespace(scalar_one_or_none=lambda: asset)
+
+        async def commit(self):
+            self.committed = True
+
+    db = Session()
+    append = AsyncMock(return_value=entry)
+    monkeypatch.setattr(media, "append_audit", append)
+    auth = SimpleNamespace(role="manager", tenant_id=tenant_id, user=SimpleNamespace(id=actor_id))
+
+    result = asyncio.run(
+        create_media_review_decision(
+            asset_id,
+            MediaReviewDecisionIn(
+                decision="rejected",
+                reason="License evidence is incomplete",
+                manual_replacement_guidance="Upload a licensed replacement manually",
+                evidence="Review ticket MR-1",
+            ),
+            auth,
+            db,
+        )
+    )
+
+    assert db.committed is True
+    assert append.await_args.kwargs["payload"] == {
+        "asset_id": str(asset_id),
+        "stored_sha256": "a" * 64,
+        "decision": "rejected",
+        "reason": "License evidence is incomplete",
+        "manual_replacement_guidance": "Upload a licensed replacement manually",
+        "evidence": "Review ticket MR-1",
+    }
+    assert result["record_hash"] == "b" * 64
+    assert "path" not in result
+
+
+def test_latest_rejected_review_blocks_only_matching_asset_hash(monkeypatch):
+    tenant_id, asset_id = uuid4(), uuid4()
+    rejected = SimpleNamespace(
+        payload={
+            "decision": "rejected",
+            "manual_replacement_guidance": "Upload a new source file manually",
+        }
+    )
+    monkeypatch.setattr(media, "_media_review_history", AsyncMock(return_value=[rejected]))
+
+    with pytest.raises(ValueError, match="Upload a new source file manually"):
+        asyncio.run(
+            ensure_media_review_allows_use(
+                SimpleNamespace(),
+                tenant_id=tenant_id,
+                asset_id=asset_id,
+                stored_sha256="a" * 64,
+            )
+        )
+
+    monkeypatch.setattr(
+        media,
+        "_media_review_history",
+        AsyncMock(return_value=[SimpleNamespace(payload={"decision": "approved"})]),
+    )
+    asyncio.run(
+        ensure_media_review_allows_use(
+            SimpleNamespace(),
+            tenant_id=tenant_id,
+            asset_id=asset_id,
+            stored_sha256="b" * 64,
+        )
+    )
+
+
+def test_media_review_routes_are_registered():
+    from app.main import app
+
+    paths = app.openapi()["paths"]
+    assert "post" in paths["/api/v1/media/{asset_id}/review-decisions"]
+    assert "get" in paths["/api/v1/media/{asset_id}/review-decisions"]
+
+
+def test_media_review_write_preserves_tenant_isolation():
+    asset = SimpleNamespace(
+        id=uuid4(), tenant_id=uuid4(), meta={"hashes": {"stored_sha256": "a" * 64}}
+    )
+
+    class Session:
+        async def execute(self, _statement):
+            return SimpleNamespace(scalar_one_or_none=lambda: asset)
+
+    auth = SimpleNamespace(role="manager", tenant_id=uuid4(), user=SimpleNamespace(id=uuid4()))
+    with pytest.raises(HTTPException, match="Forbidden") as exc_info:
+        asyncio.run(
+            create_media_review_decision(
+                asset.id,
+                MediaReviewDecisionIn(decision="approved"),
+                auth,
+                Session(),
+            )
+        )
+    assert exc_info.value.status_code == 403

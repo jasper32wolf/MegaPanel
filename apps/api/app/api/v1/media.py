@@ -8,8 +8,8 @@ from pathlib import Path
 from app.api.deps import AuthContext, require_roles
 from app.core.config import get_settings
 from app.db.session import get_db
-from app.models import MediaAsset
-from app.schemas.phase3 import ManualAssetProvenance, MediaOut
+from app.models import AuditLog, MediaAsset
+from app.schemas.phase3 import ManualAssetProvenance, MediaOut, MediaReviewDecisionIn
 from app.services.audit import append_audit
 from app.services.media_normalize import average_hash, decode_image, save_normalized
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -72,6 +72,67 @@ def _asset_path(asset: MediaAsset) -> Path:
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Media file not found")
     return path
+
+
+MEDIA_REVIEW_DECISION_ACTION = "media.review.decision"
+
+
+def _stored_sha256(asset: MediaAsset) -> str:
+    stored_sha256 = str(((asset.meta or {}).get("hashes") or {}).get("stored_sha256") or "")
+    if len(stored_sha256) != 64 or any(char not in "0123456789abcdef" for char in stored_sha256):
+        raise HTTPException(status_code=409, detail="Media asset hash is unavailable")
+    return stored_sha256
+
+
+def _serialize_review_decision(entry: AuditLog) -> dict:
+    payload = entry.payload or {}
+    return {
+        "id": entry.id,
+        "decision": payload.get("decision"),
+        "stored_sha256": payload.get("stored_sha256"),
+        "reason": payload.get("reason"),
+        "manual_replacement_guidance": payload.get("manual_replacement_guidance"),
+        "evidence": payload.get("evidence"),
+        "actor_id": str(entry.actor_id) if entry.actor_id else None,
+        "created_at": entry.created_at.isoformat() if entry.created_at else None,
+        "record_hash": entry.record_hash,
+    }
+
+
+async def _media_review_history(
+    db: AsyncSession, *, tenant_id: uuid.UUID, asset_id: uuid.UUID, stored_sha256: str
+) -> list[AuditLog]:
+    return list(
+        (
+            await db.execute(
+                select(AuditLog)
+                .where(
+                    AuditLog.tenant_id == tenant_id,
+                    AuditLog.action == MEDIA_REVIEW_DECISION_ACTION,
+                    AuditLog.payload["asset_id"].astext == str(asset_id),
+                    AuditLog.payload["stored_sha256"].astext == stored_sha256,
+                )
+                .order_by(AuditLog.id.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
+async def ensure_media_review_allows_use(
+    db: AsyncSession, *, tenant_id: uuid.UUID, asset_id: uuid.UUID, stored_sha256: str
+) -> None:
+    history = await _media_review_history(
+        db, tenant_id=tenant_id, asset_id=asset_id, stored_sha256=stored_sha256
+    )
+    if not history or (history[0].payload or {}).get("decision") != "rejected":
+        return
+    guidance = str((history[0].payload or {}).get("manual_replacement_guidance") or "").strip()
+    message = "Media asset was rejected for this stored file; replace it manually before use"
+    if guidance:
+        message = f"{message}: {guidance}"
+    raise ValueError(message)
 
 
 @router.post("", response_model=MediaOut, status_code=201)
@@ -180,6 +241,84 @@ async def upload_media(
         raise
     await db.refresh(asset)
     return _asset_out(asset)
+
+
+@router.post("/{asset_id}/review-decisions", status_code=201)
+async def create_media_review_decision(
+    asset_id: uuid.UUID,
+    body: MediaReviewDecisionIn,
+    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    asset = (
+        await db.execute(select(MediaAsset).where(MediaAsset.id == asset_id))
+    ).scalar_one_or_none()
+    if not asset:
+        raise HTTPException(status_code=404, detail="Media not found")
+    if auth.role != "superadmin" and asset.tenant_id != auth.tenant_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    stored_sha256 = _stored_sha256(asset)
+    entry = await append_audit(
+        db,
+        action=MEDIA_REVIEW_DECISION_ACTION,
+        payload={
+            "asset_id": str(asset.id),
+            "stored_sha256": stored_sha256,
+            "decision": body.decision,
+            "reason": body.reason.strip() if body.reason else None,
+            "manual_replacement_guidance": (
+                body.manual_replacement_guidance.strip()
+                if body.manual_replacement_guidance
+                else None
+            ),
+            "evidence": body.evidence.strip() if body.evidence else None,
+        },
+        tenant_id=asset.tenant_id,
+        actor_id=auth.user.id,
+    )
+    await db.commit()
+    return _serialize_review_decision(entry)
+
+
+@router.get("/{asset_id}/review-decisions")
+async def list_media_review_decisions(
+    asset_id: uuid.UUID,
+    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    asset = (
+        await db.execute(select(MediaAsset).where(MediaAsset.id == asset_id))
+    ).scalar_one_or_none()
+    if not asset:
+        raise HTTPException(status_code=404, detail="Media not found")
+    if auth.role != "superadmin" and asset.tenant_id != auth.tenant_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    stored_sha256 = _stored_sha256(asset)
+    history = list(
+        (
+            await db.execute(
+                select(AuditLog)
+                .where(
+                    AuditLog.tenant_id == asset.tenant_id,
+                    AuditLog.action == MEDIA_REVIEW_DECISION_ACTION,
+                    AuditLog.payload["asset_id"].astext == str(asset.id),
+                )
+                .order_by(AuditLog.id.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    current = next(
+        (entry for entry in history if (entry.payload or {}).get("stored_sha256") == stored_sha256),
+        None,
+    )
+    return {
+        "asset_id": str(asset.id),
+        "stored_sha256": stored_sha256,
+        "current": _serialize_review_decision(current) if current else None,
+        "items": [_serialize_review_decision(entry) for entry in history],
+    }
 
 
 @router.get("/{asset_id}/file")
