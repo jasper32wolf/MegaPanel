@@ -425,9 +425,11 @@ async def semantic_signals(
     targets: dict[tuple[str, str], list[dict]] = {}
     unmapped_plans = []
     for plan in plans:
+        if plan.state not in {"approved", "draft", "review"}:
+            continue
         snapshot = plan.semantic_target_snapshot or {}
         items = snapshot.get("targets", []) if isinstance(snapshot, dict) else []
-        if not items and plan.state != "rejected":
+        if not items:
             unmapped_plans.append({"plan_id": str(plan.id), "slug": plan.slug, "state": plan.state})
         for item in items:
             if not isinstance(item, dict):
@@ -448,30 +450,35 @@ async def semantic_signals(
                     "keyword_id": member["keyword_id"],
                     "status": "unbound",
                     "geo_binding_id": None,
+                    "plans": [],
                 }
             )
         for binding in bindings:
             key = (member["id"], binding["id"])
             linked = targets.get(key, [])
-            active = [item for item in linked if item["state"] != "rejected"]
+            if any(item["state"] == "approved" for item in linked):
+                coverage_status = "covered"
+            elif linked:
+                coverage_status = "planned"
+            else:
+                coverage_status = "uncovered"
             coverage.append(
                 {
                     "collection_keyword_id": member["id"],
                     "project_keyword_id": member["project_keyword_id"],
                     "keyword_id": member["keyword_id"],
                     "geo_binding_id": binding["id"],
-                    "status": "covered" if active else "uncovered",
+                    "status": coverage_status,
                     "plans": linked,
                 }
             )
     collisions = []
     for key, linked in targets.items():
-        active = [item for item in linked if item["state"] != "rejected"]
-        if len(active) > 1:
+        if len(linked) > 1:
             collisions.append(
                 {
                     "target": {"collection_keyword_id": key[0], "geo_binding_id": key[1]},
-                    "plans": active,
+                    "plans": linked,
                     "reason": "Multiple non-rejected plans target the same keyword and geography",
                 }
             )
@@ -483,10 +490,18 @@ async def semantic_signals(
             "members": len(members),
             "bindings": sum(len(item.get("geo_bindings", [])) for item in members),
             "covered": sum(item["status"] == "covered" for item in coverage),
+            "planned": sum(item["status"] == "planned" for item in coverage),
             "uncovered": sum(item["status"] == "uncovered" for item in coverage),
             "unbound": sum(item["status"] == "unbound" for item in coverage),
         },
         "coverage": coverage,
+        "collisions": collisions,
         "cannibalization": collisions,
         "unmapped_plans": unmapped_plans,
+        "policy": {
+            "mode": "advisory",
+            "read_only": True,
+            "blocks_candidate": False,
+            "basis": "approved collection and persisted PagePlan semantic target snapshots",
+        },
     }

@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
+from app.api.v1 import semantic
 from app.main import app
 from app.schemas.workflow import (
     SemanticCollectionCreate,
@@ -56,6 +59,123 @@ def test_semantic_target_rejects_duplicate_collection_members():
                 {"collection_keyword_id": member_id, "geo_binding_ids": [uuid4()]},
             ],
         )
+
+
+class SemanticSignalsDatabase:
+    def __init__(self, collections: list[object], plans: list[object]):
+        self.rows = [collections, plans]
+
+    async def execute(self, _: object) -> object:
+        rows = self.rows.pop(0)
+        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: rows))
+
+
+@pytest.mark.asyncio
+async def test_semantic_signals_distinguishes_approved_planned_uncovered_unbound_and_collisions(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    project_id = uuid4()
+    collection_id = uuid4()
+    covered_member_id, planned_member_id, uncovered_member_id, unbound_member_id = (
+        uuid4(), uuid4(), uuid4(), uuid4()
+    )
+    covered_binding_id, planned_binding_id, uncovered_binding_id = uuid4(), uuid4(), uuid4()
+    project = SimpleNamespace(id=project_id, tenant_id=uuid4())
+    collection = SimpleNamespace(id=collection_id, name="Approved", version=3)
+    approved_plan = SimpleNamespace(
+        id=uuid4(),
+        slug="/approved",
+        state="approved",
+        semantic_target_snapshot={
+            "targets": [
+                {
+                    "collection_keyword_id": str(covered_member_id),
+                    "geo_binding_ids": [str(covered_binding_id)],
+                }
+            ]
+        },
+    )
+    draft_plan = SimpleNamespace(
+        id=uuid4(),
+        slug="/draft",
+        state="draft",
+        semantic_target_snapshot={
+            "targets": [
+                {
+                    "collection_keyword_id": str(planned_member_id),
+                    "geo_binding_ids": [str(planned_binding_id)],
+                }
+            ]
+        },
+    )
+    review_collision = SimpleNamespace(
+        id=uuid4(),
+        slug="/review",
+        state="review",
+        semantic_target_snapshot={
+            "targets": [
+                {
+                    "collection_keyword_id": str(planned_member_id),
+                    "geo_binding_ids": [str(planned_binding_id)],
+                }
+            ]
+        },
+    )
+    unmapped = SimpleNamespace(
+        id=uuid4(), slug="/legacy", state="draft", semantic_target_snapshot={}
+    )
+    members = [
+        {
+            "id": str(member_id),
+            "project_keyword_id": str(uuid4()),
+            "keyword_id": str(uuid4()),
+            "geo_bindings": ([{"id": str(binding_id)}] if binding_id else []),
+        }
+        for member_id, binding_id in [
+            (covered_member_id, covered_binding_id),
+            (planned_member_id, planned_binding_id),
+            (uncovered_member_id, uncovered_binding_id),
+            (unbound_member_id, None),
+        ]
+    ]
+    monkeypatch.setattr(semantic, "_project_or_404", AsyncMock(return_value=project))
+    monkeypatch.setattr(semantic, "_member_rows", AsyncMock(return_value=members))
+    result = await semantic.semantic_signals(
+        project_id,
+        auth=SimpleNamespace(),
+        db=SemanticSignalsDatabase(
+            [collection], [approved_plan, draft_plan, review_collision, unmapped]
+        ),
+    )
+
+    assert result["totals"] == {
+        "members": 4,
+        "bindings": 3,
+        "covered": 1,
+        "planned": 1,
+        "uncovered": 1,
+        "unbound": 1,
+    }
+    assert [item["status"] for item in result["coverage"]] == [
+        "covered",
+        "planned",
+        "uncovered",
+        "unbound",
+    ]
+    assert result["collisions"] == result["cannibalization"]
+    assert result["cannibalization"][0]["plans"] == [
+        {"plan_id": str(draft_plan.id), "slug": "/draft", "state": "draft"},
+        {"plan_id": str(review_collision.id), "slug": "/review", "state": "review"},
+    ]
+    assert result["unmapped_plans"] == [
+        {"plan_id": str(unmapped.id), "slug": "/legacy", "state": "draft"}
+    ]
+    assert result["policy"] == {
+        "mode": "advisory",
+        "read_only": True,
+        "blocks_candidate": False,
+        "basis": "approved collection and persisted PagePlan semantic target snapshots",
+    }
 
 
 def test_semantic_routes_are_registered_and_page_plan_exposes_target_snapshot():

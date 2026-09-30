@@ -21,6 +21,7 @@ import { ProjectOverviewPage } from "./pages/project/overview";
 import { ProjectPagesPage } from "./pages/project/pages";
 import { ProjectReleasesPage } from "./pages/project/releases";
 import { ProjectRoutingPage } from "./pages/project/routing";
+import { SemanticCoveragePage } from "./pages/project/semantic-coverage";
 import { ProjectWorkspacePage } from "./pages/ProjectWorkspacePage";
 import { ProjectsPage } from "./pages/ProjectsPage";
 import { PromptsPage } from "./pages/PromptsPage";
@@ -52,6 +53,7 @@ export default function App() {
                 <Route path="/projects/:projectId/pages" element={<ProjectPagesPage />} />
                 <Route path="/projects/:projectId/releases" element={<ProjectReleasesPage />} />
                 <Route path="/projects/:projectId/routing" element={<ProjectRoutingPage />} />
+                <Route path="/projects/:projectId/semantic-coverage" element={<SemanticCoveragePage />} />
                 {/* Existing activity URL remains unchanged for bookmarks and E2E coverage. */}
                 <Route path="/projects/:projectId/activity" element={<ProjectActivityPage />} />
                 <Route path="/sites" element={<SitesPage />} />

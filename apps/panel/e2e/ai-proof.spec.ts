@@ -92,6 +92,38 @@ test("ошибка discovery не раскрывает секрет и оста�
   await expect(page.getByText("sk-live-never-render-this-secret", { exact: true })).not.toBeVisible();
 });
 
+test("semantic coverage остаётся read-only advisory обзором", async ({ page }) => {
+  await mockAuth(page);
+  const projectId = "33333333-3333-4333-8333-333333333333";
+  await page.route(`**/api/v1/projects/${projectId}`, (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ name: "Coverage proof" }) }),
+  );
+  await page.route(`**/api/v1/projects/${projectId}/semantic-signals`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        totals: { members: 2, bindings: 2, covered: 1, planned: 1, uncovered: 0, unbound: 0 },
+        coverage: [
+          { collection_keyword_id: "member-covered", project_keyword_id: "keyword-1", keyword_id: "keyword-1", geo_binding_id: "geo-1", status: "covered", plans: [{ plan_id: "plan-1", slug: "/approved", state: "approved" }] },
+          { collection_keyword_id: "member-planned", project_keyword_id: "keyword-2", keyword_id: "keyword-2", geo_binding_id: "geo-2", status: "planned", plans: [{ plan_id: "plan-2", slug: "/draft", state: "draft" }] },
+        ],
+        collisions: [],
+        cannibalization: [],
+        unmapped_plans: [{ plan_id: "plan-3", slug: "/legacy", state: "draft" }],
+        policy: { mode: "advisory", read_only: true, blocks_candidate: false, basis: "persisted snapshots" },
+      }),
+    }),
+  );
+
+  await page.goto(`/projects/${projectId}/semantic-coverage`);
+  await expect(page.getByRole("heading", { name: "Coverage proof: semantic coverage" })).toBeVisible();
+  await expect(page.getByText("planned (draft/review)")).toBeVisible();
+  await expect(page.getByText("Unmapped plans: /legacy (draft). They do not count as semantic coverage.")).toBeVisible();
+  await expect(page.getByText("не создаёт drafts, не применяет изменения, не запускает build и не публикует сайт")).toBeVisible();
+  await expect(page.getByRole("button", { name: /Создать|Применить|Собрать|Опубликовать/ })).toHaveCount(0);
+});
+
 test("AI workspace показывает queued, running и pending approval через polling", async ({ page }) => {
   await mockAuth(page);
   await mockProviderList(page);

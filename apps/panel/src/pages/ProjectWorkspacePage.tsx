@@ -9,8 +9,8 @@ type FactRevision = { id: string; version: number; state: string; facts: Record<
 type LeadRoutingPolicy = { id: string; version: number; state: string; destinations: { id: string; target_key: string; channel: "email" | "webhook"; required: boolean; configured: boolean }[]; submitted_at: string | null; reviewed_at: string | null; decision_reason: string | null; created_at: string | null };
 type Keyword = { id: string; phrase: string; meta: Record<string, string> };
 type ProjectKeyword = { id: string; keyword_id: string; phrase: string; cluster: string | null; intent: string | null; priority: number | null };
-type SemanticCollection = { id: string; name: string; state: string; version: number; members: { project_keyword_id: string; geo_bindings: { project_geo_place_id: string }[] }[] };
-type SemanticSignals = { totals: { members: number; bindings: number; covered: number; uncovered: number; unbound: number }; cannibalization: { plans: { slug: string }[]; reason: string }[]; unmapped_plans: { slug: string; state: string }[] };
+type SemanticCollection = { id: string; name: string; state: string; version: number; members: { id: string; project_keyword_id: string; keyword_id: string; cluster: string | null; intent: string | null; geo_bindings: { id: string; project_geo_place_id: string; scope: string }[] }[] };
+type SemanticSignals = { totals: { members: number; bindings: number; covered: number; planned: number; uncovered: number; unbound: number }; cannibalization: { plans: { slug: string }[]; reason: string }[]; unmapped_plans: { slug: string; state: string }[] };
 type GeoPlace = { id: string; name: string; kind: string; is_validated?: boolean };
 type ProjectGeo = { id: string; geo_id: string; name: string; kind: string; validated: boolean; role: "primary" | "service_area" | "reference"; position: number };
 type ClaimSlotBinding = { block_id: string; slot: string; claim_index: number };
@@ -119,6 +119,8 @@ export function ProjectWorkspacePage() {
   const [planClaimSlot, setPlanClaimSlot] = useState("hero.unique_core");
   const [planClaimIndex, setPlanClaimIndex] = useState("");
   const [planClaimBindings, setPlanClaimBindings] = useState<ClaimSlotBinding[]>([]);
+  const [planSemanticCollectionId, setPlanSemanticCollectionId] = useState("");
+  const [planSemanticSelections, setPlanSemanticSelections] = useState<string[]>([]);
   const [kitKey, setKitKey] = useState("service-local-v1");
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -349,9 +351,27 @@ export function ProjectWorkspacePage() {
     setPlanClaimIndex("");
   }
 
+  function togglePlanSemanticTarget(targetKey: string) {
+    setPlanSemanticSelections((current) => current.includes(targetKey)
+      ? current.filter((item) => item !== targetKey)
+      : [...current, targetKey]);
+  }
+
   async function createPlan(event: FormEvent) {
     event.preventDefault();
-    await run("plan", () => api(`/api/v1/projects/${projectId}/page-plans`, { method: "POST", body: JSON.stringify({ slug: planSlug, objective: planObjective, intent: planIntent || null, kit_key: kitKey, claim_slot_bindings: planClaimBindings }) }, token), "Черновик плана страницы создан.");
+    const selectedCollection = semanticCollections.find((item) => item.id === planSemanticCollectionId && item.state === "approved");
+    const semanticTargets = selectedCollection
+      ? selectedCollection.members.flatMap((member) => {
+          const geo_binding_ids = member.geo_bindings
+            .filter((binding) => planSemanticSelections.includes(`${member.id}:${binding.id}`))
+            .map((binding) => binding.id);
+          return geo_binding_ids.length ? [{ collection_keyword_id: member.id, geo_binding_ids }] : [];
+        })
+      : [];
+    const semantic_target = semanticTargets.length && selectedCollection
+      ? { collection_id: selectedCollection.id, targets: semanticTargets }
+      : undefined;
+    await run("plan", () => api(`/api/v1/projects/${projectId}/page-plans`, { method: "POST", body: JSON.stringify({ slug: planSlug, objective: planObjective, intent: planIntent || null, kit_key: kitKey, claim_slot_bindings: planClaimBindings, ...(semantic_target ? { semantic_target } : {}) }) }, token), "Черновик плана страницы создан.");
   }
 
   async function performPlanDecision(
@@ -823,7 +843,9 @@ export function ProjectWorkspacePage() {
           <label className="field">Название коллекции<input value={semanticName} onChange={(event) => setSemanticName(event.target.value)} placeholder="Например: Ремонт стиральных машин — Казань" /></label>
           <button className="btn btn-ghost" type="button" disabled={busy !== null || !selectedKeywordIds.length || !selectedGeoIds.length} onClick={() => void createSemanticCollection()}>Создать draft collection из выбранных ключей и географии</button>
         </div>
-        {semanticSignals && <div className="detail-grid"><div><strong>{semanticSignals.totals.covered}</strong><span className="muted"> covered targets</span></div><div><strong>{semanticSignals.totals.uncovered}</strong><span className="muted"> uncovered targets</span></div><div><strong>{semanticSignals.totals.unbound}</strong><span className="muted"> unbound keywords</span></div><div><strong>{semanticSignals.cannibalization.length}</strong><span className="muted"> collision warnings</span></div></div>}
+        {semanticSignals && <div className="detail-grid"><div><strong>{semanticSignals.totals.covered}</strong><span className="muted"> covered targets</span></div><div><strong>{semanticSignals.totals.planned}</strong><span className="muted"> planned targets</span></div><div><strong>{semanticSignals.totals.uncovered}</strong><span className="muted"> uncovered targets</span></div><div><strong>{semanticSignals.totals.unbound}</strong><span className="muted"> unbound keywords</span></div><div><strong>{semanticSignals.cannibalization.length}</strong><span className="muted"> collision warnings</span></div></div>}
+        <p className="muted">Сигналы семантического покрытия — только advisory: они не блокируют candidate build, публикацию или другие этапы.</p>
+        <Link className="btn btn-ghost" to={`/projects/${projectId}/semantic-coverage`}>Открыть обзор semantic coverage</Link>
         {semanticCollections.length > 0 ? <DataTable headers={["Коллекция", "Состав", "Статус", "Действия"]}>{semanticCollections.map((collection) => <tr key={collection.id}><td>{collection.name}</td><td>{collection.members.length} keywords</td><td><StatusPill tone={tone(collection.state)}>{collection.state}</StatusPill></td><td className="row">{collection.state === "draft" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void run(`semantic-submit:${collection.id}`, () => api(`/api/v1/projects/${projectId}/semantic-collections/${collection.id}/submit-review`, { method: "POST" }, token), "Коллекция отправлена на review.")}>На review</button>}{collection.state === "review" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void run(`semantic-approve:${collection.id}`, () => api(`/api/v1/projects/${projectId}/semantic-collections/${collection.id}/approve`, { method: "POST", body: JSON.stringify({}) }, token), "Коллекция одобрена.")}>Одобрить</button>}</td></tr>)}</DataTable> : <EmptyState title="Коллекций пока нет" hint="Создайте draft из сохранённых project keyword и geo selections." />}
         {semanticSignals?.cannibalization.map((collision, index) => <p className="muted" key={`${collision.reason}-${index}`}>Предупреждение: {collision.reason} — {collision.plans.map((plan) => plan.slug).join(", ")}</p>)}
         {semanticSignals?.unmapped_plans.length ? <p className="muted">Legacy PagePlan без explicit semantic target: {semanticSignals.unmapped_plans.map((plan) => plan.slug).join(", ")}. Они не считаются покрытием.</p> : null}
@@ -835,6 +857,7 @@ export function ProjectWorkspacePage() {
           <label className="field">Цель страницы<input value={planObjective} onChange={(event) => setPlanObjective(event.target.value)} placeholder="Какую потребность закрывает страница" required /></label>
           <label className="field">Намерение<input value={planIntent} onChange={(event) => setPlanIntent(event.target.value)} placeholder="Например: заказать услугу" /></label>
           <label className="field">Комплект<select value={kitKey} onChange={(event) => setKitKey(event.target.value)}><option value="service-local-v1">Локальные услуги</option><option value="home-repair-v1">Домашний ремонт</option></select></label>
+          <div className="surface"><strong>Semantic target (необязательно)</strong><p className="muted">Выберите только approved collection и конкретные связки keyword × geography. Без выбора план останется unmapped; это разрешено и ничего не создаёт автоматически.</p><label className="field">Approved collection<select value={planSemanticCollectionId} onChange={(event) => { setPlanSemanticCollectionId(event.target.value); setPlanSemanticSelections([]); }}><option value="">Не связывать с семантикой</option>{semanticCollections.filter((collection) => collection.state === "approved").map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</select></label>{planSemanticCollectionId && (() => { const collection = semanticCollections.find((item) => item.id === planSemanticCollectionId); return collection ? <DataTable headers={["", "Keyword", "Geo binding"]}>{collection.members.flatMap((member) => member.geo_bindings.map((binding) => { const targetKey = `${member.id}:${binding.id}`; const keyword = projectKeywords.find((item) => item.id === member.project_keyword_id); const geo = projectGeoBindings.find((item) => item.id === binding.project_geo_place_id); return <tr key={targetKey}><td><input aria-label={`Выбрать semantic target ${keyword?.phrase || member.project_keyword_id}`} type="checkbox" checked={planSemanticSelections.includes(targetKey)} onChange={() => togglePlanSemanticTarget(targetKey)} /></td><td>{keyword?.phrase || member.project_keyword_id}</td><td>{geo?.name || binding.project_geo_place_id} · {binding.scope}</td></tr>; }))}</DataTable> : null; })()}</div>
           <div className="surface"><strong>Дословные утверждённые claims</strong><p className="muted">Не AI-текст: выбранное утверждение будет скопировано без перефразирования в серверный curated text slot после freeze facts и review плана.</p><div className="detail-grid"><label className="field">Curated slot<select value={planClaimSlot} onChange={(event) => setPlanClaimSlot(event.target.value)}><option value="hero.unique_core">hero · unique_core</option><option value="hero.hero_supporting_text">hero · hero_supporting_text</option></select></label><label className="field">Claim<select value={planClaimIndex} onChange={(event) => setPlanClaimIndex(event.target.value)}><option value="">Выберите подтверждённый claim</option>{approvedClaims.map((claim, index) => <option key={`${index}-${claim}`} value={index}>{index + 1}. {claim}</option>)}</select></label></div><button className="btn btn-ghost" type="button" disabled={busy !== null || !planClaimIndex} onClick={addPlanClaimBinding}>Привязать дословно</button>{planClaimBindings.length > 0 && <ul>{planClaimBindings.map((binding) => <li key={`${binding.block_id}.${binding.slot}`}><code>{binding.block_id}.{binding.slot}</code> ← #{binding.claim_index + 1}: {approvedClaims[binding.claim_index]} <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => setPlanClaimBindings((current) => current.filter((item) => item !== binding))}>Убрать</button></li>)}</ul>}{approvedClaims.length === 0 && <p className="muted">Сначала сохраните и подтвердите claims в facts. Без binding обычный deterministic draft не изменяется.</p>}</div>
           <button className="btn" type="submit" disabled={busy !== null || !planObjective.trim()}>{busy === "plan" ? "Сохранение…" : "Создать черновик плана"}</button>
         </form>
