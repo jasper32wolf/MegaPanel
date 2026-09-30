@@ -2265,6 +2265,14 @@ def _asset_usage_status(asset: MediaAsset | None, expected_sha256: str) -> str:
     return "verified"
 
 
+def _asset_usage_build_scope(build: SiteBuild, active_build: SiteBuild | None) -> str:
+    if build.status == "ready":
+        return "candidate"
+    if active_build is not None and build.id == active_build.id:
+        return "published"
+    return "historical"
+
+
 @router.get("/{project_id}/asset-usage")
 async def list_project_asset_usage(
     project_id: UUID,
@@ -2293,7 +2301,7 @@ async def list_project_asset_usage(
                     SiteBuild.project_id == project.id,
                     SiteBuild.tenant_id == project.tenant_id,
                     SiteBuild.site_id == project.site_id,
-                    SiteBuild.status == "ready",
+                    SiteBuild.status.in_(("ready", "published", "rolled_back")),
                 )
             )
         )
@@ -2333,18 +2341,19 @@ async def list_project_asset_usage(
                 source={"draft_id": str(draft.id), "revision": draft.revision},
             )
         )
-    for build in [
-        *builds,
-        *([active_build] if active_build and active_build not in builds else []),
-    ]:
+    usage_builds: dict[UUID, SiteBuild] = {build.id: build for build in builds}
+    if active_build is not None:
+        usage_builds[active_build.id] = active_build
+    for build in usage_builds.values():
         try:
             manifest = SiteManifest.model_validate(build.manifest_snapshot)
         except ValueError:
             continue
+        scope = _asset_usage_build_scope(build, active_build)
         usages.extend(
             _manifest_asset_usage(
                 manifest=manifest,
-                scope="published" if active_build is build else "candidate",
+                scope=scope,
                 source={"build_id": str(build.id), "build_hash": build.build_hash},
             )
         )

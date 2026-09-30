@@ -203,6 +203,69 @@ def test_asset_usage_projection_is_snapshot_derived_and_checks_current_hash():
     assert _asset_usage_status(asset, "a" * 64) == "hash_mismatch"
 
 
+def test_project_asset_usage_includes_historical_build_snapshots(monkeypatch):
+    tenant_id, project_id, site_id, asset_id = (uuid4() for _ in range(4))
+    project = SimpleNamespace(
+        id=project_id, tenant_id=tenant_id, site_id=site_id, domain="example.test"
+    )
+    site = SimpleNamespace(id=site_id, build_hash="active-hash")
+    manifest = SiteManifest.model_validate(
+        {
+            "site_id": site_id,
+            "tenant_id": tenant_id,
+            "domain": "example.test",
+            "pages": [
+                {
+                    **_page_manifest("/media", "Историческое медиа"),
+                    "media": [{"asset_id": asset_id, "stored_sha256": "a" * 64, "alt": "Фото"}],
+                }
+            ],
+        }
+    ).model_dump(mode="json")
+    builds = [
+        SimpleNamespace(
+            id=uuid4(),
+            status="ready",
+            build_hash="candidate-hash",
+            manifest_snapshot=manifest,
+        ),
+        SimpleNamespace(
+            id=uuid4(), status="published", build_hash="active-hash", manifest_snapshot=manifest
+        ),
+        SimpleNamespace(
+            id=uuid4(), status="published", build_hash="older-hash", manifest_snapshot=manifest
+        ),
+        SimpleNamespace(
+            id=uuid4(), status="rolled_back", build_hash="rollback-hash", manifest_snapshot=manifest
+        ),
+    ]
+
+    class Session:
+        def __init__(self):
+            self.results = [[], builds, builds[1], []]
+
+        async def execute(self, _statement):
+            result = self.results.pop(0)
+            if isinstance(result, list):
+                return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: result))
+            return SimpleNamespace(scalar_one_or_none=lambda: result)
+
+    monkeypatch.setattr(projects, "_project_or_404", AsyncMock(return_value=project))
+    monkeypatch.setattr(projects, "_project_site_or_409", AsyncMock(return_value=site))
+    auth = SimpleNamespace(tenant_id=tenant_id, role="tenant_admin")
+
+    usages = asyncio.run(projects.list_project_asset_usage(project_id, auth, Session()))
+
+    by_build = {row["source"]["build_id"]: row for row in usages}
+    assert len(usages) == 4
+    assert by_build[str(builds[0].id)]["scope"] == "candidate"
+    assert by_build[str(builds[1].id)]["scope"] == "published"
+    assert by_build[str(builds[2].id)]["scope"] == "historical"
+    assert by_build[str(builds[3].id)]["scope"] == "historical"
+    assert by_build[str(builds[2].id)]["source"]["build_hash"] == "older-hash"
+    assert all(row["current_status"] == "missing_asset" for row in usages)
+
+
 def test_materializing_candidate_does_not_mutate_active_site_page_projection(monkeypatch):
     tenant_id, project_id, site_id = uuid4(), uuid4(), uuid4()
     active_page = SimpleNamespace(
