@@ -29,7 +29,7 @@ def test_architecture_route_has_no_inline_provider_call() -> None:
 
 def test_queue_contract_is_run_id_only() -> None:
     source = inspect.getsource(ai_workspace.enqueue_ai_run)
-    assert "enqueue_job(\"architecture_proposal_task\", str(run_id))" in source
+    assert 'enqueue_job("architecture_proposal_task", str(run_id))' in source
     assert "api_key" not in source
     assert "execution_envelope" not in source
 

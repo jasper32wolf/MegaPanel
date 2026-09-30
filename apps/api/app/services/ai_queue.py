@@ -2,10 +2,9 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from app.core.config import get_settings
 from arq import create_pool
 from arq.connections import RedisSettings
-
-from app.core.config import get_settings
 
 
 async def enqueue_ai_run(run_id: UUID) -> None:

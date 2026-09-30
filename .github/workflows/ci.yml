@@ -124,6 +124,27 @@ jobs:
 
           asyncio.run(main())
           PY
+      - name: Upgrade-path migration proof from 0031
+        run: |
+          set -euo pipefail
+          cd apps/api
+          alembic downgrade 0031_site_build_page_metadata_snapshot
+          alembic upgrade head
+          python - <<'PY'
+          from sqlalchemy import create_engine, text
+          from app.core.config import get_settings
+          from alembic.config import Config
+          from alembic.script import ScriptDirectory
+
+          settings = get_settings()
+          engine = create_engine(settings.database_url.replace("+asyncpg", ""))
+          with engine.connect() as connection:
+              revision = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+          expected = ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
+          assert revision == expected, (revision, expected)
+          print(f"Upgrade path reached Alembic head {revision}")
+          engine.dispose()
+          PY
       - name: Worker delivery, RLS, budget and lead idempotency integration
         run: |
           cd apps/api

@@ -187,6 +187,22 @@ def test_ci_runs_worker_production_image_liveness_smoke():
     assert "docker rm --force" in command
 
 
+def test_ci_proves_upgrade_path_from_0031_to_current_head():
+    workflow = yaml.safe_load(CI_PATH.read_text(encoding="utf-8"))
+    job = workflow["jobs"]["integration-services"]
+    step = next(
+        step
+        for step in job["steps"]
+        if step.get("name") == "Upgrade-path migration proof from 0031"
+    )
+    command = step["run"]
+
+    assert "alembic downgrade 0031_site_build_page_metadata_snapshot" in command
+    assert "alembic upgrade head" in command
+    assert "SELECT version_num FROM alembic_version" in command
+    assert "get_current_head()" in command
+
+
 def test_ci_runs_authenticated_production_compose_smoke_through_caddy():
     workflow = yaml.safe_load(CI_PATH.read_text(encoding="utf-8"))
     job = workflow["jobs"]["production-compose-smoke"]

@@ -218,7 +218,9 @@ def test_openai_compatible_discovers_bounded_models_with_get_headers_and_path(mo
         observed.append(request)
         return httpx.Response(
             200,
-            json={"data": [{"id": " z-model "}, {"id": "z-model"}, {"id": "bad\\nmodel"}, {"id": 4}]},
+            json={
+                "data": [{"id": " z-model "}, {"id": "z-model"}, {"id": "bad\\nmodel"}, {"id": 4}]
+            },
         )
 
     async def run() -> None:
@@ -245,12 +247,17 @@ def test_openai_compatible_discovery_caps_models_and_rejects_invalid_shape(monke
     monkeypatch.setattr(egress, "allowlist", egress.allowlist | {"provider.test"})
 
     async def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"data": [{"id": f"model-{index}"} for index in range(150)]})
+        return httpx.Response(
+            200, json={"data": [{"id": f"model-{index}"} for index in range(150)]}
+        )
 
     async def run() -> None:
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
             adapter = OpenAICompatibleAdapter(
-                provider_id="gateway", base_url="https://provider.test/v1", api_key="key", client=client
+                provider_id="gateway",
+                base_url="https://provider.test/v1",
+                api_key="key",
+                client=client,
             )
             assert len(await adapter.list_models()) == 100
 
@@ -262,7 +269,10 @@ def test_openai_compatible_discovery_caps_models_and_rejects_invalid_shape(monke
     async def check_malformed() -> None:
         async with httpx.AsyncClient(transport=httpx.MockTransport(malformed)) as client:
             adapter = OpenAICompatibleAdapter(
-                provider_id="gateway", base_url="https://provider.test/v1", api_key="key", client=client
+                provider_id="gateway",
+                base_url="https://provider.test/v1",
+                api_key="key",
+                client=client,
             )
             with pytest.raises(ProviderError, match="invalid model list"):
                 await adapter.list_models()
@@ -279,7 +289,10 @@ def test_openai_compatible_discovery_normalizes_errors_without_secrets(monkeypat
     async def run() -> None:
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
             adapter = OpenAICompatibleAdapter(
-                provider_id="gateway", base_url="https://provider.test/v1", api_key="secret-value", client=client
+                provider_id="gateway",
+                base_url="https://provider.test/v1",
+                api_key="secret-value",
+                client=client,
             )
             with pytest.raises(ProviderError) as caught:
                 await adapter.list_models()

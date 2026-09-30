@@ -5,11 +5,10 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import uuid4
 
-from fastapi import HTTPException
-
 from app.api.v1 import ai_providers
 from app.providers import ProviderCapabilities, ProviderError, ProviderModel
 from app.schemas.ai import ProviderConnectionUpdate, ProviderPricingIn
+from fastapi import HTTPException
 
 
 class ModelDatabase:
@@ -145,6 +144,7 @@ def test_model_route_merges_deterministically_and_preserves_configured_pricing(m
     row = connection({"configured-a": pricing(3.0).model_dump(mode="json")})
     row.model_ids = ["configured-a"]
     monkeypatch.setattr(ai_providers, "_adapter", lambda *_args: ListingAdapter())
+    monkeypatch.setattr(ai_providers, "decrypt_provider_key", lambda _value: "test-key")
 
     result = asyncio.run(
         ai_providers.list_provider_models(row.id, auth_context(), ModelDatabase(row))
@@ -158,6 +158,7 @@ def test_model_route_merges_deterministically_and_preserves_configured_pricing(m
 def test_model_route_translates_provider_errors_without_upstream_details(monkeypatch):
     row = connection({})
     monkeypatch.setattr(ai_providers, "_adapter", lambda *_args: FailingListingAdapter())
+    monkeypatch.setattr(ai_providers, "decrypt_provider_key", lambda _value: "test-key")
 
     try:
         asyncio.run(ai_providers.list_provider_models(row.id, auth_context(), ModelDatabase(row)))

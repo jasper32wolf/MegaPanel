@@ -51,6 +51,8 @@ def _model_id(value: object) -> str | None:
         return None
     if any(ord(character) < 32 or ord(character) == 127 for character in model_id):
         return None
+    if "\\" in model_id:
+        return None
     return model_id
 
 
@@ -152,7 +154,9 @@ class OpenAICompatibleAdapter:
                         "invalid_response", "Provider returned invalid JSON"
                     ) from exc
                 if not isinstance(data, dict):
-                    raise ProviderError("invalid_response", "Provider returned an invalid JSON object")
+                    raise ProviderError(
+                        "invalid_response", "Provider returned an invalid JSON object"
+                    )
                 return data, response
         except httpx.TimeoutException as exc:
             raise ProviderError("timeout", "Provider request timed out", retryable=True) from exc
