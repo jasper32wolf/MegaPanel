@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, useAuth } from "../lib/auth";
 import { ConfirmDialog, DataTable, EmptyState, PageHeader, StatusPill, Surface } from "../components/ui";
+import { ProjectWorkspaceLayout } from "./project/ProjectWorkspaceLayout";
 
 type Project = { id: string; name: string; domain: string | null; niche: string | null; site_id: string | null; current_fact_revision_id: string | null; domain_check_meta: { dns_status?: string; ssl_status?: string; checked_at?: string } };
 type FactRevision = { id: string; version: number; state: string; facts: Record<string, unknown>; has_private_lead_email: boolean; source_notes: string | null };
@@ -763,7 +764,8 @@ export function ProjectWorkspacePage() {
   if (!project) return <p className="muted" aria-live="polite">Загрузка проекта…</p>;
 
   return (
-    <div aria-busy={busy !== null}>
+    <ProjectWorkspaceLayout projectId={projectId}>
+      <div aria-busy={busy !== null}>
       <PageHeader title={project.name} description="Факты → семантика → география → план страниц → черновик и проверка качества. Публикация не выполняется автоматически." actions={<div className="row"><Link className="btn btn-ghost" to={`/projects/${projectId}/activity`}>Activity</Link><Link className="btn btn-ghost" to="/projects">К проектам</Link></div>} />
       {error && <p className="error" role="alert">{error}</p>}
       {message && <p className="muted" aria-live="polite">{message}</p>}
@@ -926,6 +928,7 @@ export function ProjectWorkspacePage() {
           current?.onConfirm(value);
         }}
       />
-    </div>
+      </div>
+    </ProjectWorkspaceLayout>
   );
 }

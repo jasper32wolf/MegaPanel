@@ -15,7 +15,12 @@ import { LeadsPage } from "./pages/LeadsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { MediaPage } from "./pages/MediaPage";
 import { OpsPage } from "./pages/OpsPage";
-import { ProjectActivityPage } from "./pages/ProjectActivityPage";
+import { ProjectActivityPage } from "./pages/project/activity";
+import { ProjectFactsPage } from "./pages/project/facts";
+import { ProjectOverviewPage } from "./pages/project/overview";
+import { ProjectPagesPage } from "./pages/project/pages";
+import { ProjectReleasesPage } from "./pages/project/releases";
+import { ProjectRoutingPage } from "./pages/project/routing";
 import { ProjectWorkspacePage } from "./pages/ProjectWorkspacePage";
 import { ProjectsPage } from "./pages/ProjectsPage";
 import { PromptsPage } from "./pages/PromptsPage";
@@ -40,7 +45,14 @@ export default function App() {
               <Routes>
                 <Route path="/" element={<DashboardPage />} />
                 <Route path="/projects" element={<ProjectsPage />} />
+                {/* Keep the root as the compatibility composed workflow; section links are additive deep links. */}
                 <Route path="/projects/:projectId" element={<ProjectWorkspacePage />} />
+                <Route path="/projects/:projectId/overview" element={<ProjectOverviewPage />} />
+                <Route path="/projects/:projectId/facts" element={<ProjectFactsPage />} />
+                <Route path="/projects/:projectId/pages" element={<ProjectPagesPage />} />
+                <Route path="/projects/:projectId/releases" element={<ProjectReleasesPage />} />
+                <Route path="/projects/:projectId/routing" element={<ProjectRoutingPage />} />
+                {/* Existing activity URL remains unchanged for bookmarks and E2E coverage. */}
                 <Route path="/projects/:projectId/activity" element={<ProjectActivityPage />} />
                 <Route path="/sites" element={<SitesPage />} />
                 <Route path="/keywords" element={<KeywordsPage />} />
