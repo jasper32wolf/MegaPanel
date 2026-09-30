@@ -359,6 +359,7 @@ def test_materializing_candidate_does_not_mutate_active_site_page_projection(mon
     assert [item["index_state"] for item in build.page_metadata_snapshot] == ["noindex", "noindex"]
     assert all(len(item["source_hash"]) == 64 for item in build.page_metadata_snapshot)
     assert all(item["promoted_at"] is None for item in build.page_metadata_snapshot)
+    assert all("index_promotion" not in item for item in build.page_metadata_snapshot)
     assert {name: getattr(active_page, name) for name in before} == before
     assert db.committed is True
 
@@ -416,7 +417,7 @@ def test_index_promotion_is_bound_to_the_selected_page_source_hash():
     site = SimpleNamespace(id=site_id)
     db = BuildWorkflowDatabase([[promotion]])
 
-    index_states, source_hashes, promoted = asyncio.run(
+    index_states, source_hashes, promoted, matched_promotions = asyncio.run(
         _candidate_index_states(
             db,
             project=project,
@@ -429,6 +430,141 @@ def test_index_promotion_is_bound_to_the_selected_page_source_hash():
     assert index_states == {"/": "indexed"}
     assert source_hashes == {"/": source_hash}
     assert promoted == {"/": promoted_at}
+    assert matched_promotions == {"/": promotion}
+
+
+def test_materialized_build_snapshots_only_matched_index_promotion_evidence(monkeypatch):
+    tenant_id, project_id, site_id = (uuid4() for _ in range(3))
+    page = _page_manifest("/", "Страница для immutable evidence")
+    source_hash = _draft_manifest_hash(page)
+    decided_at = datetime.now(UTC)
+    promotion = SimpleNamespace(
+        id=uuid4(),
+        slug="/",
+        source_hash=source_hash,
+        qa_source_hash=source_hash,
+        reason="Оператор подтвердил готовность после passing QA",
+        decided_at=decided_at,
+    )
+    project = SimpleNamespace(
+        id=project_id, tenant_id=tenant_id, site_id=site_id, domain="example.test"
+    )
+    site = SimpleNamespace(
+        id=site_id,
+        tenant_id=tenant_id,
+        manifest=_build_manifest_snapshot(site_id, tenant_id, [page]),
+        lead_token="lead-token",
+        build_hash=None,
+    )
+
+    class Builder:
+        def __init__(self, _root):
+            pass
+
+        def build(self, *args, **kwargs):
+            return {
+                "build_hash": "b" * 64,
+                "pages": [_page_metadata("/")],
+                "indexed_count": 1,
+            }
+
+    db = BuildWorkflowDatabase([[], [promotion], []])
+    monkeypatch.setattr(projects, "_project_or_404", AsyncMock(return_value=project))
+    monkeypatch.setattr(projects, "_project_site_or_409", AsyncMock(return_value=site))
+    monkeypatch.setattr(projects, "SiteBuilder", Builder)
+    monkeypatch.setattr(projects, "append_audit", AsyncMock())
+
+    asyncio.run(
+        materialize_project_build(project_id, SimpleNamespace(user=SimpleNamespace(id=uuid4())), db)
+    )
+
+    build = next(item for item in db.added if type(item).__name__ == "SiteBuild")
+    assert build.page_metadata_snapshot[0]["index_promotion"] == {
+        "id": str(promotion.id),
+        "slug": "/",
+        "source_hash": source_hash,
+        "qa_source_hash": source_hash,
+        "reason": promotion.reason,
+        "decided_at": decided_at.isoformat(),
+    }
+    assert build.page_metadata_snapshot[0]["promoted_at"] == decided_at.isoformat()
+
+
+def test_list_builds_projects_only_immutable_index_promotion_snapshot(monkeypatch):
+    tenant_id, project_id, site_id, build_id = (uuid4() for _ in range(4))
+    decided_at = datetime.now(UTC).isoformat()
+    source_hash = "a" * 64
+    metadata = [
+        {
+            **_page_metadata("/"),
+            "source_hash": source_hash,
+            "promoted_at": decided_at,
+            "index_promotion": {
+                "id": str(uuid4()),
+                "slug": "/",
+                "source_hash": source_hash,
+                "qa_source_hash": source_hash,
+                "reason": "Подтверждено для выдачи после проверки",
+                "decided_at": decided_at,
+            },
+        }
+    ]
+    build = SimpleNamespace(
+        id=build_id,
+        status="ready",
+        build_hash="b" * 64,
+        previous_build_hash=None,
+        pages_built=1,
+        created_at=datetime.fromisoformat(decided_at),
+        activated_at=None,
+        manifest_snapshot={},
+        legal_review={},
+        page_metadata_snapshot=metadata,
+    )
+    project = SimpleNamespace(id=project_id, tenant_id=tenant_id, site_id=site_id)
+    db = BuildWorkflowDatabase([[build], [], []])
+    monkeypatch.setattr(projects, "_project_or_404", AsyncMock(return_value=project))
+
+    response = asyncio.run(projects.list_project_builds(project_id, SimpleNamespace(), db))
+
+    assert response[0]["index_promotion_provenance"] == [
+        {
+            "slug": "/",
+            "reason": "Подтверждено для выдачи после проверки",
+            "decided_at": decided_at,
+        }
+    ]
+    assert build.page_metadata_snapshot is metadata
+    assert db.committed is False
+    assert len(db.results) == 0
+
+
+def test_page_metadata_snapshot_accepts_legacy_records_and_validates_promotion_evidence():
+    from app.services.site_build_metadata import validate_page_metadata_snapshot
+
+    legacy = _page_metadata("/")
+    assert validate_page_metadata_snapshot([legacy]) == {"/": legacy}
+
+    source_hash = "a" * 64
+    decided_at = datetime.now(UTC).isoformat()
+    promoted = {
+        **legacy,
+        "source_hash": source_hash,
+        "promoted_at": decided_at,
+        "index_promotion": {
+            "id": str(uuid4()),
+            "slug": "/",
+            "source_hash": source_hash,
+            "qa_source_hash": source_hash,
+            "reason": "Проверено оператором после passing QA",
+            "decided_at": decided_at,
+        },
+    }
+    assert validate_page_metadata_snapshot([promoted])["/"] == promoted
+
+    promoted["index_promotion"]["source_hash"] = "b" * 64
+    with pytest.raises(ValueError, match="snapshot is invalid"):
+        validate_page_metadata_snapshot([promoted])
 
 
 def test_selected_build_projection_requires_exact_immutable_metadata_snapshot():

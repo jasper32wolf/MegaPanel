@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from typing import Any
+from uuid import UUID
 
 _PAGE_PATH = re.compile(r"/[a-z0-9]+(?:-[a-z0-9]+)*(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*/?")
 _SHA256 = re.compile(r"[a-f0-9]{64}")
@@ -24,11 +25,15 @@ def validate_page_metadata_snapshot(
         raise ValueError("Build page metadata snapshot is invalid")
     by_slug: dict[str, dict[str, Any]] = {}
     required = {"slug", "path", "index_state", "thin", "content_chars", "hash"}
-    optional = {"source_hash", "promoted_at"}
+    promotion_fields = {"id", "slug", "source_hash", "qa_source_hash", "reason", "decided_at"}
+    snapshot_fields = {"source_hash", "promoted_at"}
+    provenance_field = {"index_promotion"}
     for item in metadata:
-        if not isinstance(item, dict) or (
-            set(item) != required and set(item) != required | optional
-        ):
+        if not isinstance(item, dict) or frozenset(item) not in {
+            frozenset(required),
+            frozenset(required | snapshot_fields),
+            frozenset(required | snapshot_fields | provenance_field),
+        }:
             raise ValueError("Build page metadata snapshot is invalid")
         slug = item["slug"]
         path = item["path"]
@@ -51,6 +56,32 @@ def validate_page_metadata_snapshot(
             raise ValueError("Build page metadata snapshot is invalid")
         if index_state != "indexed" and promoted_at is not None:
             raise ValueError("Build page metadata snapshot is invalid")
+        promotion = item.get("index_promotion")
+        if promotion is not None:
+            if index_state != "indexed" or promoted_at is None or not isinstance(promotion, dict):
+                raise ValueError("Build page metadata snapshot is invalid")
+            if set(promotion) != promotion_fields:
+                raise ValueError("Build page metadata snapshot is invalid")
+            try:
+                UUID(promotion["id"])
+                datetime.fromisoformat(promotion["decided_at"])
+            except (TypeError, ValueError, AttributeError) as exc:
+                raise ValueError("Build page metadata snapshot is invalid") from exc
+            if (
+                not isinstance(promotion["source_hash"], str)
+                or not _SHA256.fullmatch(promotion["source_hash"])
+                or not isinstance(promotion["qa_source_hash"], str)
+                or not _SHA256.fullmatch(promotion["qa_source_hash"])
+                or promotion["slug"] != slug
+                or promotion["source_hash"] != source_hash
+                or promotion["qa_source_hash"] != source_hash
+                or not isinstance(promotion["reason"], str)
+                or not promotion["reason"].strip()
+                or len(promotion["reason"]) > 2000
+                or not isinstance(promotion["decided_at"], str)
+                or promotion["decided_at"] != promoted_at
+            ):
+                raise ValueError("Build page metadata snapshot is invalid")
         if (
             not isinstance(slug, str)
             or slug in by_slug

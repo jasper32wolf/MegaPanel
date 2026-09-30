@@ -2123,6 +2123,23 @@ async def create_index_promotion(
     return _serialize_index_promotion(promotion)
 
 
+def _build_index_promotion_provenance(build: SiteBuild) -> list[dict]:
+    """Expose only immutable, non-actor promotion evidence recorded with a build."""
+    try:
+        metadata_by_slug = validate_page_metadata_snapshot(build.page_metadata_snapshot)
+    except (AttributeError, ValueError):
+        return []
+    return [
+        {
+            "slug": slug,
+            "reason": metadata["index_promotion"]["reason"],
+            "decided_at": metadata["index_promotion"]["decided_at"],
+        }
+        for slug, metadata in metadata_by_slug.items()
+        if metadata.get("index_promotion")
+    ]
+
+
 @router.get("/{project_id}/builds")
 async def list_project_builds(
     project_id: UUID,
@@ -2213,6 +2230,7 @@ async def list_project_builds(
                 **legal_review_status(build),
                 "history": legal_history.get(str(build.id), []),
             },
+            "index_promotion_provenance": _build_index_promotion_provenance(build),
         }
         for build in builds
     ]
@@ -2474,7 +2492,12 @@ async def _candidate_index_states(
     site: Site,
     manifest: SiteManifest,
     rows: list[SitePage],
-) -> tuple[dict[str, str], dict[str, str], dict[str, datetime | None]]:
+) -> tuple[
+    dict[str, str],
+    dict[str, str],
+    dict[str, datetime | None],
+    dict[str, PageIndexPromotion],
+]:
     promotions = list(
         (
             await db.execute(
@@ -2494,6 +2517,7 @@ async def _candidate_index_states(
     index_states: dict[str, str] = {}
     source_hashes: dict[str, str] = {}
     promoted_at: dict[str, datetime | None] = {}
+    matched_promotions: dict[str, PageIndexPromotion] = {}
     for page in manifest.pages:
         source_hash = _draft_manifest_hash(page.model_dump(mode="json"))
         source_hashes[page.slug] = source_hash
@@ -2515,10 +2539,12 @@ async def _candidate_index_states(
             promoted_at[page.slug] = (
                 promotion.decided_at if promotion else getattr(previous, "promoted_at", None)
             )
+            if promotion:
+                matched_promotions[page.slug] = promotion
         else:
             index_states[page.slug] = "noindex"
             promoted_at[page.slug] = None
-    return index_states, source_hashes, promoted_at
+    return index_states, source_hashes, promoted_at, matched_promotions
 
 
 async def _reconcile_site_page_projection(
@@ -2580,7 +2606,7 @@ async def materialize_project_build(
     rows = list(
         (await db.execute(select(SitePage).where(SitePage.site_id == site.id))).scalars().all()
     )
-    index_states, source_hashes, promoted_at = await _candidate_index_states(
+    index_states, source_hashes, promoted_at, matched_promotions = await _candidate_index_states(
         db,
         project=project,
         site=site,
@@ -2619,6 +2645,11 @@ async def materialize_project_build(
             "source_hash": source_hashes[item["slug"]],
             "promoted_at": (
                 promoted_at[item["slug"]].isoformat() if promoted_at[item["slug"]] else None
+            ),
+            **(
+                {"index_promotion": _serialize_index_promotion(matched_promotions[item["slug"]])}
+                if item["slug"] in matched_promotions
+                else {}
             ),
         }
         for item in result["pages"]

@@ -261,6 +261,115 @@ test("prompt history показывает stale evidence и блокирует �
   await expect(page.getByText("old-contract")).toBeVisible();
 });
 
+test("build table renders immutable index-promotion provenance without mutation", async ({ page }) => {
+  const projectId = "33333333-3333-4333-8333-333333333333";
+  const buildId = "44444444-4444-4444-8444-444444444444";
+  const siteId = "55555555-5555-4555-8555-555555555555";
+  const mutationRequests: string[] = [];
+  const projectPath = `/api/v1/projects/${projectId}`;
+  let authenticated = false;
+
+  await page.route("**/api/v1/**", (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.pathname === "/api/v1/security/me") {
+      return route.fulfill({
+        status: authenticated ? 200 : 401,
+        contentType: "application/json",
+        body: authenticated ? '{"id":"operator"}' : '{"detail":"not authenticated"}',
+      });
+    }
+    if (url.pathname === "/api/v1/auth/login") {
+      authenticated = true;
+      return route.fulfill({ status: 200, contentType: "application/json", body: '{"ok":true}' });
+    }
+    if (url.pathname === "/api/v1/auth/refresh") {
+      return route.fulfill({
+        status: authenticated ? 200 : 401,
+        contentType: "application/json",
+        body: authenticated ? '{"ok":true}' : '{"detail":"not authenticated"}',
+      });
+    }
+    if (request.method() !== "GET") mutationRequests.push(`${request.method()} ${url.pathname}`);
+    if (request.method() !== "GET") {
+      return route.fulfill({ status: 405, contentType: "application/json", body: '{"detail":"read-only proof"}' });
+    }
+    if (url.pathname === projectPath) {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          id: projectId,
+          name: "Controlled provenance project",
+          domain: "example.test",
+          niche: null,
+          site_id: siteId,
+          current_fact_revision_id: null,
+          domain_check_meta: {},
+        }),
+      });
+    }
+    if (url.pathname === `${projectPath}/builds`) {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([{
+          id: buildId,
+          status: "ready",
+          build_hash: "a".repeat(64),
+          previous_build_hash: null,
+          pages_built: 1,
+          created_at: "2026-10-01T12:00:00Z",
+          activated_at: null,
+          release_gate: { status: "pass", blockers: [], warnings: [] },
+          legal_review: {
+            status: "pass",
+            blockers: [],
+            review: {
+              state: "approved",
+              evidence_ref: "LEGAL-1",
+              reason: null,
+              replacement_guidance: null,
+              reviewed_at: "2026-10-01T12:00:00Z",
+            },
+            history: [],
+          },
+          index_promotion_provenance: [{ slug: "/", reason: "Подтверждено для выдачи после passing QA", decided_at: "2026-10-01T11:30:00Z" }],
+        }]),
+      });
+    }
+    if (url.pathname === `${projectPath}/coverage`) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: '{"selected":0,"covered":0,"uncovered":[],"plans":0}' });
+    }
+    if (url.pathname === `${projectPath}/lead-routing`) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: '{"items":[]}' });
+    }
+    if (url.pathname === `${projectPath}/semantic-signals`) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: '{"totals":{"members":0,"bindings":0,"covered":0,"uncovered":0,"unbound":0},"cannibalization":[],"unmapped_plans":[]}' });
+    }
+    if (url.pathname === "/api/v1/keywords") {
+      return route.fulfill({ status: 200, contentType: "application/json", body: '{"items":[]}' });
+    }
+    if (url.pathname === "/api/v1/ai/providers") {
+      return route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+    }
+    return route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+
+  await page.goto("/login");
+  await page.getByLabel("Email").fill("operator@example.test");
+  await page.getByLabel("Пароль").fill("controlled-e2e-password");
+  await page.getByRole("button", { name: "Войти" }).click();
+  await page.goto(`/projects/${projectId}`);
+
+  await expect(page.getByRole("columnheader", { name: "Индексация" })).toBeVisible();
+  const provenance = page.locator("details").filter({ hasText: "Подтверждений индексации: 1" });
+  await provenance.locator("summary").click();
+  await expect(provenance.locator("p")).toContainText("Подтверждено для выдачи после passing QA");
+  await expect(provenance.locator("p")).toContainText("/");
+  expect(mutationRequests).toEqual([]);
+});
+
 test("AI workspace показывает queued, running и pending approval через polling", async ({ page }) => {
   await mockAuth(page);
   await mockProviderList(page);
