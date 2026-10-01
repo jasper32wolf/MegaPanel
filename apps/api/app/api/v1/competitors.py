@@ -6,10 +6,18 @@ from uuid import UUID
 from app.api.deps import AuthContext, require_roles
 from app.api.v1.projects import _project_or_404
 from app.db.session import get_db
-from app.models import CompetitorScan, KnowledgeDoc
+from app.models import CompetitorCrawlPage, CompetitorCrawlRun, CompetitorScan, KnowledgeDoc
 from app.schemas.phase3 import KnowledgeOut, ScanCreate, ScanOut
+from app.schemas.research import (
+    CompetitorCrawlCancel,
+    CompetitorCrawlCreate,
+    CompetitorCrawlOut,
+    CompetitorCrawlPageOut,
+)
 from app.services.audit import append_audit
 from app.services.competitor import approved_evidence_content, scan_competitors
+from app.services.competitor_crawl import normalize_root_url
+from app.services.research_queue import enqueue_competitor_crawl
 from fastapi import APIRouter, Depends, HTTPException
 from site_panel_security import SSRFBlockedError
 from sqlalchemy import select
@@ -88,6 +96,185 @@ async def create_scan(
     await db.commit()
     await db.refresh(scan)
     return scan
+
+
+@router.post(
+    "/projects/{project_id}/domain-crawls",
+    response_model=CompetitorCrawlOut,
+    status_code=202,
+)
+async def create_domain_crawl(
+    project_id: UUID,
+    body: CompetitorCrawlCreate,
+    auth: AuthContext = Depends(_SCAN_WRITE_ROLES),
+    db: AsyncSession = Depends(get_db),
+) -> CompetitorCrawlRun:
+    project = await _project_or_404(db, project_id, auth)
+    try:
+        scope = normalize_root_url(str(body.root_url))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    active = (
+        await db.execute(
+            select(CompetitorCrawlRun).where(
+                CompetitorCrawlRun.project_id == project.id,
+                CompetitorCrawlRun.origin == scope.origin,
+                CompetitorCrawlRun.status.in_(("queued", "running")),
+            )
+        )
+    ).scalar_one_or_none()
+    if active:
+        raise HTTPException(status_code=409, detail="A crawl for this domain is already active")
+    crawl = CompetitorCrawlRun(
+        tenant_id=project.tenant_id,
+        project_id=project.id,
+        root_url=scope.root_url,
+        origin=scope.origin,
+        configuration={"max_pages": body.max_pages, "max_depth": body.max_depth},
+        progress={"discovered": 0, "fetched": 0, "skipped": 0, "failed": 0},
+    )
+    db.add(crawl)
+    await db.flush()
+    await append_audit(
+        db,
+        action="competitor.crawl.queued",
+        payload={
+            "project_id": str(project.id),
+            "crawl_id": str(crawl.id),
+            "origin": scope.origin,
+            "max_pages": body.max_pages,
+            "max_depth": body.max_depth,
+        },
+        tenant_id=project.tenant_id,
+        actor_id=auth.user.id,
+    )
+    await db.commit()
+    try:
+        await enqueue_competitor_crawl(crawl.id)
+    except Exception:  # noqa: BLE001
+        crawl.status = "failed"
+        crawl.error_code = "queue_unavailable"
+        crawl.error_message = "Research queue is unavailable"
+        await append_audit(
+            db,
+            action="competitor.crawl.queue_failed",
+            payload={"project_id": str(project.id), "crawl_id": str(crawl.id)},
+            tenant_id=project.tenant_id,
+            actor_id=auth.user.id,
+        )
+        await db.commit()
+    await db.refresh(crawl)
+    return crawl
+
+
+@router.get("/projects/{project_id}/domain-crawls", response_model=list[CompetitorCrawlOut])
+async def list_domain_crawls(
+    project_id: UUID,
+    auth: AuthContext = Depends(_SCAN_READ_ROLES),
+    db: AsyncSession = Depends(get_db),
+) -> list[CompetitorCrawlRun]:
+    project = await _project_or_404(db, project_id, auth)
+    result = await db.execute(
+        select(CompetitorCrawlRun)
+        .where(
+            CompetitorCrawlRun.project_id == project.id,
+            CompetitorCrawlRun.tenant_id == project.tenant_id,
+        )
+        .order_by(CompetitorCrawlRun.created_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+async def _crawl_or_404(
+    db: AsyncSession,
+    *,
+    project_id: UUID,
+    crawl_id: UUID,
+    auth: AuthContext,
+) -> CompetitorCrawlRun:
+    crawl = (
+        await db.execute(
+            select(CompetitorCrawlRun).where(
+                CompetitorCrawlRun.id == crawl_id,
+                CompetitorCrawlRun.project_id == project_id,
+                CompetitorCrawlRun.tenant_id == auth.tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if not crawl:
+        raise HTTPException(status_code=404, detail="Competitor crawl not found")
+    return crawl
+
+
+@router.get("/projects/{project_id}/domain-crawls/{crawl_id}", response_model=CompetitorCrawlOut)
+async def get_domain_crawl(
+    project_id: UUID,
+    crawl_id: UUID,
+    auth: AuthContext = Depends(_SCAN_READ_ROLES),
+    db: AsyncSession = Depends(get_db),
+) -> CompetitorCrawlRun:
+    await _project_or_404(db, project_id, auth)
+    return await _crawl_or_404(db, project_id=project_id, crawl_id=crawl_id, auth=auth)
+
+
+@router.get(
+    "/projects/{project_id}/domain-crawls/{crawl_id}/pages",
+    response_model=list[CompetitorCrawlPageOut],
+)
+async def list_domain_crawl_pages(
+    project_id: UUID,
+    crawl_id: UUID,
+    offset: int = 0,
+    limit: int = 100,
+    auth: AuthContext = Depends(_SCAN_READ_ROLES),
+    db: AsyncSession = Depends(get_db),
+) -> list[CompetitorCrawlPage]:
+    if offset < 0 or not 1 <= limit <= 100:
+        raise HTTPException(status_code=400, detail="Invalid pagination")
+    await _project_or_404(db, project_id, auth)
+    await _crawl_or_404(db, project_id=project_id, crawl_id=crawl_id, auth=auth)
+    result = await db.execute(
+        select(CompetitorCrawlPage)
+        .where(
+            CompetitorCrawlPage.crawl_run_id == crawl_id,
+            CompetitorCrawlPage.tenant_id == auth.tenant_id,
+            CompetitorCrawlPage.project_id == project_id,
+        )
+        .order_by(CompetitorCrawlPage.depth, CompetitorCrawlPage.url)
+        .offset(offset)
+        .limit(limit)
+    )
+    return list(result.scalars().all())
+
+
+@router.post(
+    "/projects/{project_id}/domain-crawls/{crawl_id}/cancel", response_model=CompetitorCrawlOut
+)
+async def cancel_domain_crawl(
+    project_id: UUID,
+    crawl_id: UUID,
+    body: CompetitorCrawlCancel,
+    auth: AuthContext = Depends(_SCAN_WRITE_ROLES),
+    db: AsyncSession = Depends(get_db),
+) -> CompetitorCrawlRun:
+    project = await _project_or_404(db, project_id, auth)
+    crawl = await _crawl_or_404(db, project_id=project_id, crawl_id=crawl_id, auth=auth)
+    if crawl.status not in {"queued", "running"}:
+        raise HTTPException(status_code=409, detail="Only active crawls can be cancelled")
+    crawl.status = "cancelled"
+    crawl.cancelled_at = datetime.now(UTC)
+    crawl.error_code = "cancelled_by_operator"
+    crawl.error_message = body.reason.strip() if body.reason else None
+    await append_audit(
+        db,
+        action="competitor.crawl.cancelled",
+        payload={"project_id": str(project.id), "crawl_id": str(crawl.id)},
+        tenant_id=project.tenant_id,
+        actor_id=auth.user.id,
+    )
+    await db.commit()
+    await db.refresh(crawl)
+    return crawl
 
 
 @router.get("/projects/{project_id}/scans", response_model=list[ScanOut])

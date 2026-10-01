@@ -15,6 +15,7 @@ from app.models import AIProviderConnection, AIRun
 from app.providers import ProviderError, StructuredRequest
 from app.services.ai_secrets import decrypt_provider_key
 from app.services.audit import append_audit
+from app.services.competitor_crawl import run_competitor_crawl
 from app.services.operations import auto_resolve_inactive_incidents
 from app.services.webhook_delivery import due_delivery_ids, process_delivery, recover_expired_leases
 from app.services.worker_heartbeat import record_worker_heartbeat
@@ -62,6 +63,17 @@ async def webhook_delivery_sweep_task(ctx: dict) -> dict:
     except Exception as exc:  # noqa: BLE001
         logger.error("webhook_delivery_sweep_failed", error=str(exc))
         return {"error": str(exc)}
+
+
+async def competitor_crawl_task(ctx: dict, crawl_id: str) -> dict:
+    try:
+        async with open_db_session() as session:
+            result = await run_competitor_crawl(session, uuid.UUID(crawl_id))
+        logger.info("competitor_crawl_processed", crawl_id=crawl_id, status=result["status"])
+        return result
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("competitor_crawl_failed", crawl_id=crawl_id, error=str(exc))
+        return {"status": "failed", "crawl_id": crawl_id}
 
 
 async def operational_incident_auto_resolve_task(ctx: dict) -> dict:
@@ -189,6 +201,7 @@ class WorkerSettings:
         webhook_delivery_task,
         webhook_delivery_sweep_task,
         architecture_proposal_task,
+        competitor_crawl_task,
         operational_incident_auto_resolve_task,
     ]
     cron_jobs = [
