@@ -501,6 +501,7 @@ async def process_delivery(
 
     delivery.attempt_count += 1
     delivery.status = "processing"
+    record_delivery_transition(channel=delivery.channel, status="processing", trigger=trigger)
     delivery.locked_until = now + timedelta(seconds=LEASE_SECONDS)
     sequence = (
         await db.execute(

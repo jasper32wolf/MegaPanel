@@ -24,6 +24,18 @@ def test_delivery_metrics_use_only_bounded_labels():
     assert _sample_value(metrics._delivery_transitions, labels) == before + 1
 
 
+def test_operational_gauges_clamp_and_bound_observations():
+    metrics.record_active_incidents(count=-4)
+    metrics.record_delivery_queue_age(age_seconds=-10)
+    metrics.record_worker_heartbeat(age_seconds=91, status="stale")
+
+    assert metrics._active_incidents._value.get() == 0
+    assert metrics._delivery_queue_age._value.get() == 0
+    assert metrics._worker_heartbeat_age._value.get() == 91
+    assert metrics._worker_heartbeat_status.labels(status="stale")._value.get() == 1
+    assert metrics._worker_heartbeat_status.labels(status="healthy")._value.get() == 0
+
+
 def test_release_and_qa_metrics_record_known_outcomes():
     release_labels = {"action": "publish", "outcome": "blocked"}
     qa_labels = {"verdict": "warn"}

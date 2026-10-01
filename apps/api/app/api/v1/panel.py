@@ -14,6 +14,11 @@ from app.models.project import PageDraft, PagePlan, Project
 from app.models.publish import Domain, SiteBuild
 from app.models.system_operation import SystemOperation
 from app.services.audit import append_audit
+from app.services.metrics import (
+    record_active_incidents,
+    record_delivery_queue_age,
+    record_worker_heartbeat,
+)
 from app.services.operations import (
     _serialize_incident,
     list_verification_projection,
@@ -235,6 +240,13 @@ async def report_summary(
             WebhookDelivery.status.in_(("queued", "retrying", "processing")),
         )
     )
+    record_delivery_queue_age(
+        age_seconds=(
+            max(0, int((datetime.now(UTC) - delivery_oldest_at).total_seconds()))
+            if delivery_oldest_at
+            else None
+        )
+    )
     active_leads = sum(lead_counts.get(status, 0) for status in ("new", "qualified"))
     alerts = []
     delivery_attention = aggregate_counts.get("attention", 0) or delivery_counts.get(
@@ -360,6 +372,9 @@ async def list_incidents(
         )
         .scalars()
         .all()
+    )
+    record_active_incidents(
+        count=sum(incident.status in {"open", "acknowledged"} for incident in incidents)
     )
     return [_serialize_incident(incident) for incident in incidents]
 
@@ -500,6 +515,7 @@ async def report_observability(
         now,
         get_settings().worker_heartbeat_stale_after_seconds,
     )
+    record_worker_heartbeat(age_seconds=worker["age_seconds"], status=worker["status"])
     missing_media = 0
     provenance_gaps = 0
     expired_media = 0

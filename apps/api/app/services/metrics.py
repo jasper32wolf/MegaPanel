@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from prometheus_client import Counter
+from prometheus_client import Counter, Gauge
 
 _DELIVERY_CHANNELS = frozenset({"email", "webhook"})
 _DELIVERY_STATUSES = frozenset({"queued", "retrying", "processing", "delivered", "dead_letter"})
@@ -24,6 +24,38 @@ _qa_verdicts = Counter(
     "Page draft QA verdicts by bounded verdict.",
     ("verdict",),
 )
+_active_incidents = Gauge(
+    "site_panel_active_incidents",
+    "Current active operational incidents observed by the panel summary.",
+)
+_delivery_queue_age = Gauge(
+    "site_panel_delivery_queue_age_seconds",
+    "Age in seconds of the oldest pending delivery, or zero when none is pending.",
+)
+_worker_heartbeat_age = Gauge(
+    "site_panel_worker_heartbeat_age_seconds",
+    "Age in seconds of the persisted worker heartbeat, or zero when not observed.",
+)
+_worker_heartbeat_status = Gauge(
+    "site_panel_worker_heartbeat_status",
+    "Persisted worker heartbeat observation status: healthy, stale or not_observed.",
+    ("status",),
+)
+
+
+def record_active_incidents(*, count: int) -> None:
+    _active_incidents.set(max(0, count))
+
+
+def record_delivery_queue_age(*, age_seconds: int | None) -> None:
+    _delivery_queue_age.set(max(0, age_seconds or 0))
+
+
+def record_worker_heartbeat(*, age_seconds: int | None, status: str) -> None:
+    bounded_status = status if status in {"healthy", "stale", "not_observed"} else "not_observed"
+    _worker_heartbeat_age.set(max(0, age_seconds or 0))
+    for candidate in ("healthy", "stale", "not_observed"):
+        _worker_heartbeat_status.labels(status=candidate).set(float(candidate == bounded_status))
 
 
 def _bounded(value: str, allowed: frozenset[str]) -> str:
