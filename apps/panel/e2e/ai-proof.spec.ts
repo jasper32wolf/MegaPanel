@@ -258,6 +258,41 @@ test("releases deep link shows immutable candidate history without mutation", as
   expect(mutationRequests).toEqual([]);
 });
 
+test("routing deep link shows redacted policy metadata without mutation", async ({ page }) => {
+  await mockAuth(page);
+  const projectId = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+  const mutationRequests: string[] = [];
+  await page.route("**/api/v1/**", (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (request.method() !== "GET") mutationRequests.push(`${request.method()} ${url.pathname}`);
+    if (url.pathname === `/api/v1/projects/${projectId}`) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ id: projectId, name: "Routing proof" }) });
+    }
+    if (url.pathname === `/api/v1/projects/${projectId}/lead-routing`) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [{
+        id: "11111111-2222-4333-8444-555555555555", version: 4, state: "active", submitted_at: "2026-10-01T10:00:00Z", reviewed_at: "2026-10-01T11:00:00Z", decision_reason: null, created_at: "2026-10-01T09:00:00Z",
+        destinations: [{ id: "66666666-7777-4888-8999-000000000000", target_key: "primary-email", channel: "email", required: true, configured: true }],
+        unsafe_recipient: "private-recipient@example.test",
+        unsafe_secret: "never-render-this-routing-secret",
+      }] }) });
+    }
+    return route.fulfill({ status: 404, contentType: "application/json", body: '{"detail":"not used by proof"}' });
+  });
+
+  await page.evaluate((path) => {
+    window.history.pushState({}, "", path);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }, `/projects/${projectId}/routing`);
+
+  await expect(page.getByRole("heading", { name: "Routing · Routing proof" })).toBeVisible();
+  await expect(page.getByText("primary-email · required", { exact: true })).toBeVisible();
+  await expect(page.getByText("private-recipient@example.test", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("never-render-this-routing-secret", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Создать|На review|Активировать|Отклонить/ })).toHaveCount(0);
+  expect(mutationRequests).toEqual([]);
+});
+
 test("legal rejection сохраняет reason и manual remediation без публикации", async ({ page }) => {
   await mockAuth(page);
   const projectId = "55555555-5555-4555-8555-555555555555";
