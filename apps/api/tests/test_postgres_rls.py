@@ -219,7 +219,7 @@ def test_workflow_update_timestamps_can_be_serialized_after_commit() -> None:
     not RUN_POSTGRES_RLS_INTEGRATION,
     reason="requires a local PostgreSQL service with database creation privileges",
 )
-def test_legacy_webhook_secret_upgrade_on_existing_database() -> None:
+def test_legacy_data_upgrade_from_0019_to_current_head() -> None:
     api_dir = Path(__file__).resolve().parents[1]
     head_revision = ScriptDirectory.from_config(
         Config(str(api_dir / "alembic.ini"))
@@ -261,18 +261,19 @@ def test_legacy_webhook_secret_upgrade_on_existing_database() -> None:
             async with admin_engine.connect() as connection:
                 await connection.execute(text(f"CREATE DATABASE {database_name}"))
             created = True
-            await asyncio.to_thread(upgrade, "0020_encrypt_lead_message")
+            await asyncio.to_thread(upgrade, "0019_lead_idempotency")
 
             isolated_engine = create_async_engine(upgrade_url)
-            tenant_id, safe_id, unsafe_id = uuid4(), uuid4(), uuid4()
+            tenant_id, safe_id, unsafe_id, lead_id = uuid4(), uuid4(), uuid4(), uuid4()
             safe_secret = "migration-safe-legacy-secret"
             unsafe_secret = "migration-unsafe-legacy-secret"
+            legacy_message = "Migration fixture message"
             try:
                 async with isolated_engine.begin() as connection:
                     revision = await connection.scalar(
                         text("SELECT version_num FROM alembic_version")
                     )
-                    assert revision == "0020_encrypt_lead_message"
+                    assert revision == "0019_lead_idempotency"
                     version_column_length = await connection.scalar(
                         text(
                             "SELECT character_maximum_length FROM information_schema.columns "
@@ -280,6 +281,24 @@ def test_legacy_webhook_secret_upgrade_on_existing_database() -> None:
                         )
                     )
                     assert version_column_length == 32
+                    assert await connection.scalar(
+                        text(
+                            "SELECT EXISTS ("
+                            "SELECT FROM information_schema.columns "
+                            "WHERE table_schema = 'public' AND table_name = 'leads' "
+                            "AND column_name = 'message'"
+                            ")"
+                        )
+                    )
+                    assert not await connection.scalar(
+                        text(
+                            "SELECT EXISTS ("
+                            "SELECT FROM information_schema.columns "
+                            "WHERE table_schema = 'public' AND table_name = 'leads' "
+                            "AND column_name = 'message_enc'"
+                            ")"
+                        )
+                    )
                     await connection.execute(
                         text("INSERT INTO tenants (id, name, slug) VALUES (:id, :name, :slug)"),
                         {"id": tenant_id, "name": "Upgrade fixture", "slug": database_name},
@@ -320,6 +339,28 @@ def test_legacy_webhook_secret_upgrade_on_existing_database() -> None:
                                 "manifest": json.dumps(manifest),
                             },
                         )
+                    await connection.execute(
+                        text(
+                            "INSERT INTO leads ("
+                            "id, tenant_id, site_id, message, idempotency_key"
+                            ") VALUES ("
+                            ":id, :tenant_id, :site_id, :message, :idempotency_key"
+                            ")"
+                        ),
+                        {
+                            "id": lead_id,
+                            "tenant_id": tenant_id,
+                            "site_id": safe_id,
+                            "message": legacy_message,
+                            "idempotency_key": "legacy-migration-lead",
+                        },
+                    )
+                    assert (
+                        await connection.scalar(
+                            text("SELECT message FROM leads WHERE id = :id"), {"id": lead_id}
+                        )
+                        == legacy_message
+                    )
             finally:
                 await isolated_engine.dispose()
 
@@ -340,14 +381,55 @@ def test_legacy_webhook_secret_upgrade_on_existing_database() -> None:
                     assert version_column_length >= len(head_revision)
                     rows = await connection.execute(text("SELECT id, manifest FROM sites"))
                     manifests = dict(rows.all())
-                safe_contacts = manifests[safe_id]["contacts"]
-                assert "webhook_secret" not in safe_contacts
-                encryptor = FieldEncryptor.from_base64(get_settings().field_encryption_key)
-                assert encryptor.decrypt(safe_contacts["webhook_secret_enc"]) == safe_secret
-                assert manifests[unsafe_id]["contacts"] == {
-                    "webhook_url": "http://127.0.0.1/lead",
-                    "webhook_secret": unsafe_secret,
-                }
+                    assert set(manifests) == {safe_id, unsafe_id}
+                    safe_contacts = manifests[safe_id]["contacts"]
+                    assert "webhook_secret" not in safe_contacts
+                    encryptor = FieldEncryptor.from_base64(get_settings().field_encryption_key)
+                    assert encryptor.decrypt(safe_contacts["webhook_secret_enc"]) == safe_secret
+                    assert manifests[unsafe_id]["contacts"] == {
+                        "webhook_url": "http://127.0.0.1/lead",
+                        "webhook_secret": unsafe_secret,
+                    }
+                    assert not await connection.scalar(
+                        text(
+                            "SELECT EXISTS ("
+                            "SELECT FROM information_schema.columns "
+                            "WHERE table_schema = 'public' AND table_name = 'leads' "
+                            "AND column_name = 'message'"
+                            ")"
+                        )
+                    )
+                    message_enc = await connection.scalar(
+                        text("SELECT message_enc FROM leads WHERE id = :id"), {"id": lead_id}
+                    )
+                    assert message_enc is not None and message_enc != legacy_message
+                    assert encryptor.decrypt(message_enc) == legacy_message
+                    assert await connection.scalar(
+                        text(
+                            "SELECT EXISTS ("
+                            "SELECT FROM information_schema.tables "
+                            "WHERE table_schema = 'public' "
+                            "AND table_name = 'github_workflow_run_deliveries'"
+                            ")"
+                        )
+                    )
+                    rls_flags = await connection.execute(
+                        text(
+                            "SELECT relrowsecurity, relforcerowsecurity "
+                            "FROM pg_class WHERE oid = "
+                            "'github_workflow_run_deliveries'::regclass"
+                        )
+                    )
+                    assert rls_flags.one() == (True, True)
+                    policy = await connection.scalar(
+                        text(
+                            "SELECT qual FROM pg_policies "
+                            "WHERE schemaname = 'public' "
+                            "AND tablename = 'github_workflow_run_deliveries' "
+                            "AND policyname = 'tenant_isolation_github_workflow_run_deliveries'"
+                        )
+                    )
+                    assert policy is not None and "app.tenant_id" in policy
             finally:
                 await isolated_engine.dispose()
         finally:

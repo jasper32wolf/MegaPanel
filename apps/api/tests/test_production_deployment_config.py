@@ -209,7 +209,7 @@ def test_ci_proves_upgrade_path_from_0031_to_current_head():
     step = next(
         step
         for step in job["steps"]
-        if step.get("name") == "Upgrade-path migration proof from 0031"
+        if step.get("name") == "Reversible upgrade-path migration proof from 0031"
     )
     command = step["run"]
 
@@ -217,6 +217,18 @@ def test_ci_proves_upgrade_path_from_0031_to_current_head():
     assert "alembic upgrade head" in command
     assert "SELECT version_num FROM alembic_version" in command
     assert "get_current_head()" in command
+
+
+def test_ci_runs_legacy_data_migration_proof_to_current_head():
+    workflow = yaml.safe_load(CI_PATH.read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["integration-services"]["steps"]
+    step = next(
+        step
+        for step in steps
+        if step.get("name") == "Legacy data migration proof from 0019 to current head"
+    )
+
+    assert "test_legacy_data_upgrade_from_0019_to_current_head" in step["run"]
 
 
 def test_ci_publishes_controlled_release_restore_harness_evidence():

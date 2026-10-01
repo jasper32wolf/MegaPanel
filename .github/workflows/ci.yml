@@ -124,7 +124,11 @@ jobs:
 
           asyncio.run(main())
           PY
-      - name: Upgrade-path migration proof from 0031
+      - name: Legacy data migration proof from 0019 to current head
+        run: |
+          cd apps/api
+          pytest tests/test_postgres_rls.py::test_legacy_data_upgrade_from_0019_to_current_head -q
+      - name: Reversible upgrade-path migration proof from 0031
         run: |
           set -euo pipefail
           cd apps/api
@@ -148,7 +152,7 @@ jobs:
       - name: Worker delivery, RLS, budget and lead idempotency integration
         run: |
           cd apps/api
-          pytest tests/test_webhook_delivery.py tests/test_postgres_rls.py tests/test_ai_budget_reservation.py tests/test_leads_ab.py -q
+          pytest tests/test_webhook_delivery.py tests/test_postgres_rls.py tests/test_ai_budget_reservation.py tests/test_leads_ab.py -q -k 'not legacy_data_upgrade_from_0019_to_current_head'
       - name: Worker production image liveness smoke
         run: |
           set -euo pipefail
