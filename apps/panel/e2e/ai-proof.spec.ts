@@ -185,6 +185,43 @@ test("facts deep link shows redacted revisions without mutation", async ({ page 
   expect(mutationRequests).toEqual([]);
 });
 
+test("pages deep link shows PagePlan and QA lineage without mutation", async ({ page }) => {
+  await mockAuth(page);
+  const projectId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const planId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const mutationRequests: string[] = [];
+  await page.route("**/api/v1/**", (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (request.method() !== "GET") mutationRequests.push(`${request.method()} ${url.pathname}`);
+    if (url.pathname === `/api/v1/projects/${projectId}`) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ id: projectId, name: "Pages proof" }) });
+    }
+    if (url.pathname === `/api/v1/projects/${projectId}/page-plans`) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([{
+        id: planId, slug: "/repair", objective: "Explain repair service", intent: "commercial", kit_key: "service-local-v1", state: "approved", version: 2, decision_reason: null, reviewed_at: "2026-10-01T12:00:00Z",
+      }]) });
+    }
+    if (url.pathname === `/api/v1/projects/${projectId}/page-drafts`) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([{
+        id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", page_plan_id: planId, revision: 3, state: "review", content_hash: "b".repeat(64), last_qa_verdict: "pass", qa_runs: [{ verdict: "pass" }], failure_message: null, updated_at: "2026-10-01T12:30:00Z",
+      }]) });
+    }
+    return route.fulfill({ status: 404, contentType: "application/json", body: '{"detail":"not used by proof"}' });
+  });
+
+  await page.evaluate((path) => {
+    window.history.pushState({}, "", path);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }, `/projects/${projectId}/pages`);
+
+  await expect(page.getByRole("heading", { name: "Pages · Pages proof" })).toBeVisible();
+  await expect(page.getByText("/repair", { exact: true })).toHaveCount(2);
+  await expect(page.getByText("pass", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Создать|Проверить|Применить|Одобрить|Опубликовать/ })).toHaveCount(0);
+  expect(mutationRequests).toEqual([]);
+});
+
 test("legal rejection сохраняет reason и manual remediation без публикации", async ({ page }) => {
   await mockAuth(page);
   const projectId = "55555555-5555-4555-8555-555555555555";
