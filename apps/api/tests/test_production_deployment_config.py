@@ -36,6 +36,22 @@ def test_ci_publishes_a_cyclonedx_sbom_artifact():
     )
 
 
+def test_production_compose_uploads_bounded_evidence_marker():
+    workflow = yaml.safe_load(CI_PATH.read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["production-compose-smoke"]["steps"]
+
+    marker = next(step for step in steps if step.get("name") == "Write bounded Compose evidence")
+    assert marker.get("if") == "success()"
+    assert "mode=ci" in marker["run"]
+    assert "not external staging or VPS production proof" in marker["run"]
+    assert "secret" not in marker["run"].lower()
+    assert "url" not in marker["run"].lower()
+    upload = next(step for step in steps if step.get("name") == "Upload bounded Compose evidence")
+    assert upload.get("if") == "always()"
+    assert upload.get("uses") == "actions/upload-artifact@v4"
+    assert upload["with"]["name"] == "production-compose-evidence"
+
+
 def test_panel_e2e_always_uploads_playwright_diagnostics():
     workflow = yaml.safe_load(CI_PATH.read_text(encoding="utf-8"))
     steps = workflow["jobs"]["panel-e2e"]["steps"]

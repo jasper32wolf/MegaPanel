@@ -416,6 +416,23 @@ jobs:
           )
           docker compose -f infra/docker/docker-compose.production.yml --env-file .env exec -T worker arq --check app.worker.WorkerSettings
           docker compose -f infra/docker/docker-compose.production.yml --env-file .env exec -T caddy wget -q -O - http://127.0.0.1:2019/config/ >/dev/null
+      - name: Write bounded Compose evidence
+        if: success()
+        run: |
+          {
+            printf '%s\n' 'mode=ci'
+            printf '%s\n' 'check=production_compose_localhost'
+            printf '%s\n' 'scope=isolated Compose Caddy controlled receiver and authenticated panel smoke'
+            printf '%s\n' 'limitation=not external staging or VPS production proof'
+          } > "$RUNNER_TEMP/site-panel-compose-evidence.txt"
+      - name: Upload bounded Compose evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-compose-evidence
+          path: ${{ runner.temp }}/site-panel-compose-evidence.txt
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Upload Compose diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
