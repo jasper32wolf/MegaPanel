@@ -175,6 +175,50 @@ def evidence_provider_rows(content: object) -> dict[str, Any]:
     }
 
 
+def approved_crawl_evidence_content(
+    crawl_id: str,
+    coverage: object,
+    page_signals: list[object],
+) -> dict[str, Any]:
+    titles: list[str] = []
+    h1s: list[str] = []
+    faqs: list[str] = []
+    price_types: list[str] = []
+    for value in page_signals:
+        signals = value if isinstance(value, dict) else {}
+        title = _bounded_text(signals.get("title"))
+        if title and title not in titles:
+            titles.append(title)
+        for heading in signals.get("headings", []):
+            if not isinstance(heading, dict) or heading.get("level") != "h1":
+                continue
+            text = _bounded_text(heading.get("text"))
+            if text and text not in h1s:
+                h1s.append(text)
+        for candidate in signals.get("faq", []):
+            question = (
+                _bounded_text(candidate.get("question")) if isinstance(candidate, dict) else None
+            )
+            if question and question not in faqs:
+                faqs.append(question)
+        for price in signals.get("prices", []):
+            price_type = price.get("type") if isinstance(price, dict) else None
+            if isinstance(price_type, str) and price_type in {"from", "fixed", "range", "table"}:
+                price_types.append(price_type)
+    return {
+        "reference_class": "competitor_evidence",
+        "scope": "reference_only",
+        "source_crawl_id": crawl_id,
+        "coverage": coverage if isinstance(coverage, dict) else {},
+        "signals": {
+            "sample_titles": titles[:20],
+            "sample_h1": h1s[:20],
+            "sample_faq": faqs[:20],
+            "price_presentation_types": list(dict.fromkeys(price_types))[:4],
+        },
+    }
+
+
 def _validate_manual_url(value: str) -> str:
     parsed = urlparse(value)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:

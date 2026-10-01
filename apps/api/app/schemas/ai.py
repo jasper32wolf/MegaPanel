@@ -226,11 +226,22 @@ class SEOBriefOut(BaseModel):
     uncertainty_notes: list[str] = Field(default_factory=list, max_length=20)
 
 
+class PageHeadingProposal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    level: Literal["h2", "h3", "h4", "h5", "h6"]
+    text: str = Field(min_length=1, max_length=255)
+
+
 class PageProposal(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     key: str = Field(min_length=1, max_length=160)
     title: str = Field(min_length=1, max_length=255)
+    meta_description: str = Field(default="", max_length=170)
+    h1: str = Field(default="", max_length=255)
+    heading_outline: list[PageHeadingProposal] = Field(default_factory=list, max_length=40)
+    parent_key: str | None = Field(default=None, min_length=1, max_length=160)
     purpose: str = Field(min_length=1, max_length=1000)
     slug: str = Field(min_length=1, max_length=160)
     keyword_ids: list[UUID] = Field(default_factory=list, max_length=100)

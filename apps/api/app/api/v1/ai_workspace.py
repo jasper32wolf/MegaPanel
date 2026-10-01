@@ -270,6 +270,11 @@ def _validate_proposal(
         if normalized_slug != page.slug:
             raise ValueError("Architecture output contains an invalid slug")
         result.append(page.model_dump(mode="json"))
+    for page in pages:
+        if page.parent_key and page.parent_key not in keys:
+            raise ValueError("Architecture output referenced an unknown parent page")
+        if page.parent_key == page.key:
+            raise ValueError("Architecture output cannot make a page its own parent")
     return result
 
 
@@ -330,7 +335,7 @@ async def _prepare_architecture_context(
                 .where(
                     KnowledgeDoc.project_id == project.id,
                     KnowledgeDoc.tenant_id == project.tenant_id,
-                    KnowledgeDoc.kind == "competitor_evidence",
+                    KnowledgeDoc.kind.in_(("competitor_evidence", "competitor_crawl_evidence")),
                     KnowledgeDoc.state == "approved",
                 )
                 .order_by(KnowledgeDoc.approved_at.asc())

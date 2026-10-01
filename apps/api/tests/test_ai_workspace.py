@@ -17,6 +17,9 @@ def page_proposal() -> dict:
     return {
         "key": "home",
         "title": "Home",
+        "meta_description": "Service overview in the city",
+        "h1": "Service overview",
+        "heading_outline": [{"level": "h2", "text": "Services"}],
         "purpose": "Service overview",
         "slug": "/",
         "keyword_ids": [str(KEYWORD)],
@@ -37,6 +40,22 @@ def test_architecture_output_validates_catalog_ids() -> None:
         catalogs={"kit-a": {"hero"}},
     )
     assert pages[0]["slug"] == "/"
+    assert pages[0]["h1"] == "Service overview"
+    assert pages[0]["heading_outline"] == [{"level": "h2", "text": "Services"}]
+
+
+def test_architecture_output_rejects_unknown_parent_page():
+    page = page_proposal()
+    page["parent_key"] = "missing"
+
+    with pytest.raises(ValueError, match="unknown parent"):
+        _validate_proposal(
+            {"pages": [page]},
+            keyword_ids={str(KEYWORD)},
+            geo_ids={str(GEO)},
+            fact_keys={"service"},
+            catalogs={"kit-a": {"hero"}},
+        )
 
 
 @pytest.mark.parametrize(

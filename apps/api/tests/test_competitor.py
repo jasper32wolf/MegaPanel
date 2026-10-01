@@ -72,6 +72,30 @@ def test_skeleton_merge():
     assert len(skeleton["sample_titles"]) == 2
 
 
+def test_approved_crawl_evidence_keeps_only_bounded_reference_signals():
+    from app.services.competitor import approved_crawl_evidence_content
+
+    evidence = approved_crawl_evidence_content(
+        "11111111-1111-1111-1111-111111111111",
+        {"coverage": "partial"},
+        [
+            {
+                "title": "Ремонт телевизоров",
+                "headings": [{"level": "h1", "text": "Сервис"}],
+                "faq": [{"question": "Сколько стоит?", "answer": "Не передавать в AI"}],
+                "prices": [{"type": "from", "value": "1200"}],
+            }
+        ],
+    )
+
+    assert evidence["scope"] == "reference_only"
+    assert evidence["source_crawl_id"] == "11111111-1111-1111-1111-111111111111"
+    assert evidence["signals"]["sample_titles"] == ["Ремонт телевизоров"]
+    assert evidence["signals"]["sample_faq"] == ["Сколько стоит?"]
+    assert evidence["signals"]["price_presentation_types"] == ["from"]
+    assert "Не передавать в AI" not in str(evidence)
+
+
 def test_ssrf_blocks_metadata_ip():
     guard = SSRFGuard()
     with pytest.raises(SSRFBlockedError):

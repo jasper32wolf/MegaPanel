@@ -124,6 +124,11 @@ class KnowledgeDoc(Base):
     source_scan_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("competitor_scans.id", ondelete="RESTRICT"), nullable=True
     )
+    source_crawl_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("competitor_crawl_runs.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
     state: Mapped[str] = mapped_column(String(16), default="draft", index=True)
     approved_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -15,7 +15,11 @@ from app.schemas.research import (
     CompetitorCrawlPageOut,
 )
 from app.services.audit import append_audit
-from app.services.competitor import approved_evidence_content, scan_competitors
+from app.services.competitor import (
+    approved_crawl_evidence_content,
+    approved_evidence_content,
+    scan_competitors,
+)
 from app.services.competitor_crawl import normalize_root_url
 from app.services.research_queue import enqueue_competitor_crawl
 from fastapi import APIRouter, Depends, HTTPException
@@ -277,6 +281,75 @@ async def cancel_domain_crawl(
     return crawl
 
 
+@router.post(
+    "/projects/{project_id}/domain-crawls/{crawl_id}/approve-evidence",
+    response_model=KnowledgeOut,
+    status_code=201,
+)
+async def approve_domain_crawl_evidence(
+    project_id: UUID,
+    crawl_id: UUID,
+    auth: AuthContext = Depends(_SCAN_WRITE_ROLES),
+    db: AsyncSession = Depends(get_db),
+) -> KnowledgeDoc:
+    project = await _project_or_404(db, project_id, auth)
+    crawl = await _crawl_or_404(db, project_id=project_id, crawl_id=crawl_id, auth=auth)
+    if crawl.status not in {"done", "partial"}:
+        raise HTTPException(status_code=409, detail="Only completed crawls can become evidence")
+    existing = (
+        await db.execute(
+            select(KnowledgeDoc).where(
+                KnowledgeDoc.source_crawl_id == crawl.id,
+                KnowledgeDoc.kind == "competitor_crawl_evidence",
+            )
+        )
+    ).scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=409, detail="Crawl evidence has already been approved")
+    pages = list(
+        (
+            await db.execute(
+                select(CompetitorCrawlPage.signals)
+                .where(
+                    CompetitorCrawlPage.crawl_run_id == crawl.id,
+                    CompetitorCrawlPage.tenant_id == project.tenant_id,
+                    CompetitorCrawlPage.project_id == project.id,
+                    CompetitorCrawlPage.status == "fetched",
+                )
+                .order_by(CompetitorCrawlPage.depth, CompetitorCrawlPage.url)
+                .limit(500)
+            )
+        ).scalars()
+    )
+    evidence = KnowledgeDoc(
+        tenant_id=project.tenant_id,
+        project_id=project.id,
+        title="Approved competitor domain research",
+        kind="competitor_crawl_evidence",
+        content=approved_crawl_evidence_content(str(crawl.id), crawl.coverage, pages),
+        source_crawl_id=crawl.id,
+        state="approved",
+        approved_by=auth.user.id,
+        approved_at=datetime.now(UTC),
+    )
+    db.add(evidence)
+    await append_audit(
+        db,
+        action="competitor.crawl.evidence.approve",
+        payload={
+            "project_id": str(project.id),
+            "crawl_id": str(crawl.id),
+            "evidence_id": str(evidence.id),
+            "fetched_page_count": len(pages),
+        },
+        tenant_id=project.tenant_id,
+        actor_id=auth.user.id,
+    )
+    await db.commit()
+    await db.refresh(evidence)
+    return evidence
+
+
 @router.get("/projects/{project_id}/scans", response_model=list[ScanOut])
 async def list_scans(
     project_id: UUID,
@@ -371,7 +444,7 @@ async def list_project_evidence(
         .where(
             KnowledgeDoc.project_id == project.id,
             KnowledgeDoc.tenant_id == project.tenant_id,
-            KnowledgeDoc.kind == "competitor_evidence",
+            KnowledgeDoc.kind.in_(("competitor_evidence", "competitor_crawl_evidence")),
             KnowledgeDoc.state == "approved",
         )
         .order_by(KnowledgeDoc.approved_at.desc())
