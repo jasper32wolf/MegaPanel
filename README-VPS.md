@@ -947,6 +947,8 @@ sudo nano /opt/site-panel/shared/.env
 ```dotenv
 GITHUB_REPOSITORY=owner/repository
 GITHUB_CONTROL_TOKEN=<fine-grained-token>
+# Optional, independently generated HMAC secret for inbound workflow_run callbacks.
+GITHUB_WEBHOOK_SECRET=<independent-long-random-secret>
 GITHUB_API_URL=https://api.github.com
 ```
 
@@ -964,9 +966,13 @@ sudo -u sitepanel-deploy docker compose \
   up -d --force-recreate api
 ```
 
-Никогда не добавляйте фактический `GITHUB_CONTROL_TOKEN` в `.env.production.example`, commit, release archive или frontend variables. Если token отсутствует, ручной путь через GitHub Actions остаётся единственным и безопасным способом обновления.
+Никогда не добавляйте фактические `GITHUB_CONTROL_TOKEN` или `GITHUB_WEBHOOK_SECRET` в `.env.production.example`, commit, release archive, GitHub Actions secrets/artifacts или frontend variables. Если token отсутствует, ручной путь через GitHub Actions остаётся единственным и безопасным способом обновления.
 
-#### 3. Используйте экран «Обновления»
+#### 3. Необязательный webhook статуса workflow
+
+После отдельной operator-authorized настройки repository webhook укажите HTTPS URL `https://<API_DOMAIN>/api/v1/system/github/workflow-run`, JSON payload, секрет `GITHUB_WEBHOOK_SECRET` и единственный event **Workflow runs**. Endpoint принимает только подписанные `workflow_run` события с `action=completed` для panel-originated deploy/recovery run; он сверяет canonical run через GitHub API и не заменяет protected Environments, polling или ручное наблюдение. Не добавляйте этот секрет в workflow, CI variables или callbacks.
+
+#### 4. Используйте экран «Обновления»
 
 После входа под единственным оператором с подтверждённым TOTP:
 

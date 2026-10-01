@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
+import re
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from app.api.deps import AuthContext, get_current_user
 from app.core.config import get_settings
 from app.db.session import get_db
-from app.models import SystemOperation
+from app.models import GitHubWorkflowRunDelivery, SystemOperation
 from app.schemas.system import (
     GitHubControlOut,
     RecoveryRequest,
@@ -22,7 +26,7 @@ from app.services.github_control import (
     GitHubControlError,
     operation_status,
 )
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,6 +35,48 @@ router = APIRouter()
 ACTIVE_STATUSES = {"requested", "queued", "in_progress"}
 TERMINAL_STATUSES = {"success", "failure", "cancelled"}
 FINAL_STATUSES = TERMINAL_STATUSES | {"unknown"}
+_GITHUB_SIGNATURE = re.compile(r"sha256=[a-f0-9]{64}")
+_MAX_GITHUB_WEBHOOK_BYTES = 65_536
+
+
+def _github_webhook_signature_valid(*, raw_body: bytes, signature: str | None, secret: str) -> bool:
+    if not secret or not signature or not _GITHUB_SIGNATURE.fullmatch(signature):
+        return False
+    expected = "sha256=" + hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature)
+
+
+def _github_webhook_payload(raw_body: bytes) -> tuple[str, str, int, str] | None:
+    try:
+        payload = json.loads(raw_body)
+    except (TypeError, ValueError, UnicodeDecodeError):
+        return None
+    if not isinstance(payload, dict) or payload.get("action") != "completed":
+        return None
+    repository = payload.get("repository")
+    workflow_run = payload.get("workflow_run")
+    if not isinstance(repository, dict) or not isinstance(workflow_run, dict):
+        return None
+    repository_name = repository.get("full_name")
+    run_id = workflow_run.get("id")
+    workflow_path = workflow_run.get("path")
+    request_id = workflow_run.get("display_title")
+    if (
+        not isinstance(repository_name, str)
+        or not isinstance(run_id, int)
+        or isinstance(run_id, bool)
+        or run_id < 1
+        or not isinstance(workflow_path, str)
+        or workflow_path
+        not in {f".github/workflows/{DEPLOY_WORKFLOW}", f".github/workflows/{RECOVERY_WORKFLOW}"}
+        or not isinstance(request_id, str)
+    ):
+        return None
+    try:
+        UUID(request_id)
+    except ValueError:
+        return None
+    return repository_name, workflow_path.removeprefix(".github/workflows/"), run_id, request_id
 
 
 def _operation_out(operation: SystemOperation) -> SystemOperationOut:
@@ -81,6 +127,97 @@ async def require_system_operator(
     if not auth.user.mfa_enabled or not auth.user.totp_secret:
         raise HTTPException(status_code=403, detail="Confirm TOTP before system operations")
     return auth
+
+
+@router.post("/github/workflow-run", status_code=status.HTTP_204_NO_CONTENT)
+async def github_workflow_run_webhook(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    settings = get_settings()
+    if not settings.github_webhook_secret:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Unavailable")
+    content_length = request.headers.get("content-length")
+    if content_length and (
+        not content_length.isdigit() or int(content_length) > _MAX_GITHUB_WEBHOOK_BYTES
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Invalid request"
+        )
+    raw_body = await request.body()
+    if len(raw_body) > _MAX_GITHUB_WEBHOOK_BYTES or not _github_webhook_signature_valid(
+        raw_body=raw_body,
+        signature=request.headers.get("x-hub-signature-256"),
+        secret=settings.github_webhook_secret,
+    ):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid request")
+    if request.headers.get("x-github-event") != "workflow_run":
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    delivery_id = request.headers.get("x-github-delivery")
+    if not delivery_id or len(delivery_id) > 128 or any(char.isspace() for char in delivery_id):
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    parsed = _github_webhook_payload(raw_body)
+    if parsed is None:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    repository, workflow, run_id, request_id = parsed
+    if repository.casefold() != settings.github_repository.casefold():
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    operation = (
+        await db.execute(
+            select(SystemOperation)
+            .where(
+                SystemOperation.request_id == request_id,
+                SystemOperation.workflow == workflow,
+                SystemOperation.status.in_(ACTIVE_STATUSES),
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if operation is None:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    duplicate = await db.scalar(
+        select(GitHubWorkflowRunDelivery.id).where(
+            GitHubWorkflowRunDelivery.github_delivery_id == delivery_id
+        )
+    )
+    if duplicate is not None:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    try:
+        run = await _github().workflow_run_by_id(
+            workflow=workflow, run_id=run_id, request_id=request_id
+        )
+    except GitHubControlError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Unavailable"
+        ) from error
+    if run is None or operation_status(run) not in TERMINAL_STATUSES:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    next_status = operation_status(run)
+    operation.status = next_status
+    operation.error_code = None
+    operation.workflow_run_id = run.run_id
+    operation.workflow_url = run.url
+    operation.completed_at = datetime.now(UTC)
+    db.add(
+        GitHubWorkflowRunDelivery(
+            tenant_id=operation.tenant_id,
+            operation_id=operation.id,
+            github_delivery_id=delivery_id,
+            workflow_run_id=run.run_id,
+        )
+    )
+    await append_audit(
+        db,
+        action="system.operation.status",
+        payload={"operation_id": str(operation.id), "status": next_status},
+        tenant_id=operation.tenant_id,
+        actor_id=operation.actor_id,
+    )
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 async def _refresh_operation(

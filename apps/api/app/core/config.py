@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     # Values remain VPS-local environment secrets and are never returned by API.
     github_repository: str = ""
     github_control_token: str = ""
+    github_webhook_secret: str = ""
     github_api_url: str = "https://api.github.com"
 
     # Optional private lead-email transport. All recipient addresses remain encrypted in PostgreSQL.

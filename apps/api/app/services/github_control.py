@@ -34,6 +34,41 @@ class WorkflowRun:
     url: str | None
     status: str
     conclusion: str | None
+    workflow_path: str | None = None
+    event: str | None = None
+    display_title: str | None = None
+
+
+def _workflow_path(value: object) -> str | None:
+    if not isinstance(value, str) or not value.startswith(".github/workflows/"):
+        return None
+    filename = value.removeprefix(".github/workflows/")
+    return filename if filename in {DEPLOY_WORKFLOW, RECOVERY_WORKFLOW} else None
+
+
+def _workflow_run(row: dict[str, Any]) -> WorkflowRun | None:
+    run_id = row.get("id")
+    if not isinstance(run_id, int) or isinstance(run_id, bool):
+        return None
+    return WorkflowRun(
+        run_id=run_id,
+        url=_safe_url(row.get("html_url")),
+        status=str(row.get("status") or "unknown"),
+        conclusion=row.get("conclusion") if isinstance(row.get("conclusion"), str) else None,
+        workflow_path=_workflow_path(row.get("path")),
+        event=row.get("event") if isinstance(row.get("event"), str) else None,
+        display_title=row.get("display_title")
+        if isinstance(row.get("display_title"), str)
+        else None,
+    )
+
+
+def _matches_workflow_run(run: WorkflowRun, *, workflow: str, request_id: str) -> bool:
+    return (
+        run.workflow_path == workflow
+        and run.event == "workflow_dispatch"
+        and run.display_title == request_id
+    )
 
 
 def _api_base_url(value: str) -> str:
@@ -220,19 +255,27 @@ class GitHubControl:
         for row in rows:
             if not isinstance(row, dict):
                 continue
-            title = row.get("display_title")
-            run_id = row.get("id")
-            if title != request_id or not isinstance(run_id, int) or isinstance(run_id, bool):
-                continue
-            return WorkflowRun(
-                run_id=run_id,
-                url=_safe_url(row.get("html_url")),
-                status=str(row.get("status") or "unknown"),
-                conclusion=row.get("conclusion")
-                if isinstance(row.get("conclusion"), str)
-                else None,
-            )
+            run = _workflow_run(row)
+            if run and run.display_title == request_id:
+                return run
         return None
+
+    async def workflow_run_by_id(
+        self, *, workflow: str, run_id: int, request_id: str
+    ) -> WorkflowRun | None:
+        if workflow not in {DEPLOY_WORKFLOW, RECOVERY_WORKFLOW}:
+            raise GitHubControlError("workflow_not_allowed", 503)
+        if not isinstance(run_id, int) or isinstance(run_id, bool) or run_id < 1:
+            return None
+        response = await self._request("GET", f"/repos/{self.repository}/actions/runs/{run_id}")
+        run = _workflow_run(self._payload(response))
+        if (
+            run is None
+            or run.run_id != run_id
+            or not _matches_workflow_run(run, workflow=workflow, request_id=request_id)
+        ):
+            return None
+        return run
 
 
 def operation_status(run: WorkflowRun | None) -> str:

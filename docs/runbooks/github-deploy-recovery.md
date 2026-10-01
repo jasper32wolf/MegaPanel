@@ -199,7 +199,11 @@ API создаёт audit-safe запись операции до dispatch, за�
 
 GitHub Environment approval по-прежнему обязателен: запрос из панели не обходит required reviewer, branch policy, pinned `known_hosts` или forced-command gateway. При недоступности GitHub/панели используйте ручной workflow из §6.2/§7.2.
 
-### 6.4. Runtime audit
+### 6.4. Необязательное подписанное уведомление о завершении
+
+Для меньшей задержки статуса можно вручную создать repository webhook только для GitHub event **Workflow runs**, JSON payload и TLS verification. Его HTTPS URL: `https://<API_DOMAIN>/api/v1/system/github/workflow-run`; секрет создаётся независимо и сохраняется только как `GITHUB_WEBHOOK_SECRET` в VPS-local `.env`. Endpoint принимает только HMAC-подписанные terminal события для panel-originated deploy/recovery UUID, затем заново сверяет run через GitHub Actions API. Он не принимает произвольные статусы, не хранит payload/headers/secrets и не заменяет protected Environments или polling fallback. Не добавляйте webhook secret в GitHub Actions, artifacts, frontend или лог.
+
+### 6.5. Runtime audit
 
 Результат каждого deploy/recovery виден в:
 

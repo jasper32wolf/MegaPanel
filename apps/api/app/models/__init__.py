@@ -244,6 +244,7 @@ from app.models.blocks import (  # noqa: E402
     MediaAsset,
     make_hash_class,
 )
+from app.models.github_workflow_delivery import GitHubWorkflowRunDelivery  # noqa: E402
 from app.models.leads import (  # noqa: E402
     AnalyticsEvent,
     Consent,
@@ -319,6 +320,7 @@ __all__ = [
     "FootprintAudit",
     "GenerationJob",
     "GeoPlace",
+    "GitHubWorkflowRunDelivery",
     "Keyword",
     "KnowledgeDoc",
     "Lead",

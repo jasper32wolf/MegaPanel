@@ -164,6 +164,76 @@ def test_finds_panel_run_by_exact_request_id_and_sanitizes_url():
     assert workflow_run.status == "in_progress"
 
 
+def test_single_run_readback_requires_canonical_panel_dispatch_fields():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/repos/owner/repository/actions/runs/42"
+        return httpx.Response(
+            200,
+            json={
+                "id": 42,
+                "path": ".github/workflows/deploy-production.yml",
+                "event": "workflow_dispatch",
+                "display_title": "request-id",
+                "status": "completed",
+                "conclusion": "success",
+                "html_url": "https://github.example.test/runs/42",
+            },
+        )
+
+    client = GitHubControl(
+        repository="owner/repository",
+        token="control-token",
+        api_url="https://api.github.com",
+        transport=httpx.MockTransport(handler),
+    )
+
+    run_record = run(
+        client.workflow_run_by_id(
+            workflow=DEPLOY_WORKFLOW,
+            run_id=42,
+            request_id="request-id",
+        )
+    )
+
+    assert run_record is not None
+    assert run_record.run_id == 42
+    assert run_record.url == "https://github.example.test/runs/42"
+    assert run_record.status == "completed"
+
+
+def test_single_run_readback_rejects_mismatched_workflow_or_dispatch_identity():
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "id": 42,
+                "path": ".github/workflows/recover-production.yml",
+                "event": "push",
+                "display_title": "other-request",
+                "status": "completed",
+                "conclusion": "success",
+            },
+        )
+
+    client = GitHubControl(
+        repository="owner/repository",
+        token="control-token",
+        api_url="https://api.github.com",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert (
+        run(
+            client.workflow_run_by_id(
+                workflow=DEPLOY_WORKFLOW,
+                run_id=42,
+                request_id="request-id",
+            )
+        )
+        is None
+    )
+
+
 def test_rejects_malformed_github_response():
     def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=b"not-json")
