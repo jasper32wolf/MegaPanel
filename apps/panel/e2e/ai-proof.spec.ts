@@ -55,6 +55,7 @@ async function mockAuth(page: Page) {
   await page.getByLabel("Email").fill("operator@example.test");
   await page.getByLabel("Пароль").fill("controlled-e2e-password");
   await page.getByRole("button", { name: "Войти" }).click();
+  await expect(page).toHaveURL(/\/$/);
 }
 
 function mockProviderList(page: Page) {
@@ -144,6 +145,9 @@ test("facts deep link shows redacted revisions without mutation", async ({ page 
   await page.route("**/api/v1/**", (route) => {
     const request = route.request();
     const url = new URL(request.url());
+    if (url.pathname === "/api/v1/security/me" || url.pathname === "/api/v1/auth/refresh") {
+      return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+    }
     if (request.method() !== "GET") mutationRequests.push(`${request.method()} ${url.pathname}`);
     if (url.pathname === `/api/v1/projects/${projectId}`) {
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ id: projectId, name: "Facts proof" }) });
@@ -193,6 +197,9 @@ test("pages deep link shows PagePlan and QA lineage without mutation", async ({ 
   await page.route("**/api/v1/**", (route) => {
     const request = route.request();
     const url = new URL(request.url());
+    if (url.pathname === "/api/v1/security/me" || url.pathname === "/api/v1/auth/refresh") {
+      return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+    }
     if (request.method() !== "GET") mutationRequests.push(`${request.method()} ${url.pathname}`);
     if (url.pathname === `/api/v1/projects/${projectId}`) {
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ id: projectId, name: "Pages proof" }) });
@@ -229,6 +236,9 @@ test("releases deep link shows immutable candidate history without mutation", as
   await page.route("**/api/v1/**", (route) => {
     const request = route.request();
     const url = new URL(request.url());
+    if (url.pathname === "/api/v1/security/me" || url.pathname === "/api/v1/auth/refresh") {
+      return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+    }
     if (request.method() !== "GET") mutationRequests.push(`${request.method()} ${url.pathname}`);
     if (url.pathname === `/api/v1/projects/${projectId}`) {
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ id: projectId, name: "Releases proof" }) });
@@ -265,6 +275,9 @@ test("routing deep link shows redacted policy metadata without mutation", async 
   await page.route("**/api/v1/**", (route) => {
     const request = route.request();
     const url = new URL(request.url());
+    if (url.pathname === "/api/v1/security/me" || url.pathname === "/api/v1/auth/refresh") {
+      return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+    }
     if (request.method() !== "GET") mutationRequests.push(`${request.method()} ${url.pathname}`);
     if (url.pathname === `/api/v1/projects/${projectId}`) {
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ id: projectId, name: "Routing proof" }) });
@@ -300,6 +313,9 @@ test("legal rejection сохраняет reason и manual remediation без п�
   let legalReviewBody: Record<string, unknown> | null = null;
   await page.route("**/api/v1/**", async (route) => {
     const url = new URL(route.request().url());
+    if (url.pathname === "/api/v1/security/me" || url.pathname === "/api/v1/auth/refresh") {
+      return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+    }
     if (route.request().method() === "POST" && url.pathname.endsWith(`/builds/${buildId}/legal-review`)) {
       legalReviewBody = route.request().postDataJSON() as Record<string, unknown>;
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ status: "block" }) });
@@ -310,7 +326,8 @@ test("legal rejection сохраняет reason и manual remediation без п�
     if (url.pathname.endsWith("/coverage")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ selected: 0, covered: 0, uncovered: [], plans: 0 }) });
     if (url.pathname.endsWith("/semantic-signals")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ totals: { members: 0, bindings: 0, covered: 0, planned: 0, uncovered: 0, unbound: 0 }, cannibalization: [], unmapped_plans: [] }) });
     if (url.pathname.endsWith("/lead-routing")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [] }) });
-    if (url.pathname.endsWith("/builds")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([{ id: buildId, status: "ready", build_hash: "b".repeat(64), previous_build_hash: null, pages_built: 1, created_at: "2026-10-01T12:00:00Z", activated_at: null, release_gate: { status: "pass", blockers: [], warnings: [] }, legal_review: { status: "block", blockers: ["Approve the legal review for this candidate build"], review: { state: "pending", evidence_ref: null, reason: null, replacement_guidance: null, reviewed_at: null }, history: [] } }]) });
+    if (url.pathname.endsWith("/builds")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([{ id: buildId, status: "ready", build_hash: "b".repeat(64), previous_build_hash: null, pages_built: 1, created_at: "2026-10-01T12:00:00Z", activated_at: null, release_gate: { status: "pass", blockers: [], warnings: [] }, legal_review: { status: "block", blockers: ["Approve the legal review for this candidate build"], review: { state: "pending", evidence_ref: null, reason: null, replacement_guidance: null, reviewed_at: null }, history: [] }, index_promotion_provenance: [] }]) });
+
     if (url.pathname === "/api/v1/keywords") return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [] }) });
     return route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
   });

@@ -24,6 +24,7 @@ async function mockAuth(page: import("@playwright/test").Page) {
   await page.getByLabel("Email").fill("operator@example.test");
   await page.getByLabel("Пароль").fill("controlled-e2e-password");
   await page.getByRole("button", { name: "Войти" }).click();
+  await expect(page).toHaveURL(/\/$/);
 }
 
 test("Ops shows bounded verification evidence without mutation", async ({ page }) => {
@@ -32,6 +33,9 @@ test("Ops shows bounded verification evidence without mutation", async ({ page }
   await page.route("**/api/v1/panel/**", (route) => {
     const request = route.request();
     const url = new URL(request.url());
+    if (url.pathname === "/api/v1/security/me" || url.pathname === "/api/v1/auth/refresh") {
+      return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+    }
     if (request.method() !== "GET") mutationRequests.push(`${request.method()} ${url.pathname}`);
     if (url.pathname.endsWith("/reports/summary")) {
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ sites: 0, pages_estimate: 0, leads: 0, active_leads: 0, delivery_pending: 0, delivery_dead_letter: 0, domains_pending_tls: 0, domains_tls_error: 0 }) });
