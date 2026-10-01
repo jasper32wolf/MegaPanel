@@ -254,6 +254,7 @@ from app.models.leads import (  # noqa: E402
     WebhookDelivery,
     WebhookDeliveryAttempt,
 )
+from app.models.operational_verification import OperationalVerification  # noqa: E402
 from app.models.operations import AlertIncident, OperationalEvent  # noqa: E402
 from app.models.ops import (  # noqa: E402
     ContentDecayEvent,
@@ -329,6 +330,7 @@ __all__ = [
     "MorphCache",
     "Notification",
     "OperationalEvent",
+    "OperationalVerification",
     "Plugin",
     "Project",
     "ProjectFactRevision",

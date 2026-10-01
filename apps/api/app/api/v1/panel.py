@@ -6,6 +6,7 @@ from typing import Literal
 from uuid import UUID
 
 from app.api.deps import AuthContext, require_roles
+from app.api.v1.system import require_system_operator
 from app.db.session import get_db
 from app.models import AlertIncident, Lead, OperationalEvent, Site, WebhookDelivery, WorkerHeartbeat
 from app.models.leads import LeadDeliveryAggregate, LeadRoutingPolicy
@@ -15,6 +16,7 @@ from app.models.system_operation import SystemOperation
 from app.services.audit import append_audit
 from app.services.operations import (
     _serialize_incident,
+    list_verification_projection,
     serialize_operational_event,
     transition_incident,
 )
@@ -408,6 +410,17 @@ async def list_operational_events(
         .all()
     )
     return [serialize_operational_event(event) for event in events]
+
+
+@router.get("/reports/verification")
+async def report_verification(
+    auth: AuthContext = Depends(require_system_operator),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    return {
+        "scope": "bounded recorded verification evidence; not a production-readiness certification",
+        "checks": await list_verification_projection(db),
+    }
 
 
 @router.get("/reports/observability")

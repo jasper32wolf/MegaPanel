@@ -1,13 +1,155 @@
 from __future__ import annotations
 
+import re
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
+from app.models.operational_verification import OperationalVerification
 from app.models.operations import AlertIncident, OperationalEvent
 from app.models.project import PageDraft
 from app.services.audit import append_audit
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+_SHA_RE = re.compile(r"[a-f0-9]{40}(?:[a-f0-9]{24})?")
+VERIFICATION_MODES = frozenset({"fixture", "local_compose", "ci", "staging", "vps"})
+VERIFICATION_OUTCOMES = frozenset({"passed", "failed"})
+VERIFICATION_SOURCE_KINDS = frozenset(
+    {"github_actions", "controlled_runner", "operator_attestation"}
+)
+
+
+@dataclass(frozen=True)
+class VerificationControl:
+    key: str
+    label: str
+    mode: str
+    coverage: str
+    limitation: str
+
+
+VERIFICATION_CONTROLS = (
+    VerificationControl(
+        "controlled_fixture_contract",
+        "Controlled fixture contract",
+        "fixture",
+        "Route-mocked operator and safety contract checks",
+        "Does not verify API services, providers, external domains, or production runtime.",
+    ),
+    VerificationControl(
+        "controlled_ci_candidate_flow",
+        "Controlled candidate workflow",
+        "ci",
+        "Bounded candidate, QA, preview, and no-publish workflow in CI",
+        "Does not verify an external VPS origin, recipient, provider, or restore drill.",
+    ),
+    VerificationControl(
+        "production_compose_localhost",
+        "Production Compose smoke harness",
+        "ci",
+        "Isolated Compose, Caddy, and controlled receiver path in CI",
+        "Localhost/ephemeral CI evidence is not staging or VPS production proof.",
+    ),
+    VerificationControl(
+        "staging_restore_drill",
+        "Staging restore drill",
+        "staging",
+        "No bounded staging restore result has been recorded.",
+        "A runbook requirement is not evidence of a completed restore drill.",
+    ),
+    VerificationControl(
+        "vps_external_origin",
+        "External VPS origin",
+        "vps",
+        "No bounded external-origin result has been recorded.",
+        "The panel does not probe or certify VPS, DNS, TLS, browser, or external delivery.",
+    ),
+)
+VERIFICATION_CONTROL_BY_KEY = {control.key: control for control in VERIFICATION_CONTROLS}
+
+
+def verification_registry() -> tuple[VerificationControl, ...]:
+    return VERIFICATION_CONTROLS
+
+
+def append_operational_verification(
+    db: AsyncSession,
+    *,
+    check_key: str,
+    mode: str,
+    outcome: str,
+    source_kind: str,
+    source_ref: str,
+    code_sha: str | None = None,
+    observed_at: datetime | None = None,
+) -> OperationalVerification:
+    control = VERIFICATION_CONTROL_BY_KEY.get(check_key)
+    if control is None or control.mode != mode:
+        raise ValueError("Unsupported verification control")
+    _require_value(mode, VERIFICATION_MODES, "verification mode")
+    _require_value(outcome, VERIFICATION_OUTCOMES, "verification outcome")
+    _require_value(source_kind, VERIFICATION_SOURCE_KINDS, "verification source")
+    if (
+        not isinstance(source_ref, str)
+        or not 1 <= len(source_ref) <= 128
+        or any(char.isspace() for char in source_ref)
+    ):
+        raise ValueError("Verification source reference is invalid")
+    if code_sha is not None and not _SHA_RE.fullmatch(code_sha):
+        raise ValueError("Verification code SHA is invalid")
+    row = OperationalVerification(
+        check_key=check_key,
+        mode=mode,
+        outcome=outcome,
+        source_kind=source_kind,
+        source_ref=source_ref,
+        code_sha=code_sha,
+        observed_at=observed_at or datetime.now(UTC),
+    )
+    db.add(row)
+    return row
+
+
+def serialize_verification(
+    control: VerificationControl, row: OperationalVerification | None
+) -> dict:
+    return {
+        "check_key": control.key,
+        "label": control.label,
+        "mode": control.mode,
+        "state": row.outcome if row else "not_observed",
+        "observed_at": row.observed_at.isoformat() if row and row.observed_at else None,
+        "coverage": control.coverage,
+        "limitation": control.limitation,
+    }
+
+
+async def list_verification_projection(db: AsyncSession) -> list[dict]:
+    rows = list(
+        (
+            await db.execute(
+                select(OperationalVerification).order_by(
+                    OperationalVerification.check_key,
+                    OperationalVerification.mode,
+                    OperationalVerification.observed_at.desc(),
+                    OperationalVerification.recorded_at.desc(),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    latest: dict[str, OperationalVerification] = {}
+    for row in rows:
+        control = VERIFICATION_CONTROL_BY_KEY.get(row.check_key)
+        if control and control.mode == row.mode and row.check_key not in latest:
+            latest[row.check_key] = row
+    return [
+        serialize_verification(control, latest.get(control.key))
+        for control in VERIFICATION_CONTROLS
+    ]
+
 
 EVENT_TYPES = frozenset({"delivery", "qa", "release", "system", "worker"})
 SEVERITIES = frozenset({"info", "warning", "critical"})

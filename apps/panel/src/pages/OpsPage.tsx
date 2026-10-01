@@ -5,6 +5,16 @@ import { DataTable, PageHeader, StatusPill, Surface } from "../components/ui";
 type Summary = { sites: number; pages_estimate: number; leads: number; active_leads: number; delivery_pending: number; delivery_dead_letter: number; domains_pending_tls: number; domains_tls_error: number };
 type Incident = { id: string; signal_code: string; severity: "info" | "warning" | "critical"; status: "open" | "acknowledged" | "resolved"; occurrence_count: number; opened_at: string | null; acknowledged_at: string | null; resolved_at: string | null };
 type OperationalEvent = { event_type: string; severity: "info" | "warning" | "critical"; outcome: string; quantity: number; occurred_at: string | null };
+type VerificationCheck = {
+  check_key: string;
+  label: string;
+  mode: "fixture" | "local_compose" | "ci" | "staging" | "vps";
+  state: "passed" | "failed" | "not_observed";
+  observed_at: string | null;
+  coverage: string;
+  limitation: string;
+};
+type VerificationReport = { scope: string; checks: VerificationCheck[] };
 type Observability = {
   observed_at: string;
   builds: { failed: number; latest_success: { build_hash: string | null; created_at: string | null } | null };
@@ -21,13 +31,21 @@ function workerTone(status: Observability["worker"]["status"]) {
   return "warn" as const;
 }
 
+function verificationTone(state: VerificationCheck["state"]) {
+  if (state === "passed") return "ok" as const;
+  if (state === "failed") return "danger" as const;
+  return "warn" as const;
+}
+
 export function OpsPage() {
   const { token } = useAuth();
   const [summary, setSummary] = useState<Summary | null>(null);
   const [observability, setObservability] = useState<Observability | null>(null);
+  const [verification, setVerification] = useState<VerificationReport | null>(null);
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [events, setEvents] = useState<OperationalEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [verificationError, setVerificationError] = useState<string | null>(null);
 
   async function load() {
     const [nextSummary, nextObservability, nextIncidents, nextEvents] = await Promise.all([
@@ -40,6 +58,12 @@ export function OpsPage() {
     setObservability(nextObservability);
     setIncidents(nextIncidents);
     setEvents(nextEvents);
+    try {
+      setVerification(await api<VerificationReport>("/api/v1/panel/reports/verification", {}, token));
+      setVerificationError(null);
+    } catch (cause) {
+      setVerificationError(cause instanceof Error ? cause.message : "Доказательства недоступны");
+    }
   }
 
   async function updateIncident(incident: Incident, action: "acknowledge" | "resolve") {
@@ -61,6 +85,7 @@ export function OpsPage() {
       <Surface title="Доставка лидов"><div className="row"><StatusPill tone={summary?.delivery_dead_letter ? "danger" : summary?.delivery_pending ? "warn" : "ok"}>В очереди: {summary?.delivery_pending ?? "—"}</StatusPill><StatusPill tone={summary?.delivery_dead_letter ? "danger" : "ok"}>Dead letter: {summary?.delivery_dead_letter ?? "—"}</StatusPill></div><p className="muted">Это состояние database queue; история попыток и resend доступны в inbox лидов.</p></Surface>
       <Surface title="Сборки и AI"><div className="detail-grid"><div><strong>Ошибки сборок: {observability?.builds.failed ?? "—"}</strong><p className="muted">Последняя successful build: {observability?.builds.latest_success?.build_hash?.slice(0, 12) || "нет записи"}</p></div><div><strong>AI runs: {Object.values(observability?.ai.status_counts || {}).reduce((sum, count) => sum + count, 0)}</strong><p className="muted">Recorded cost: ${observability?.ai.recorded_cost_usd.toFixed(6) ?? "—"}; reserved estimate: ${observability?.ai.reserved_estimated_usd.toFixed(6) ?? "—"}</p><p className="muted">AI DLQ: {observability?.ai.unresolved_dead_letter_jobs ?? "—"}</p></div></div></Surface>
       <Surface title="Контент и медиа"><div className="detail-grid"><div><strong>Thin pages: {observability?.content_gaps.thin_pages ?? "—"}</strong><p className="muted">Noindex pages: {observability?.content_gaps.noindex_pages ?? "—"}</p></div><div><strong>Assets: {observability?.media.assets ?? "—"}</strong><p className="muted">Отсутствуют файлы: {observability?.media.missing_files ?? "—"}; provenance gaps: {observability?.media.provenance_gaps ?? "—"}; expired: {observability?.media.expired_licenses ?? "—"}</p><p className="muted">References: {observability?.media.references.status || "—"} · assets {observability?.media.references.assets ?? "—"} · pages {observability?.media.references.pages ?? "—"}</p><p className="muted">Источник: {observability?.media.references.source || "—"}; malformed entries: {observability?.media.references.invalid_entries ?? "—"}. Это только persisted manifest snapshot materialized pages, не полный reference graph.</p></div></div></Surface>
+      <Surface title="Границы доказательств"><p className="muted">Это фиксированная классификация bounded evidence, а не live production-check и не release approval. Fixture, local Compose и CI не доказывают staging или VPS production.</p>{verificationError ? <p className="muted" role="status">Доказательства недоступны: {verificationError}</p> : !verification ? <p className="muted" aria-live="polite">Загрузка evidence…</p> : <DataTable headers={["Проверка", "Режим", "Состояние", "Наблюдалось", "Охват и граница"]}>{verification.checks.map((check) => <tr key={check.check_key}><td>{check.label}</td><td>{check.mode}</td><td><StatusPill tone={verificationTone(check.state)}>{check.state}</StatusPill></td><td>{check.observed_at ? new Date(check.observed_at).toLocaleString() : "—"}</td><td><span>{check.coverage}</span><p className="muted">Не доказывает: {check.limitation}</p></td></tr>)}</DataTable>}</Surface>
       <Surface title="Инциденты"><p className="muted">Только фиксированные сигналы без PII, URL, секретов, hash или свободных ошибок. Acknowledge и resolve не меняют исходные delivery, QA или release данные.</p>{incidents.length === 0 ? <p className="muted">Зафиксированных инцидентов пока нет.</p> : <DataTable headers={["Сигнал", "Критичность", "Статус", "Срабатывания", "Действия"]}>{incidents.map((incident) => <tr key={incident.id}><td>{incident.signal_code}</td><td><StatusPill tone={incident.severity === "critical" ? "danger" : incident.severity === "warning" ? "warn" : "accent"}>{incident.severity}</StatusPill></td><td><StatusPill tone={incident.status === "resolved" ? "ok" : incident.status === "open" ? "danger" : "warn"}>{incident.status}</StatusPill></td><td>{incident.occurrence_count}</td><td className="row">{incident.status === "open" && <button className="btn btn-ghost" type="button" onClick={() => void updateIncident(incident, "acknowledge")}>Подтвердить</button>}{incident.status !== "resolved" && <button className="btn btn-ghost" type="button" onClick={() => void updateIncident(incident, "resolve")}>Закрыть</button>}</td></tr>)}</DataTable>}</Surface>
       <Surface title="Последние операционные события"><p className="muted">События содержат только тип, severity, outcome, quantity и время; они не являются логом запросов или доказательством production-проверки.</p>{events.length === 0 ? <p className="muted">Событий пока нет.</p> : <DataTable headers={["Тип", "Severity", "Outcome", "Количество", "Время"]}>{events.map((event, index) => <tr key={`${event.event_type}-${event.occurred_at || index}`}><td>{event.event_type}</td><td>{event.severity}</td><td>{event.outcome}</td><td>{event.quantity}</td><td>{event.occurred_at ? new Date(event.occurred_at).toLocaleString() : "—"}</td></tr>)}</DataTable>}</Surface>
       <Surface title="Worker и неподтверждённые сигналы"><div className="row"><StatusPill tone={workerTone(observability?.worker.status || "not_observed")}>Worker: {observability?.worker.status || "not observed"}</StatusPill></div>{observability?.worker.last_heartbeat_at ? <p className="muted">Последний database heartbeat: {new Date(observability.worker.last_heartbeat_at).toLocaleString()} · возраст {observability.worker.age_seconds ?? "—"} сек. · stale после {observability.worker.stale_after_seconds} сек.</p> : <p className="muted">{observability?.worker.reason || "Worker heartbeat пока не записан."}</p>}{observability?.worker.reason && observability.worker.last_heartbeat_at && <p className="muted">{observability.worker.reason}</p>}<p className="muted">Backups: {observability?.system.backups.status ?? "not observed"} — {observability?.system.backups.reason}</p></Surface>
