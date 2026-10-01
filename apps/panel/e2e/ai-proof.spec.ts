@@ -222,6 +222,42 @@ test("pages deep link shows PagePlan and QA lineage without mutation", async ({ 
   expect(mutationRequests).toEqual([]);
 });
 
+test("releases deep link shows immutable candidate history without mutation", async ({ page }) => {
+  await mockAuth(page);
+  const projectId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  const mutationRequests: string[] = [];
+  await page.route("**/api/v1/**", (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (request.method() !== "GET") mutationRequests.push(`${request.method()} ${url.pathname}`);
+    if (url.pathname === `/api/v1/projects/${projectId}`) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ id: projectId, name: "Releases proof" }) });
+    }
+    if (url.pathname === `/api/v1/projects/${projectId}/builds`) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([{
+        id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", status: "ready", build_hash: "c".repeat(64), previous_build_hash: null, pages_built: 2, created_at: "2026-10-01T12:00:00Z", activated_at: null,
+        release_gate: { status: "pass", blockers: [], warnings: [] },
+        legal_review: { status: "pass", blockers: [], review: { state: "approved", evidence_ref: "LEGAL-1", reason: null, replacement_guidance: null, reviewed_at: "2026-10-01T12:00:00Z" } },
+        index_promotion_provenance: [{ slug: "/repair", reason: "QA and operator review passed", decided_at: "2026-10-01T11:00:00Z" }],
+      }]) });
+    }
+    return route.fulfill({ status: 404, contentType: "application/json", body: '{"detail":"not used by proof"}' });
+  });
+
+  await page.evaluate((path) => {
+    window.history.pushState({}, "", path);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }, `/projects/${projectId}/releases`);
+
+  await expect(page.getByRole("heading", { name: "Releases · Releases proof" })).toBeVisible();
+  await expect(page.getByText("approved", { exact: true })).toBeVisible();
+  const provenance = page.locator("details").filter({ hasText: "Подтверждений индексации: 1" });
+  await provenance.locator("summary").click();
+  await expect(provenance.locator("p")).toContainText("QA and operator review passed");
+  await expect(page.getByRole("button", { name: /Создать candidate|Одобрить legal|Опубликовать|Откатить/ })).toHaveCount(0);
+  expect(mutationRequests).toEqual([]);
+});
+
 test("legal rejection сохраняет reason и manual remediation без публикации", async ({ page }) => {
   await mockAuth(page);
   const projectId = "55555555-5555-4555-8555-555555555555";
