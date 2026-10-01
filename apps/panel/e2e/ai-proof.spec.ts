@@ -137,6 +137,54 @@ test("semantic coverage остаётся read-only advisory обзором", asy
   await expect(page.getByRole("button", { name: /Создать|Применить|Собрать|Опубликовать/ })).toHaveCount(0);
 });
 
+test("facts deep link shows redacted revisions without mutation", async ({ page }) => {
+  await mockAuth(page);
+  const projectId = "88888888-8888-4888-8888-888888888888";
+  const mutationRequests: string[] = [];
+  await page.route("**/api/v1/**", (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (request.method() !== "GET") mutationRequests.push(`${request.method()} ${url.pathname}`);
+    if (url.pathname === `/api/v1/projects/${projectId}`) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ id: projectId, name: "Facts proof" }) });
+    }
+    if (url.pathname === `/api/v1/projects/${projectId}/facts`) {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([{
+          id: "99999999-9999-4999-8999-999999999999",
+          version: 3,
+          state: "confirmed",
+          facts: {
+            organization: "Proof Organization",
+            contacts: { phone: "+7 900 000-00-00", work_hours: "09:00–18:00" },
+            allowed_claims: ["Письменная гарантия"],
+          },
+          has_private_lead_email: true,
+          source_notes: "Contact private-recipient@example.test only through encrypted delivery.",
+          facts_hash: "a".repeat(64),
+          confirmed_at: "2026-10-01T12:00:00Z",
+          created_at: "2026-10-01T11:00:00Z",
+        }]),
+      });
+    }
+    return route.fulfill({ status: 404, contentType: "application/json", body: '{"detail":"not used by proof"}' });
+  });
+
+  await page.evaluate((path) => {
+    window.history.pushState({}, "", path);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }, `/projects/${projectId}/facts`);
+
+  await expect(page.getByRole("heading", { name: "Facts · Facts proof" })).toBeVisible();
+  await expect(page.getByText("Proof Organization", { exact: true })).toBeVisible();
+  await expect(page.getByText("configured", { exact: true })).toBeVisible();
+  await expect(page.getByText("private-recipient@example.test", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Сохранить|Подтвердить/ })).toHaveCount(0);
+  expect(mutationRequests).toEqual([]);
+});
+
 test("legal rejection сохраняет reason и manual remediation без публикации", async ({ page }) => {
   await mockAuth(page);
   const projectId = "55555555-5555-4555-8555-555555555555";
