@@ -21,6 +21,7 @@ from app.api.v1 import (
     security_ops,
     semantic,
     semantic_sources,
+    site_structure,
     sites,
     system,
 )
@@ -44,6 +45,7 @@ api_router.include_router(panel.router, prefix="/panel", tags=["panel"])
 api_router.include_router(projects.router, prefix="/projects", tags=["projects"])
 api_router.include_router(semantic.router, prefix="/projects", tags=["semantic"])
 api_router.include_router(semantic_sources.router, prefix="/projects", tags=["semantic-sources"])
+api_router.include_router(site_structure.router, prefix="/projects", tags=["site-structure"])
 api_router.include_router(ai_content.router, prefix="/projects", tags=["ai-content"])
 api_router.include_router(system.router, prefix="/system", tags=["system"])
 api_router.include_router(ai_workspace.router, prefix="/ai", tags=["ai-workspace"])
