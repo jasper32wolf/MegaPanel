@@ -103,19 +103,54 @@ test("оператор создаёт и готовит candidate без пуб�
 
   await login(page);
 
+  const keywordImportRequests: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST" && /\/keywords\/import-csv(?:\/preview)?$/.test(new URL(request.url()).pathname)) {
+      keywordImportRequests.push(new URL(request.url()).pathname);
+    }
+  });
   await page.getByRole("link", { name: "Семантика" }).click();
   await expect(page.getByRole("heading", { name: "Семантика" })).toBeVisible();
   await page.getByLabel("CSV-файл (UTF-8, до 10 МБ)").setInputFiles({
     name: "e2e-keywords.csv",
     mimeType: "text/csv",
     buffer: Buffer.from(
-      `phrase,frequency,group,intent,city,priority\n${keyword},1,E2E,commercial,${city},high\n`,
+      `phrase;frequency;group;intent;city;priority\n${keyword};1;E2E;commercial;${city};high\n`,
       "utf-8",
     ),
   });
-  await page.getByRole("button", { name: "Импортировать" }).click();
+  await page.getByLabel("Разделитель").selectOption(";");
+  await expect(page.getByRole("button", { name: /Импортировать проверенный CSV/ })).toBeDisabled();
+  expect(keywordImportRequests).toEqual([]);
+  const previewResponsePromise = page.waitForResponse((response) =>
+    response.request().method() === "POST" && new URL(response.url()).pathname === "/api/v1/keywords/import-csv/preview",
+  );
+  await page.getByRole("button", { name: "Проверить CSV" }).click();
+  expect((await previewResponsePromise).ok()).toBe(true);
+  await expect(page.getByRole("heading", { name: "Preview CSV без записи" })).toBeVisible();
+  await expect(page.getByText("Будет добавлено: 1")).toBeVisible();
+  expect(keywordImportRequests).toEqual(["/api/v1/keywords/import-csv/preview"]);
+  await page.getByLabel("Колонка города").fill("city_name");
+  await expect(page.getByRole("button", { name: /Импортировать проверенный CSV/ })).toBeDisabled();
+  await page.getByLabel("Колонка города").fill("city");
+  const refreshedPreviewPromise = page.waitForResponse((response) =>
+    response.request().method() === "POST" && new URL(response.url()).pathname === "/api/v1/keywords/import-csv/preview",
+  );
+  await page.getByRole("button", { name: "Проверить CSV" }).click();
+  expect((await refreshedPreviewPromise).ok()).toBe(true);
+  const importResponsePromise = page.waitForResponse((response) =>
+    response.request().method() === "POST" && new URL(response.url()).pathname === "/api/v1/keywords/import-csv",
+  );
+  await page.getByRole("button", { name: /Импортировать проверенный CSV/ }).click();
+  expect((await importResponsePromise).ok()).toBe(true);
+  await expect(page.getByRole("heading", { name: "Фактический результат импорта" })).toBeVisible();
   await expect(page.getByText("Добавлено: 1")).toBeVisible();
   await expect(page.getByText(keyword)).toBeVisible();
+  expect(keywordImportRequests).toEqual([
+    "/api/v1/keywords/import-csv/preview",
+    "/api/v1/keywords/import-csv/preview",
+    "/api/v1/keywords/import-csv",
+  ]);
 
   await page.getByRole("link", { name: "География" }).click();
   await expect(page.getByRole("heading", { name: "География" })).toBeVisible();
