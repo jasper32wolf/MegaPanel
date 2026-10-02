@@ -14,6 +14,7 @@ from app.models import (
     ProjectSemanticCollection,
     ProjectSemanticCollectionKeyword,
     ProjectSemanticKeywordGeoBinding,
+    ProjectSemanticSourceRun,
 )
 from app.schemas.workflow import (
     SemanticCollectionCreate,
@@ -118,7 +119,7 @@ async def _member_rows(db: AsyncSession, collection_id: UUID) -> list[dict]:
 
 async def _validate_input(
     db: AsyncSession, project_id: UUID, tenant_id: UUID, body: SemanticCollectionCreate
-) -> list[dict]:
+) -> tuple[list[dict], list[str]]:
     member_ids = {item.project_keyword_id for item in body.members}
     project_keywords = (
         list(
@@ -189,7 +190,33 @@ async def _validate_input(
     )
     if len(evidence) != len(evidence_ids):
         raise HTTPException(status_code=400, detail="Evidence must be approved for this project")
-    return [{"evidence_id": str(item.id), "reference_only": True} for item in evidence]
+    source_run_ids = set(body.manual_source_run_ids)
+    source_runs = (
+        list(
+            (
+                await db.execute(
+                    select(ProjectSemanticSourceRun).where(
+                        ProjectSemanticSourceRun.id.in_(source_run_ids),
+                        ProjectSemanticSourceRun.project_id == project_id,
+                        ProjectSemanticSourceRun.tenant_id == tenant_id,
+                        ProjectSemanticSourceRun.provider == "bukvarix",
+                        ProjectSemanticSourceRun.acquisition == "manual_export",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if source_run_ids
+        else []
+    )
+    if len(source_runs) != len(source_run_ids):
+        raise HTTPException(
+            status_code=400,
+            detail="Manual source runs must be recorded for this project",
+        )
+    evidence_refs = [{"evidence_id": str(item.id), "reference_only": True} for item in evidence]
+    return evidence_refs, [str(item.id) for item in source_runs]
 
 
 async def _replace_members(
@@ -256,13 +283,16 @@ async def create_collection(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     project = await _project_or_404(db, project_id, auth)
-    evidence_refs = await _validate_input(db, project.id, project.tenant_id, body)
+    evidence_refs, source_run_refs = await _validate_input(db, project.id, project.tenant_id, body)
     collection = ProjectSemanticCollection(
         project_id=project.id,
         tenant_id=project.tenant_id,
         name=body.name.strip(),
         description=body.description.strip() if body.description else None,
-        source_refs={"evidence": evidence_refs},
+        source_refs={
+            "evidence": evidence_refs,
+            "manual_source_run_ids": source_run_refs,
+        },
     )
     db.add(collection)
     await db.flush()
@@ -291,10 +321,13 @@ async def update_collection(
         raise HTTPException(
             status_code=409, detail="Only the current draft collection can be changed"
         )
-    evidence_refs = await _validate_input(db, project.id, project.tenant_id, body)
+    evidence_refs, source_run_refs = await _validate_input(db, project.id, project.tenant_id, body)
     collection.name = body.name.strip()
     collection.description = body.description.strip() if body.description else None
-    collection.source_refs = {"evidence": evidence_refs}
+    collection.source_refs = {
+        "evidence": evidence_refs,
+        "manual_source_run_ids": source_run_refs,
+    }
     collection.version += 1
     await _replace_members(db, collection, body)
     await append_audit(

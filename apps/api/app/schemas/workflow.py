@@ -183,6 +183,7 @@ class SemanticCollectionCreate(BaseModel):
     name: str = Field(min_length=2, max_length=255)
     description: str | None = Field(default=None, max_length=4000)
     evidence_ids: list[UUID] = Field(default_factory=list, max_length=50)
+    manual_source_run_ids: list[UUID] = Field(default_factory=list, max_length=20)
     members: list[SemanticCollectionKeywordIn] = Field(default_factory=list, max_length=1000)
 
     @model_validator(mode="after")
@@ -192,6 +193,8 @@ class SemanticCollectionCreate(BaseModel):
             raise ValueError("Semantic collection contains duplicate project keywords")
         if len(self.evidence_ids) != len(set(self.evidence_ids)):
             raise ValueError("Semantic collection contains duplicate evidence")
+        if len(self.manual_source_run_ids) != len(set(self.manual_source_run_ids)):
+            raise ValueError("Semantic collection contains duplicate manual source runs")
         return self
 
 

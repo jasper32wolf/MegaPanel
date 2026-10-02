@@ -12,6 +12,7 @@ from app.main import app
 from app.schemas.workflow import (
     SemanticCollectionCreate,
     SemanticCollectionKeywordIn,
+    SemanticCollectionUpdate,
     SemanticGeoBindingIn,
     SemanticPlanTargetIn,
 )
@@ -45,6 +46,27 @@ def test_semantic_collection_rejects_duplicate_members_and_geo_bindings():
                 SemanticGeoBindingIn(project_geo_place_id=geo_id),
                 SemanticGeoBindingIn(project_geo_place_id=geo_id),
             ],
+        )
+
+
+def test_semantic_collection_accepts_manual_source_runs_and_rejects_duplicates():
+    source_run_id = uuid4()
+    body = SemanticCollectionCreate(
+        name="Основная",
+        manual_source_run_ids=[source_run_id],
+    )
+    update = SemanticCollectionUpdate(
+        name="Основная",
+        manual_source_run_ids=[source_run_id],
+        version=1,
+    )
+
+    assert body.manual_source_run_ids == [source_run_id]
+    assert update.manual_source_run_ids == [source_run_id]
+    with pytest.raises(ValidationError, match="duplicate manual source runs"):
+        SemanticCollectionCreate(
+            name="Основная",
+            manual_source_run_ids=[source_run_id, source_run_id],
         )
 
 
@@ -179,6 +201,17 @@ async def test_semantic_signals_distinguishes_approved_planned_uncovered_unbound
         "blocks_candidate": False,
         "basis": "approved collection and persisted PagePlan semantic target snapshots",
     }
+
+
+def test_collection_source_runs_are_local_provenance_only():
+    source = (Path(__file__).parents[1] / "app" / "api" / "v1" / "semantic.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "ProjectSemanticSourceRun" in source
+    assert '"manual_source_run_ids": source_run_refs' in source
+    assert "httpx" not in source
+    assert "enqueue_" not in source
 
 
 def test_semantic_routes_are_registered_and_page_plan_exposes_target_snapshot():

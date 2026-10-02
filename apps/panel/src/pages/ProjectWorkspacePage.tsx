@@ -9,7 +9,7 @@ type FactRevision = { id: string; version: number; state: string; facts: Record<
 type LeadRoutingPolicy = { id: string; version: number; state: string; destinations: { id: string; target_key: string; channel: "email" | "webhook"; required: boolean; configured: boolean }[]; submitted_at: string | null; reviewed_at: string | null; decision_reason: string | null; created_at: string | null };
 type Keyword = { id: string; phrase: string; meta: Record<string, string> };
 type ProjectKeyword = { id: string; keyword_id: string; phrase: string; cluster: string | null; intent: string | null; priority: number | null };
-type SemanticCollection = { id: string; name: string; state: string; version: number; members: { id: string; project_keyword_id: string; keyword_id: string; cluster: string | null; intent: string | null; geo_bindings: { id: string; project_geo_place_id: string; scope: string }[] }[] };
+type SemanticCollection = { id: string; name: string; state: string; version: number; source_refs: { evidence?: unknown[]; manual_source_run_ids?: string[] }; members: { id: string; project_keyword_id: string; keyword_id: string; cluster: string | null; intent: string | null; geo_bindings: { id: string; project_geo_place_id: string; scope: string }[] }[] };
 type SemanticSignals = { totals: { members: number; bindings: number; covered: number; planned: number; uncovered: number; unbound: number }; cannibalization: { plans: { slug: string }[]; reason: string }[]; unmapped_plans: { slug: string; state: string }[] };
 type GeoPlace = { id: string; name: string; kind: string; is_validated?: boolean };
 type ProjectGeo = { id: string; geo_id: string; name: string; kind: string; validated: boolean; role: "primary" | "service_area" | "reference"; position: number };
@@ -70,6 +70,7 @@ export function ProjectWorkspacePage() {
   const [sourceMode, setSourceMode] = useState<SemanticSourceRun["mode"]>("domain");
   const [semanticSourceNotes, setSemanticSourceNotes] = useState("");
   const [sourceConfirmed, setSourceConfirmed] = useState(false);
+  const [semanticCollectionSourceRunIds, setSemanticCollectionSourceRunIds] = useState<string[]>([]);
   const [semanticName, setSemanticName] = useState("Основная семантика");
   const [builds, setBuilds] = useState<Build[]>([]);
   const [indexPromotions, setIndexPromotions] = useState<IndexPromotionCandidate[]>([]);
@@ -332,6 +333,12 @@ export function ProjectWorkspacePage() {
       : [...current, projectKeywordId]);
   }
 
+  function toggleSemanticCollectionSourceRun(sourceRunId: string) {
+    setSemanticCollectionSourceRunIds((current) => current.includes(sourceRunId)
+      ? current.filter((item) => item !== sourceRunId)
+      : [...current, sourceRunId]);
+  }
+
   async function recordManualBukvarixExport() {
     if (!sourceLabel.trim() || !sourceKeywordIds.length || !sourceConfirmed) {
       setError("Для ручного источника нужны название, выбранные ключи и явное подтверждение.");
@@ -372,6 +379,7 @@ export function ProjectWorkspacePage() {
         method: "POST",
         body: JSON.stringify({
           name: semanticName.trim(),
+          manual_source_run_ids: semanticCollectionSourceRunIds,
           members: selected.map((item) => ({
             project_keyword_id: item.id,
             cluster: item.cluster,
@@ -383,6 +391,7 @@ export function ProjectWorkspacePage() {
       }, token),
       "Semantic collection создана как draft. Отправьте её на review и одобрение.",
     );
+    setSemanticCollectionSourceRunIds([]);
   }
 
   function nextProjectKeywordIds() {
@@ -930,12 +939,13 @@ export function ProjectWorkspacePage() {
         <p className="muted">Коллекция группирует только выбранные ключи и выбранную географию проекта. Сначала создаётся draft, затем отдельные review/approve; это не создаёт PagePlan и не запускает генерацию.</p>
         <div className="stack">
           <label className="field">Название коллекции<input value={semanticName} onChange={(event) => setSemanticName(event.target.value)} placeholder="Например: Ремонт стиральных машин — Казань" /></label>
+          {semanticSourceRuns.length > 0 && <fieldset className="stack"><legend>Ручные provenance runs (необязательно)</legend>{semanticSourceRuns.map((run) => <label key={run.id}><input type="checkbox" checked={semanticCollectionSourceRunIds.includes(run.id)} onChange={() => toggleSemanticCollectionSourceRun(run.id)} disabled={busy !== null} /> {run.source_label} · {run.selected_keyword_count} keywords · {run.mode}</label>)}</fieldset>}
           <button className="btn btn-ghost" type="button" disabled={busy !== null || !selectedKeywordIds.length || !selectedGeoIds.length} onClick={() => void createSemanticCollection()}>Создать draft collection из выбранных ключей и географии</button>
         </div>
         {semanticSignals && <div className="detail-grid"><div><strong>{semanticSignals.totals.covered}</strong><span className="muted"> covered targets</span></div><div><strong>{semanticSignals.totals.planned}</strong><span className="muted"> planned targets</span></div><div><strong>{semanticSignals.totals.uncovered}</strong><span className="muted"> uncovered targets</span></div><div><strong>{semanticSignals.totals.unbound}</strong><span className="muted"> unbound keywords</span></div><div><strong>{semanticSignals.cannibalization.length}</strong><span className="muted"> collision warnings</span></div></div>}
         <p className="muted">Сигналы семантического покрытия — только advisory: они не блокируют candidate build, публикацию или другие этапы.</p>
         <Link className="btn btn-ghost" to={`/projects/${projectId}/semantic-coverage`}>Открыть обзор semantic coverage</Link>
-        {semanticCollections.length > 0 ? <DataTable headers={["Коллекция", "Состав", "Статус", "Действия"]}>{semanticCollections.map((collection) => <tr key={collection.id}><td>{collection.name}</td><td>{collection.members.length} keywords</td><td><StatusPill tone={tone(collection.state)}>{collection.state}</StatusPill></td><td className="row">{collection.state === "draft" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void run(`semantic-submit:${collection.id}`, () => api(`/api/v1/projects/${projectId}/semantic-collections/${collection.id}/submit-review`, { method: "POST" }, token), "Коллекция отправлена на review.")}>На review</button>}{collection.state === "review" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void run(`semantic-approve:${collection.id}`, () => api(`/api/v1/projects/${projectId}/semantic-collections/${collection.id}/approve`, { method: "POST", body: JSON.stringify({}) }, token), "Коллекция одобрена.")}>Одобрить</button>}</td></tr>)}</DataTable> : <EmptyState title="Коллекций пока нет" hint="Создайте draft из сохранённых project keyword и geo selections." />}
+        {semanticCollections.length > 0 ? <DataTable headers={["Коллекция", "Состав", "Статус", "Действия"]}>{semanticCollections.map((collection) => <tr key={collection.id}><td>{collection.name}</td><td>{collection.members.length} keywords{collection.source_refs.manual_source_run_ids?.length ? <><br /><span className="muted">manual sources: {collection.source_refs.manual_source_run_ids.map((id) => semanticSourceRuns.find((run) => run.id === id)?.source_label || id.slice(0, 8)).join(", ")}</span></> : null}</td><td><StatusPill tone={tone(collection.state)}>{collection.state}</StatusPill></td><td className="row">{collection.state === "draft" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void run(`semantic-submit:${collection.id}`, () => api(`/api/v1/projects/${projectId}/semantic-collections/${collection.id}/submit-review`, { method: "POST" }, token), "Коллекция отправлена на review.")}>На review</button>}{collection.state === "review" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void run(`semantic-approve:${collection.id}`, () => api(`/api/v1/projects/${projectId}/semantic-collections/${collection.id}/approve`, { method: "POST", body: JSON.stringify({}) }, token), "Коллекция одобрена.")}>Одобрить</button>}</td></tr>)}</DataTable> : <EmptyState title="Коллекций пока нет" hint="Создайте draft из сохранённых project keyword и geo selections." />}
         {semanticSignals?.cannibalization.map((collision, index) => <p className="muted" key={`${collision.reason}-${index}`}>Предупреждение: {collision.reason} — {collision.plans.map((plan) => plan.slug).join(", ")}</p>)}
         {semanticSignals?.unmapped_plans.length ? <p className="muted">Legacy PagePlan без explicit semantic target: {semanticSignals.unmapped_plans.map((plan) => plan.slug).join(", ")}. Они не считаются покрытием.</p> : null}
       </Surface>
