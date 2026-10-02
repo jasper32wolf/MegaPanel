@@ -106,6 +106,46 @@ async def save_keywords(
     return created, skipped
 
 
+async def preview_keywords(
+    db: AsyncSession,
+    *,
+    tenant_id: UUID,
+    items: Iterable[dict],
+    errors: list[dict],
+) -> dict:
+    existing = set(
+        (await db.execute(select(Keyword.normalized).where(Keyword.tenant_id == tenant_id)))
+        .scalars()
+        .all()
+    )
+    created = 0
+    skipped = 0
+    preview: list[dict] = []
+    for item in items:
+        phrase = str(item["phrase"])
+        normalized = normalize_phrase(phrase)
+        if not normalized or normalized in existing:
+            skipped += 1
+            continue
+        existing.add(normalized)
+        created += 1
+        if len(preview) < 50:
+            preview.append(
+                {
+                    "phrase": phrase.strip(),
+                    "category": item.get("category"),
+                    "meta": item.get("meta") or {},
+                }
+            )
+    return {
+        "created": created,
+        "skipped": skipped,
+        "invalid_rows": len(errors),
+        "errors": errors,
+        "preview": preview,
+    }
+
+
 def operator_scope(auth: AuthContext) -> UUID:
     if not auth.tenant_id:
         raise HTTPException(status_code=403, detail="Operator scope required")
@@ -144,6 +184,39 @@ async def keyword_template(
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": "attachment; filename=site-panel-keywords-template.csv"},
     )
+
+
+@router.post("/import-csv/preview")
+async def preview_keywords_csv(
+    file: UploadFile = File(...),
+    phrase_column: str = Form("phrase"),
+    group_column: str = Form("group"),
+    frequency_column: str = Form("frequency"),
+    intent_column: str = Form("intent"),
+    city_column: str = Form("city"),
+    priority_column: str = Form("priority"),
+    delimiter: str = Form(","),
+    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    tenant_id = operator_scope(auth)
+    raw = await file.read(MAX_IMPORT_BYTES + 1)
+    try:
+        items, errors = parse_keyword_csv(
+            raw,
+            delimiter=delimiter,
+            phrase_column=phrase_column,
+            column_map={
+                "group": group_column,
+                "frequency": frequency_column,
+                "intent": intent_column,
+                "city": city_column,
+                "priority": priority_column,
+            },
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return await preview_keywords(db, tenant_id=tenant_id, items=items, errors=errors)
 
 
 @router.post("/import-csv", status_code=status.HTTP_201_CREATED)

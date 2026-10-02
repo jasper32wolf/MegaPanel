@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+from types import SimpleNamespace
+from uuid import uuid4
+
 import pytest
-from app.api.v1.keywords import parse_keyword_csv
+from app.api.v1.keywords import parse_keyword_csv, preview_keywords
+from app.main import app
 
 
 def test_parse_keyword_csv_maps_optional_columns():
@@ -46,6 +51,36 @@ def test_parse_keyword_csv_reports_empty_phrase_rows():
 
     assert len(items) == 1
     assert errors == [{"line": 2, "error": "Empty phrase"}]
+
+
+def test_preview_keywords_reports_existing_and_in_file_duplicates_without_writes():
+    class Session:
+        async def execute(self, _statement):
+            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: ["already exists"]))
+
+    result = asyncio.run(
+        preview_keywords(
+            Session(),
+            tenant_id=uuid4(),
+            items=[
+                {"phrase": "Already exists", "category": None, "meta": {}},
+                {"phrase": "New phrase", "category": "repair", "meta": {"intent": "commercial"}},
+                {"phrase": " new   phrase ", "category": None, "meta": {}},
+            ],
+            errors=[{"line": 5, "error": "Empty phrase"}],
+        )
+    )
+
+    assert result["created"] == 1
+    assert result["skipped"] == 2
+    assert result["invalid_rows"] == 1
+    assert result["preview"] == [
+        {"phrase": "New phrase", "category": "repair", "meta": {"intent": "commercial"}}
+    ]
+
+
+def test_keyword_csv_preview_route_is_registered():
+    assert "post" in app.openapi()["paths"]["/api/v1/keywords/import-csv/preview"]
 
 
 def test_parse_keyword_csv_requires_mapped_phrase_column():
