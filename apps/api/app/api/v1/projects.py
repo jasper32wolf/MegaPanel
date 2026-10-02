@@ -34,6 +34,7 @@ from app.models import (
     Site,
     SiteBuild,
     SitePage,
+    SiteStructureRevision,
 )
 from app.schemas.workflow import (
     PROTECTED_CONTACT_FIELDS,
@@ -99,6 +100,29 @@ async def _project_or_404(db: AsyncSession, project_id: UUID, auth: AuthContext)
         raise HTTPException(status_code=404, detail="Project not found")
     _require_project_access(auth, project)
     return project
+
+
+async def _approved_structure_for_new_page_plans(
+    db: AsyncSession, project: Project
+) -> SiteStructureRevision:
+    revision = (
+        await db.execute(
+            select(SiteStructureRevision)
+            .where(
+                SiteStructureRevision.project_id == project.id,
+                SiteStructureRevision.tenant_id == project.tenant_id,
+                SiteStructureRevision.state == "approved",
+            )
+            .order_by(SiteStructureRevision.version.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if not revision:
+        raise HTTPException(
+            status_code=409,
+            detail="Approve a site structure revision before creating new PagePlans",
+        )
+    return revision
 
 
 def _legal_publish_blockers(manifest: SiteManifest) -> list[str]:
@@ -993,10 +1017,14 @@ async def create_commercial_page_plans(
         .all()
     )
     existing_slugs = {plan.slug for plan in existing}
+    recipes = [
+        recipe
+        for recipe in _COMMERCIAL_PAGE_RECIPES
+        if recipe[0] not in existing_slugs and str(values.get(recipe[2]) or "").strip()
+    ]
+    structure = await _approved_structure_for_new_page_plans(db, project) if recipes else None
     plans = []
-    for slug, title, fact_key in _COMMERCIAL_PAGE_RECIPES:
-        if slug in existing_slugs or not str(values.get(fact_key) or "").strip():
-            continue
+    for slug, title, fact_key in recipes:
         plan = PagePlan(
             project_id=project.id,
             tenant_id=project.tenant_id,
@@ -1012,7 +1040,12 @@ async def create_commercial_page_plans(
             block_selection={
                 "blocks": ["hero", "trust_bar", "faq", "contacts", "lead_form", "footer"]
             },
-            source_refs={"commercial_fact_key": fact_key, "fact_revision_id": str(facts.id)},
+            source_refs={
+                "commercial_fact_key": fact_key,
+                "fact_revision_id": str(facts.id),
+                "site_structure_revision_id": str(structure.id),
+                "site_structure_version": structure.version,
+            },
         )
         db.add(plan)
         plans.append(plan)
@@ -1052,6 +1085,7 @@ async def create_page_plan(
     ).scalar_one_or_none()
     if existing and existing.state in {"draft", "review"}:
         raise HTTPException(status_code=409, detail="Finish or reject the current page plan first")
+    structure = await _approved_structure_for_new_page_plans(db, project)
     plan = PagePlan(
         project_id=project.id,
         tenant_id=project.tenant_id,
@@ -1073,6 +1107,8 @@ async def create_page_plan(
                 if body.semantic_target
                 else {}
             ),
+            "site_structure_revision_id": str(structure.id),
+            "site_structure_version": structure.version,
         },
     )
     db.add(plan)

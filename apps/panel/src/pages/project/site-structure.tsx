@@ -132,7 +132,7 @@ export function ProjectSiteStructurePage() {
   return <ProjectWorkspaceLayout projectId={projectId}>
     <PageHeader
       title="Структура сайта"
-      description="AI-предложение сначала становится отдельной версией структуры. Только утверждённая версия может создать draft PagePlan; генерация, build и публикация всегда остаются отдельными этапами."
+      description="AI-предложение сначала становится отдельной версией структуры. Одобрение открывает создание новых PagePlan, а materialization создаёт traceable draft PagePlan; генерация, build и публикация всегда остаются отдельными этапами."
       actions={<Link className="btn btn-ghost" to={`/projects/${projectId}`}>Открыть workspace</Link>}
     />
     {error && <p className="error" role="alert">{error}</p>}

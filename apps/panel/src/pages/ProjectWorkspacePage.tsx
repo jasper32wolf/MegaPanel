@@ -15,6 +15,7 @@ type GeoPlace = { id: string; name: string; kind: string; is_validated?: boolean
 type ProjectGeo = { id: string; geo_id: string; name: string; kind: string; validated: boolean; role: "primary" | "service_area" | "reference"; position: number };
 type ClaimSlotBinding = { block_id: string; slot: string; claim_index: number };
 type Plan = { id: string; slug: string; objective: string; intent: string | null; kit_key: string; block_selection: { blocks?: string[]; claim_slot_bindings?: ClaimSlotBinding[] }; state: string; version: number; decision_reason: string | null };
+type StructureRevision = { id: string; version: number; state: string };
 type Draft = { id: string; page_plan_id: string; revision: number; state: string; content_hash: string | null; last_qa_verdict: string | null; qa_runs: { verdict: string; findings: { verdict: string; rule: string; evidence: string }[] }[]; page_manifest: { blocks?: { type?: unknown }[] } & Record<string, unknown>; failure_message: string | null };
 type Coverage = { selected: number; covered: number; uncovered: { keyword_id: string; phrase: string }[]; plans: number };
 type LegalReviewHistory = { decision: string; evidence_ref: string | null; reason: string | null; replacement_guidance: string | null; legal_snapshot_hash: string | null; actor_id: string | null; reviewed_at: string | null };
@@ -59,6 +60,7 @@ export function ProjectWorkspacePage() {
   const [coverage, setCoverage] = useState<Coverage | null>(null);
   const [semanticCollections, setSemanticCollections] = useState<SemanticCollection[]>([]);
   const [semanticSignals, setSemanticSignals] = useState<SemanticSignals | null>(null);
+  const [structureRevisions, setStructureRevisions] = useState<StructureRevision[]>([]);
   const [semanticName, setSemanticName] = useState("Основная семантика");
   const [builds, setBuilds] = useState<Build[]>([]);
   const [indexPromotions, setIndexPromotions] = useState<IndexPromotionCandidate[]>([]);
@@ -144,9 +146,13 @@ export function ProjectWorkspacePage() {
       ? blocks.flatMap((block) => typeof block.type === "string" ? [block.type] : [])
       : [];
   }, [drafts, mediaDraftId]);
+  const approvedStructure = useMemo(
+    () => structureRevisions.find((revision) => revision.state === "approved") || null,
+    [structureRevisions],
+  );
 
   async function load() {
-    const [nextProject, nextFacts, nextKeywords, nextProjectKeywords, nextPlaces, nextProjectGeo, nextPlans, nextDrafts, nextCoverage, nextBuilds, nextAssetUsage, nextIndexPromotions, nextSeoRuns, nextSlotRuns, nextCollections, nextSignals] = await Promise.all([
+    const [nextProject, nextFacts, nextKeywords, nextProjectKeywords, nextPlaces, nextProjectGeo, nextPlans, nextDrafts, nextCoverage, nextBuilds, nextAssetUsage, nextIndexPromotions, nextSeoRuns, nextSlotRuns, nextCollections, nextSignals, nextStructureRevisions] = await Promise.all([
       api<Project>(`/api/v1/projects/${projectId}`, {}, token),
       api<FactRevision[]>(`/api/v1/projects/${projectId}/facts`, {}, token),
       api<{ items: Keyword[] }>("/api/v1/keywords?limit=100", {}, token),
@@ -163,6 +169,7 @@ export function ProjectWorkspacePage() {
       api<AIRunBrief[]>(`/api/v1/projects/${projectId}/block-slot-proposals`, {}, token),
       api<SemanticCollection[]>(`/api/v1/projects/${projectId}/semantic-collections`, {}, token),
       api<SemanticSignals>(`/api/v1/projects/${projectId}/semantic-signals`, {}, token),
+      api<StructureRevision[]>(`/api/v1/projects/${projectId}/site-structure/revisions`, {}, token),
     ]);
     setProject(nextProject);
     setFacts(nextFacts);
@@ -185,6 +192,7 @@ export function ProjectWorkspacePage() {
     setSlotRun((current) => nextSlotRuns.find((item) => item.id === current?.id) || nextSlotRuns[0] || null);
     setSemanticCollections(nextCollections);
     setSemanticSignals(nextSignals);
+    setStructureRevisions(nextStructureRevisions);
     if (nextProject.site_id) {
       const routing = await api<{ items: LeadRoutingPolicy[] }>(`/api/v1/projects/${projectId}/lead-routing`, {}, token);
       setRoutingPolicies(routing.items);
@@ -806,6 +814,9 @@ export function ProjectWorkspacePage() {
       <PageHeader title={project.name} description="Факты → семантика → география → план страниц → черновик и проверка качества. Публикация не выполняется автоматически." actions={<div className="row"><Link className="btn btn-ghost" to={`/projects/${projectId}/activity`}>Activity</Link><Link className="btn btn-ghost" to="/projects">К проектам</Link></div>} />
       {error && <p className="error" role="alert">{error}</p>}
       {message && <p className="muted" aria-live="polite">{message}</p>}
+      <Surface title="Подготовка структуры">
+        {approvedStructure ? <p className="muted">Одобрена структура сайта v{approvedStructure.version}. Новые direct PagePlan будут сохранены с её server-owned provenance; для полного дерева используйте materialization в <Link to={`/projects/${projectId}/site-structure`}>разделе структуры</Link>.</p> : <p className="error">Перед созданием новых PagePlan одобрите структуру сайта. Существующие планы, черновики, candidate builds и release workflow остаются доступными. <Link to={`/projects/${projectId}/site-structure`}>Открыть структуру сайта</Link></p>}
+      </Surface>
       <Surface title="1. Факты бизнеса">
         <form className="stack" onSubmit={saveFacts}>
           <p className="muted">Публичные поля используются в контенте и контактах сайта после подтверждения facts. Адрес доставки лидов хранится отдельно, не попадает в preview, SSG или AI-контекст.</p>
@@ -828,7 +839,7 @@ export function ProjectWorkspacePage() {
           <label className="field">Источник фактов<textarea value={sourceNotes} onChange={(event) => setSourceNotes(event.target.value)} placeholder="Откуда оператор подтвердил сведения" /></label>
           <button className="btn" type="submit" disabled={busy !== null}>{busy === "facts" ? "Сохранение…" : "Сохранить новую версию фактов"}</button>
         </form>
-        {facts.length === 0 ? <EmptyState title="Факты ещё не сохранены" hint="Без подтверждённых фактов план страницы не перейдёт на проверку." /> : <div className="row"><StatusPill tone={latestFact?.state === "confirmed" ? "ok" : "warn"}>версия {latestFact?.version}: {latestFact?.state}</StatusPill>{latestFact?.state === "draft" ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => run(`confirm:${latestFact.id}`, () => api(`/api/v1/projects/${projectId}/facts/${latestFact.id}/confirm`, { method: "POST" }, token), "Факты подтверждены.")}>Подтвердить факты</button> : null}{latestFact?.state === "confirmed" ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void createCommercialPagePlans()}>{busy === "commercial-pages" ? "Создание…" : "Создать коммерческие PagePlan"}</button> : null}</div>}
+        {facts.length === 0 ? <EmptyState title="Факты ещё не сохранены" hint="Без подтверждённых фактов план страницы не перейдёт на проверку." /> : <div className="row"><StatusPill tone={latestFact?.state === "confirmed" ? "ok" : "warn"}>версия {latestFact?.version}: {latestFact?.state}</StatusPill>{latestFact?.state === "draft" ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => run(`confirm:${latestFact.id}`, () => api(`/api/v1/projects/${projectId}/facts/${latestFact.id}/confirm`, { method: "POST" }, token), "Факты подтверждены.")}>Подтвердить факты</button> : null}{latestFact?.state === "confirmed" ? <button className="btn btn-ghost" type="button" disabled={busy !== null || !approvedStructure} onClick={() => void createCommercialPagePlans()}>{busy === "commercial-pages" ? "Создание…" : "Создать коммерческие PagePlan"}</button> : null}</div>}
       </Surface>
       <Surface title="2. Маршрутизация заявок">
         <p className="muted">Policy хранит encrypted получателей и применяется только к новым заявкам после явной активации. Сохранённые адреса и webhook secret не отображаются повторно.</p>
@@ -876,7 +887,7 @@ export function ProjectWorkspacePage() {
           <label className="field">Комплект<select value={kitKey} onChange={(event) => setKitKey(event.target.value)}><option value="service-local-v1">Локальные услуги</option><option value="home-repair-v1">Домашний ремонт</option></select></label>
           <div className="surface"><strong>Semantic target (необязательно)</strong><p className="muted">Выберите только approved collection и конкретные связки keyword × geography. Без выбора план останется unmapped; это разрешено и ничего не создаёт автоматически.</p><label className="field">Approved collection<select value={planSemanticCollectionId} onChange={(event) => { setPlanSemanticCollectionId(event.target.value); setPlanSemanticSelections([]); }}><option value="">Не связывать с семантикой</option>{semanticCollections.filter((collection) => collection.state === "approved").map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</select></label>{planSemanticCollectionId && (() => { const collection = semanticCollections.find((item) => item.id === planSemanticCollectionId); return collection ? <DataTable headers={["", "Keyword", "Geo binding"]}>{collection.members.flatMap((member) => member.geo_bindings.map((binding) => { const targetKey = `${member.id}:${binding.id}`; const keyword = projectKeywords.find((item) => item.id === member.project_keyword_id); const geo = projectGeoBindings.find((item) => item.id === binding.project_geo_place_id); return <tr key={targetKey}><td><input aria-label={`Выбрать semantic target ${keyword?.phrase || member.project_keyword_id}`} type="checkbox" checked={planSemanticSelections.includes(targetKey)} onChange={() => togglePlanSemanticTarget(targetKey)} /></td><td>{keyword?.phrase || member.project_keyword_id}</td><td>{geo?.name || binding.project_geo_place_id} · {binding.scope}</td></tr>; }))}</DataTable> : null; })()}</div>
           <div className="surface"><strong>Дословные утверждённые claims</strong><p className="muted">Не AI-текст: выбранное утверждение будет скопировано без перефразирования в серверный curated text slot после freeze facts и review плана.</p><div className="detail-grid"><label className="field">Curated slot<select value={planClaimSlot} onChange={(event) => setPlanClaimSlot(event.target.value)}><option value="hero.unique_core">hero · unique_core</option><option value="hero.hero_supporting_text">hero · hero_supporting_text</option></select></label><label className="field">Claim<select value={planClaimIndex} onChange={(event) => setPlanClaimIndex(event.target.value)}><option value="">Выберите подтверждённый claim</option>{approvedClaims.map((claim, index) => <option key={`${index}-${claim}`} value={index}>{index + 1}. {claim}</option>)}</select></label></div><button className="btn btn-ghost" type="button" disabled={busy !== null || !planClaimIndex} onClick={addPlanClaimBinding}>Привязать дословно</button>{planClaimBindings.length > 0 && <ul>{planClaimBindings.map((binding) => <li key={`${binding.block_id}.${binding.slot}`}><code>{binding.block_id}.{binding.slot}</code> ← #{binding.claim_index + 1}: {approvedClaims[binding.claim_index]} <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => setPlanClaimBindings((current) => current.filter((item) => item !== binding))}>Убрать</button></li>)}</ul>}{approvedClaims.length === 0 && <p className="muted">Сначала сохраните и подтвердите claims в facts. Без binding обычный deterministic draft не изменяется.</p>}</div>
-          <button className="btn" type="submit" disabled={busy !== null || !planObjective.trim()}>{busy === "plan" ? "Сохранение…" : "Создать черновик плана"}</button>
+          <button className="btn" type="submit" disabled={busy !== null || !planObjective.trim() || !approvedStructure}>{busy === "plan" ? "Сохранение…" : "Создать черновик плана"}</button>
         </form>
         {plans.length === 0 ? <EmptyState title="Планов страниц пока нет" /> : <DataTable headers={["Путь", "Цель", "Статус", "Действия"]}>{plans.map((plan) => <tr key={plan.id}><td>{plan.slug}</td><td>{plan.objective}</td><td><StatusPill tone={tone(plan.state)}>{plan.state}</StatusPill></td><td className="row">{plan.state === "draft" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => decision(plan, "submit-review")}>На проверку</button>}{plan.state === "review" && <><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => decision(plan, "approve")}>Одобрить</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => decision(plan, "reject")}>Отклонить</button></>}{plan.state === "approved" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => generate(plan)}>Создать черновик</button>}</td></tr>)}</DataTable>}
       </Surface>
