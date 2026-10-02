@@ -283,6 +283,7 @@ from app.models.project import (  # noqa: E402
     ProjectSemanticCollectionKeyword,
     ProjectSemanticKeywordGeoBinding,
 )
+from app.models.project_family import ProjectFamilyMember  # noqa: E402
 from app.models.publish import (  # noqa: E402
     BuildReleaseGate,
     BulkOperation,
@@ -340,6 +341,7 @@ __all__ = [
     "Plugin",
     "Project",
     "ProjectFactRevision",
+    "ProjectFamilyMember",
     "ProjectGeoPlace",
     "ProjectKeyword",
     "ProjectSemanticCollection",

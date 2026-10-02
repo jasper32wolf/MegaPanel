@@ -16,6 +16,7 @@ from app.api.v1 import (
     leads,
     media,
     panel,
+    project_families,
     projects,
     prompts,
     security_ops,
@@ -43,6 +44,7 @@ api_router.include_router(leads.router, prefix="/leads", tags=["leads"])
 api_router.include_router(lead_routing.router, prefix="/projects", tags=["lead-routing"])
 api_router.include_router(panel.router, prefix="/panel", tags=["panel"])
 api_router.include_router(projects.router, prefix="/projects", tags=["projects"])
+api_router.include_router(project_families.router, prefix="/projects", tags=["project-families"])
 api_router.include_router(semantic.router, prefix="/projects", tags=["semantic"])
 api_router.include_router(semantic_sources.router, prefix="/projects", tags=["semantic-sources"])
 api_router.include_router(site_structure.router, prefix="/projects", tags=["site-structure"])
