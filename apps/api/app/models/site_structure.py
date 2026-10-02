@@ -10,6 +10,32 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db.session import Base
 
 
+class SiteStructureAIImport(Base):
+    __tablename__ = "site_structure_ai_run_imports"
+    __table_args__ = (UniqueConstraint("ai_run_id", name="uq_site_structure_ai_import_run"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    )
+    ai_run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ai_runs.id", ondelete="RESTRICT"), nullable=False
+    )
+    site_structure_revision_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("site_structure_revisions.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    input_snapshot_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    output_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class SiteStructureRevision(Base):
     __tablename__ = "site_structure_revisions"
     __table_args__ = (

@@ -263,8 +263,6 @@ class ArchitectureProposalOut(BaseModel):
     requires_operator_approval: Literal[True] = True
     estimated_cost_usd: float | None = None
     max_cost_usd: float | None = None
-    page_plan_ids: list[UUID] = Field(default_factory=list)
-    page_plans_imported: bool = False
     error_code: str | None = None
 
     model_config = ConfigDict(extra="forbid")

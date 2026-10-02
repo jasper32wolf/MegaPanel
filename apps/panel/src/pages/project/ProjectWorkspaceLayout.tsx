@@ -7,6 +7,7 @@ const sections = [
   ["pages", "Pages"],
   ["releases", "Releases"],
   ["routing", "Routing"],
+  ["site-structure", "Структура"],
   ["semantic-coverage", "Coverage"],
   ["city-projects", "Города"],
   ["activity", "Activity"],

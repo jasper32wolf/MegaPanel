@@ -8,14 +8,26 @@ from uuid import UUID
 from app.api.deps import AuthContext, require_roles
 from app.api.v1.projects import _confirmed_facts, _project_or_404, _selection_snapshots
 from app.db.session import get_db
-from app.models import KnowledgeDoc, PagePlan, ProjectSemanticCollection, SiteStructureRevision
+from app.models import (
+    AIRun,
+    KnowledgeDoc,
+    PagePlan,
+    ProjectSemanticCollection,
+    SiteStructureAIImport,
+    SiteStructureRevision,
+)
+from app.schemas.ai import PageProposal
 from app.schemas.site_structure import (
+    SiteStructureAIImportCreate,
+    SiteStructureAIImportOut,
+    SiteStructurePageIn,
     SiteStructureRevisionCreate,
     SiteStructureRevisionDecision,
     SiteStructureRevisionOut,
 )
 from app.services.audit import append_audit
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from pydantic import ValidationError
 from site_panel_blocks import list_kits
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -131,6 +143,82 @@ def _validate_catalog_pages(body: SiteStructureRevisionCreate) -> dict:
     return {"pages": pages}
 
 
+async def _create_draft_revision(
+    db: AsyncSession,
+    *,
+    project_id: UUID,
+    tenant_id: UUID,
+    body: SiteStructureRevisionCreate,
+    source_snapshot: dict | None = None,
+) -> SiteStructureRevision:
+    collection, evidence = await _validated_sources(
+        db, project_id=project_id, tenant_id=tenant_id, body=body
+    )
+    structure = _validate_catalog_pages(body)
+    current = (
+        await db.execute(
+            select(SiteStructureRevision)
+            .where(SiteStructureRevision.project_id == project_id)
+            .order_by(SiteStructureRevision.version.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if current and current.state in {"draft", "review"}:
+        raise HTTPException(
+            status_code=409, detail="Finish or reject the current structure revision first"
+        )
+    revision = SiteStructureRevision(
+        project_id=project_id,
+        tenant_id=tenant_id,
+        supersedes_id=current.id if current else None,
+        version=(current.version + 1) if current else 1,
+        semantic_collection_id=collection.id,
+        evidence_ids=[str(item.id) for item in evidence],
+        structure=structure,
+        structure_hash=_hash(structure),
+        source_snapshot=source_snapshot or {},
+        source_snapshot_hash=_hash(source_snapshot) if source_snapshot else None,
+    )
+    db.add(revision)
+    await db.flush()
+    return revision
+
+
+def _ai_structure_body(
+    body: SiteStructureAIImportCreate, run: AIRun
+) -> tuple[SiteStructureRevisionCreate, str]:
+    try:
+        proposals = [PageProposal.model_validate(item) for item in run.output.get("pages", [])]
+        pages = [
+            SiteStructurePageIn(
+                key=proposal.key,
+                parent_key=proposal.parent_key,
+                slug=proposal.slug,
+                title=proposal.title,
+                meta_description=proposal.meta_description,
+                h1=proposal.h1,
+                heading_outline=[item.model_dump() for item in proposal.heading_outline],
+                objective=proposal.purpose,
+                kit_key=proposal.kit_key,
+                block_ids=proposal.block_ids,
+                risk_notes="\n".join(proposal.uncertainty_notes) or None,
+            )
+            for proposal in proposals
+        ]
+        structure_body = SiteStructureRevisionCreate(
+            semantic_collection_id=body.semantic_collection_id,
+            evidence_ids=body.evidence_ids,
+            pages=pages,
+        )
+    except (TypeError, ValidationError, ValueError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="Approved AI output cannot be imported as a valid site structure",
+        ) from exc
+    output_hash = _hash({"pages": [proposal.model_dump(mode="json") for proposal in proposals]})
+    return structure_body, output_hash
+
+
 @router.get("/{project_id}/site-structure/revisions", response_model=list[SiteStructureRevisionOut])
 async def list_structure_revisions(
     project_id: UUID,
@@ -167,34 +255,12 @@ async def create_structure_revision(
     db: AsyncSession = Depends(get_db),
 ) -> SiteStructureRevisionOut:
     project = await _project_or_404(db, project_id, auth)
-    collection, evidence = await _validated_sources(
-        db, project_id=project.id, tenant_id=project.tenant_id, body=body
-    )
-    structure = _validate_catalog_pages(body)
-    current = (
-        await db.execute(
-            select(SiteStructureRevision)
-            .where(SiteStructureRevision.project_id == project.id)
-            .order_by(SiteStructureRevision.version.desc())
-            .limit(1)
-        )
-    ).scalar_one_or_none()
-    if current and current.state in {"draft", "review"}:
-        raise HTTPException(
-            status_code=409, detail="Finish or reject the current structure revision first"
-        )
-    revision = SiteStructureRevision(
+    revision = await _create_draft_revision(
+        db,
         project_id=project.id,
         tenant_id=project.tenant_id,
-        supersedes_id=current.id if current else None,
-        version=(current.version + 1) if current else 1,
-        semantic_collection_id=collection.id,
-        evidence_ids=[str(item.id) for item in evidence],
-        structure=structure,
-        structure_hash=_hash(structure),
+        body=body,
     )
-    db.add(revision)
-    await db.flush()
     await append_audit(
         db,
         action="site_structure.create",
@@ -204,6 +270,115 @@ async def create_structure_revision(
     )
     await db.commit()
     return _serialize(revision)
+
+
+@router.post(
+    "/{project_id}/site-structure/revisions/import-approved-ai-run",
+    response_model=SiteStructureAIImportOut,
+)
+async def import_approved_ai_run(
+    project_id: UUID,
+    body: SiteStructureAIImportCreate,
+    response: Response,
+    auth: AuthContext = Depends(_WRITE),
+    db: AsyncSession = Depends(get_db),
+) -> SiteStructureAIImportOut:
+    project = await _project_or_404(db, project_id, auth)
+    run = (
+        await db.execute(
+            select(AIRun)
+            .where(
+                AIRun.id == body.ai_run_id,
+                AIRun.tenant_id == project.tenant_id,
+                AIRun.project_id == project.id,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if not run:
+        raise HTTPException(status_code=404, detail="Approved architecture run not found")
+    if run.action != "architecture.site-map":
+        raise HTTPException(status_code=409, detail="AI run is not a site architecture proposal")
+    if run.status != "approved" or run.operator_decision != "approve":
+        raise HTTPException(status_code=409, detail="Approve the AI architecture proposal first")
+
+    previous = (
+        await db.execute(
+            select(SiteStructureAIImport).where(
+                SiteStructureAIImport.ai_run_id == run.id,
+                SiteStructureAIImport.tenant_id == project.tenant_id,
+                SiteStructureAIImport.project_id == project.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if previous:
+        revision = await _revision_or_404(
+            db,
+            project_id=project.id,
+            revision_id=previous.site_structure_revision_id,
+            auth=auth,
+        )
+        return SiteStructureAIImportOut(
+            revision=_serialize(revision),
+            imported=False,
+            ai_run_id=run.id,
+            source_output_hash=previous.output_hash,
+        )
+
+    structure_body, output_hash = _ai_structure_body(body, run)
+    source_snapshot = {
+        "ai_import": {
+            "source_type": "ai.architecture.site-map",
+            "ai_run_id": str(run.id),
+            "prompt_id": run.prompt_id,
+            "prompt_version": run.prompt_version,
+            "prompt_hash": run.prompt_hash,
+            "input_snapshot_hash": run.input_snapshot_hash,
+            "output_hash": output_hash,
+            "page_count": len(structure_body.pages),
+        }
+    }
+    revision = await _create_draft_revision(
+        db,
+        project_id=project.id,
+        tenant_id=project.tenant_id,
+        body=structure_body,
+        source_snapshot=source_snapshot,
+    )
+    db.add(
+        SiteStructureAIImport(
+            project_id=project.id,
+            tenant_id=project.tenant_id,
+            ai_run_id=run.id,
+            site_structure_revision_id=revision.id,
+            input_snapshot_hash=run.input_snapshot_hash,
+            output_hash=output_hash,
+            created_by=auth.user.id,
+        )
+    )
+    await db.flush()
+    await append_audit(
+        db,
+        action="site_structure.ai_architecture.imported",
+        payload={
+            "project_id": str(project.id),
+            "revision_id": str(revision.id),
+            "ai_run_id": str(run.id),
+            "input_snapshot_hash": run.input_snapshot_hash,
+            "output_hash": output_hash,
+            "page_count": len(structure_body.pages),
+        },
+        tenant_id=project.tenant_id,
+        actor_id=auth.user.id,
+    )
+    await db.commit()
+    response.status_code = status.HTTP_201_CREATED
+    return SiteStructureAIImportOut(
+        revision=_serialize(revision),
+        imported=True,
+        ai_run_id=run.id,
+        source_output_hash=output_hash,
+    )
 
 
 @router.post(
@@ -238,6 +413,7 @@ async def submit_structure_revision(
         "geo_snapshot": geo,
         "evidence_ids": revision.evidence_ids or [],
         "structure_hash": revision.structure_hash,
+        **(revision.source_snapshot or {}),
     }
     revision.source_snapshot = source_snapshot
     revision.source_snapshot_hash = _hash(source_snapshot)

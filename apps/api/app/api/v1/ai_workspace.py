@@ -8,7 +8,7 @@ from typing import Any
 from uuid import UUID
 
 from app.api.deps import AuthContext, require_roles
-from app.api.v1.projects import _confirmed_facts, _project_or_404, _selection_snapshots
+from app.api.v1.projects import _confirmed_facts, _selection_snapshots
 from app.db.session import get_db
 from app.models import AIProviderConnection, AIRun, KnowledgeDoc, PagePlan, Project
 from app.providers import Usage
@@ -70,8 +70,6 @@ def _proposal_out(run: AIRun) -> ArchitectureProposalOut:
         input_snapshot_hash=run.input_snapshot_hash,
         estimated_cost_usd=run.input_snapshot.get("spend_policy", {}).get("estimated_cost_usd"),
         max_cost_usd=run.input_snapshot.get("spend_policy", {}).get("max_cost_usd"),
-        page_plan_ids=[UUID(item) for item in run.output.get("page_plan_ids", [])],
-        page_plans_imported=run.output.get("page_plans_imported", False),
         error_code=run.error_code,
     )
 
@@ -632,112 +630,3 @@ async def decide_ai_run(
     await db.commit()
     await db.refresh(run)
     return _proposal_out(run) if run.action == "architecture.site-map" else _run_out(run)
-
-
-@router.post("/runs/{run_id}/page-plans", response_model=ArchitectureProposalOut)
-async def create_page_plans_from_proposal(
-    run_id: UUID,
-    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager")),
-    db: AsyncSession = Depends(get_db),
-) -> ArchitectureProposalOut:
-    run = (
-        await db.execute(
-            select(AIRun)
-            .where(AIRun.id == run_id, AIRun.tenant_id == auth.tenant_id)
-            .with_for_update()
-        )
-    ).scalar_one_or_none()
-    if not run:
-        raise HTTPException(status_code=404, detail="AI run not found")
-    if run.action != "architecture.site-map":
-        raise HTTPException(status_code=409, detail="This AI action cannot create PagePlans")
-    if run.status != "approved" or run.operator_decision != "approve":
-        raise HTTPException(status_code=409, detail="Approve the architecture proposal first")
-    if run.output.get("page_plans_imported"):
-        raise HTTPException(
-            status_code=409, detail="PagePlans were already created from this proposal"
-        )
-    if run.project_id is None:
-        raise HTTPException(status_code=409, detail="AI run is not associated with a project")
-    project = await _project_or_404(db, run.project_id, auth)
-    pages = [PageProposal.model_validate(item) for item in run.output.get("pages", [])]
-    kit_map = {item["key"]: set(item["blocks"]) for item in list_kits()}
-    existing = list(
-        (
-            await db.execute(
-                select(PagePlan).where(PagePlan.project_id == project.id).order_by(PagePlan.version)
-            )
-        )
-        .scalars()
-        .all()
-    )
-    latest_by_slug: dict[str, PagePlan] = {}
-    for plan in existing:
-        latest = latest_by_slug.get(plan.slug)
-        if latest is None or plan.version > latest.version:
-            latest_by_slug[plan.slug] = plan
-    for page in pages:
-        if page.kit_key not in kit_map or any(
-            block_id not in kit_map[page.kit_key] for block_id in page.block_ids
-        ):
-            raise HTTPException(
-                status_code=409,
-                detail="Curated kit catalog changed; regenerate the proposal",
-            )
-        latest = latest_by_slug.get(page.slug)
-        if latest and latest.state in {"draft", "review"}:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "code": "page_plan_conflict",
-                    "slug": page.slug,
-                    "page_plan_id": str(latest.id),
-                },
-            )
-    created: list[PagePlan] = []
-    for page in pages:
-        latest = latest_by_slug.get(page.slug)
-        plan = PagePlan(
-            project_id=project.id,
-            tenant_id=project.tenant_id,
-            supersedes_id=latest.id if latest else None,
-            version=latest.version + 1 if latest else 1,
-            slug=page.slug,
-            objective=page.title,
-            intent=page.purpose[:128],
-            risk_notes="\n".join(page.uncertainty_notes) or None,
-            kit_key=page.kit_key,
-            block_selection={"blocks": page.block_ids},
-            source_refs={
-                "ai_run_id": str(run.id),
-                "prompt_id": run.prompt_id,
-                "prompt_version": run.prompt_version,
-                "prompt_hash": run.prompt_hash,
-                "keyword_ids": [str(item) for item in page.keyword_ids],
-                "geo_ids": [str(item) for item in page.geo_ids],
-                "fact_keys": page.fact_keys,
-            },
-        )
-        db.add(plan)
-        created.append(plan)
-        latest_by_slug[page.slug] = plan
-    await db.flush()
-    run.output = {
-        **run.output,
-        "page_plan_ids": [str(plan.id) for plan in created],
-        "page_plans_imported": True,
-    }
-    await append_audit(
-        db,
-        action="ai.architecture.page_plans.created",
-        payload={
-            "run_id": str(run.id),
-            "project_id": str(project.id),
-            "page_plan_ids": [str(plan.id) for plan in created],
-        },
-        tenant_id=auth.tenant_id,
-        actor_id=auth.user.id,
-    )
-    await db.commit()
-    await db.refresh(run)
-    return _proposal_out(run)

@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
 import { api, useAuth } from "../lib/auth";
 import { PageHeader, Surface } from "../components/ui";
 
@@ -22,8 +23,6 @@ type Proposal = {
   prompt_hash: string;
   input_snapshot_hash: string;
   pages: Array<Record<string, unknown>>;
-  page_plan_ids: string[];
-  page_plans_imported: boolean;
   estimated_cost_usd: number | null;
   max_cost_usd: number | null;
   error_code: string | null;
@@ -188,31 +187,11 @@ export function AIWorkspacePage() {
       await loadRuns();
       setMessage(
         decision === "approve"
-          ? "Предложение одобрено. Следующий шаг отдельно создаст draft PagePlan."
+          ? "Предложение одобрено. Следующий шаг — отдельный импорт в draft Site Structure Revision."
           : "Предложение отклонено; проект не изменён.",
       );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Решение не сохранено");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function createPagePlans() {
-    if (!proposal) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const result = await api<Proposal>(
-        `/api/v1/ai/runs/${proposal.run_id}/page-plans`,
-        { method: "POST" },
-        token,
-      );
-      setProposal(result);
-      await loadRuns();
-      setMessage("Созданы draft PagePlan. Проверка и утверждение выполняются в рабочем процессе проекта.");
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Черновики PagePlan не созданы");
     } finally {
       setBusy(false);
     }
@@ -252,7 +231,7 @@ export function AIWorkspacePage() {
           <button className="btn" type="submit" disabled={busy || !providerId || !consented || !quote}>{busy ? "Генерация…" : "Подтвердить оценку и создать предложение"}</button>
         </form>
       </Surface>
-      {proposal && <Surface title="Результат и approval gate"><div className="detail-grid"><div><strong>Статус</strong><p>{proposal.status}</p></div><div><strong>Расчётная стоимость</strong><p>${proposal.estimated_cost_usd?.toFixed(6) ?? "—"} / ${proposal.max_cost_usd?.toFixed(6) ?? "—"}</p></div><div><strong>Prompt</strong><p>{proposal.prompt_id} · v{proposal.prompt_version}</p></div><div><strong>Prompt hash</strong><p><code>{proposal.prompt_hash.slice(0, 16)}…</code></p></div><div><strong>Input snapshot</strong><p><code>{proposal.input_snapshot_hash.slice(0, 16)}…</code></p></div></div>{proposal.error_code && <p className="error" role="alert">Run остановлен: {proposal.error_code}. Проверьте расчёт/лимит провайдера; предложение не утверждено.</p>}<p className="muted">Предложений страниц: {proposal.pages.length}. Результат остаётся отдельным от PagePlan.</p>{proposal.pages.length > 0 && <pre className="code-block">{JSON.stringify(proposal.pages, null, 2)}</pre>}{proposal.status === "pending_approval" && <div className="row"><button className="btn" type="button" disabled={busy} onClick={() => decide("approve")}>Одобрить предложение</button><button className="btn btn-ghost" type="button" disabled={busy} onClick={() => decide("reject")}>Отклонить</button></div>}{proposal.status === "approved" && !proposal.page_plans_imported && <button className="btn" type="button" disabled={busy} onClick={createPagePlans}>Создать черновики PagePlan</button>}{proposal.page_plan_ids.length > 0 && <p>Черновики PagePlan: {proposal.page_plan_ids.join(", ")}</p>}</Surface>}
+      {proposal && <Surface title="Результат и approval gate"><div className="detail-grid"><div><strong>Статус</strong><p>{proposal.status}</p></div><div><strong>Расчётная стоимость</strong><p>${proposal.estimated_cost_usd?.toFixed(6) ?? "—"} / ${proposal.max_cost_usd?.toFixed(6) ?? "—"}</p></div><div><strong>Prompt</strong><p>{proposal.prompt_id} · v{proposal.prompt_version}</p></div><div><strong>Prompt hash</strong><p><code>{proposal.prompt_hash.slice(0, 16)}…</code></p></div><div><strong>Input snapshot</strong><p><code>{proposal.input_snapshot_hash.slice(0, 16)}…</code></p></div></div>{proposal.error_code && <p className="error" role="alert">Run остановлен: {proposal.error_code}. Проверьте расчёт/лимит провайдера; предложение не утверждено.</p>}<p className="muted">Предложений страниц: {proposal.pages.length}. Результат остаётся отдельным от PagePlan.</p>{proposal.pages.length > 0 && <pre className="code-block">{JSON.stringify(proposal.pages, null, 2)}</pre>}{proposal.status === "pending_approval" && <div className="row"><button className="btn" type="button" disabled={busy} onClick={() => decide("approve")}>Одобрить предложение</button><button className="btn btn-ghost" type="button" disabled={busy} onClick={() => decide("reject")}>Отклонить</button></div>}{proposal.status === "approved" && projectId && <div className="stack"><p className="muted">AI approval не создаёт PagePlan. Импортируйте результат в отдельную draft-версию структуры, затем independently выполните review, approval и materialization.</p><Link className="btn" to={`/projects/${projectId}/site-structure`}>Открыть структуру сайта для импорта</Link></div>}</Surface>}
     </div>
   );
 }

@@ -66,6 +66,21 @@ class SiteStructureRevisionCreate(BaseModel):
         return self
 
 
+class SiteStructureAIImportCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ai_run_id: UUID
+    semantic_collection_id: UUID
+    evidence_ids: list[UUID] = Field(default_factory=list, max_length=50)
+    confirm_create_draft: Literal[True]
+
+    @model_validator(mode="after")
+    def require_unique_evidence(self) -> SiteStructureAIImportCreate:
+        if len(self.evidence_ids) != len(set(self.evidence_ids)):
+            raise ValueError("Site structure contains duplicate evidence")
+        return self
+
+
 class SiteStructureRevisionDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -91,3 +106,12 @@ class SiteStructureRevisionOut(BaseModel):
     created_at: str | None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class SiteStructureAIImportOut(BaseModel):
+    revision: SiteStructureRevisionOut
+    imported: bool
+    ai_run_id: UUID
+    source_output_hash: str
+
+    model_config = ConfigDict(extra="forbid")
