@@ -9,16 +9,23 @@ from app.api.v1.projects import _confirmed_facts, _facts_hash, _project_or_404, 
 from app.db.session import get_db
 from app.models import (
     GeoPlace,
+    PagePlan,
     Project,
     ProjectFactRevision,
     ProjectFamilyMember,
     ProjectGeoPlace,
+    ProjectKeyword,
+    Site,
     SiteStructureRevision,
 )
-from app.schemas.project_family import ProjectCityCloneCreate, ProjectFamilyMemberOut
+from app.schemas.project_family import (
+    CityProjectReadinessOut,
+    ProjectCityCloneCreate,
+    ProjectFamilyMemberOut,
+)
 from app.services.audit import append_audit
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
@@ -76,6 +83,164 @@ async def list_city_projects(
         _member_out(*row)
         for row in await _member_rows(db, master_project_id=master.id, tenant_id=master.tenant_id)
     ]
+
+
+def _public_fact_diff(master_facts: dict, child_facts: dict) -> dict[str, list[str]]:
+    master_keys = set(master_facts)
+    child_keys = set(child_facts)
+    return {
+        "changed": sorted(
+            key for key in master_keys & child_keys if master_facts.get(key) != child_facts.get(key)
+        ),
+        "missing": sorted(key for key in master_keys if not child_facts.get(key)),
+        "additional": sorted(key for key in child_keys - master_keys),
+    }
+
+
+def _city_next_action(
+    *, facts_state: str | None, keyword_count: int, plan_counts: dict[str, int], site_exists: bool
+) -> str:
+    if facts_state != "confirmed":
+        return "review_city_facts"
+    if keyword_count == 0:
+        return "select_keywords"
+    if plan_counts.get("draft", 0):
+        return "submit_plan_for_review"
+    if plan_counts.get("review", 0):
+        return "approve_plan"
+    if plan_counts.get("approved", 0):
+        return "generate_draft"
+    if not site_exists:
+        return "prepare_page_plan"
+    return "create_candidate"
+
+
+@router.get("/{project_id}/city-projects/readiness", response_model=list[CityProjectReadinessOut])
+async def list_city_project_readiness(
+    project_id: UUID,
+    auth: AuthContext = Depends(_READ),
+    db: AsyncSession = Depends(get_db),
+) -> list[CityProjectReadinessOut]:
+    master = await _project_or_404(db, project_id, auth)
+    rows = await _member_rows(db, master_project_id=master.id, tenant_id=master.tenant_id)
+    if not rows:
+        return []
+    child_ids = [child.id for _, child, _ in rows]
+    master_facts = (
+        await db.execute(
+            select(ProjectFactRevision)
+            .where(
+                ProjectFactRevision.project_id == master.id,
+                ProjectFactRevision.tenant_id == master.tenant_id,
+                ProjectFactRevision.state == "confirmed",
+            )
+            .order_by(ProjectFactRevision.version.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    child_facts = list(
+        (
+            await db.execute(
+                select(ProjectFactRevision)
+                .where(
+                    ProjectFactRevision.project_id.in_(child_ids),
+                    ProjectFactRevision.tenant_id == master.tenant_id,
+                )
+                .order_by(ProjectFactRevision.project_id, ProjectFactRevision.version.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    latest_facts: dict[UUID, ProjectFactRevision] = {}
+    for revision in child_facts:
+        latest_facts.setdefault(revision.project_id, revision)
+    keyword_counts = dict(
+        (
+            await db.execute(
+                select(ProjectKeyword.project_id, func.count(ProjectKeyword.id))
+                .where(
+                    ProjectKeyword.project_id.in_(child_ids),
+                    ProjectKeyword.tenant_id == master.tenant_id,
+                )
+                .group_by(ProjectKeyword.project_id)
+            )
+        ).all()
+    )
+    plans = list(
+        (
+            await db.execute(
+                select(PagePlan).where(
+                    PagePlan.project_id.in_(child_ids),
+                    PagePlan.tenant_id == master.tenant_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    plan_counts: dict[UUID, dict[str, int]] = {child_id: {} for child_id in child_ids}
+    for plan in plans:
+        counts = plan_counts[plan.project_id]
+        counts[plan.state] = counts.get(plan.state, 0) + 1
+    primary_geo = {
+        project_id
+        for project_id, geo_id in (
+            await db.execute(
+                select(ProjectGeoPlace.project_id, ProjectGeoPlace.geo_id).where(
+                    ProjectGeoPlace.project_id.in_(child_ids),
+                    ProjectGeoPlace.tenant_id == master.tenant_id,
+                    ProjectGeoPlace.role == "primary",
+                )
+            )
+        ).all()
+    }
+    site_project_ids = set(
+        (
+            await db.execute(
+                select(Site.project_id).where(
+                    Site.project_id.in_(child_ids),
+                    Site.tenant_id == master.tenant_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    master_public_facts = master_facts.facts if master_facts else {}
+    result: list[CityProjectReadinessOut] = []
+    for member, child, _draft in rows:
+        facts = latest_facts.get(child.id)
+        counts = plan_counts[child.id]
+        result.append(
+            CityProjectReadinessOut(
+                project_family_member_id=member.id,
+                child_project_id=child.id,
+                child_project_name=child.name,
+                child_project_slug=child.slug,
+                hostname=member.hostname,
+                geo_id=member.geo_id,
+                source_structure_revision_id=member.source_structure_revision_id,
+                facts_state=facts.state if facts else None,
+                facts_version=facts.version if facts else None,
+                public_fact_diff=_public_fact_diff(
+                    master_public_facts,
+                    facts.facts if facts else {},
+                ),
+                private_recipient_configured=bool(facts and facts.private_lead_email_enc),
+                keyword_count=keyword_counts.get(child.id, 0),
+                primary_geo_ready=child.id in primary_geo,
+                page_plans_by_state=counts,
+                site_exists=child.id in site_project_ids,
+                next_action=_city_next_action(
+                    facts_state=facts.state if facts else None,
+                    keyword_count=keyword_counts.get(child.id, 0),
+                    plan_counts=counts,
+                    site_exists=child.id in site_project_ids,
+                ),
+            )
+        )
+    return result
 
 
 @router.post(

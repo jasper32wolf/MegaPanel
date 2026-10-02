@@ -4,8 +4,13 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from app.api.v1.project_families import _city_next_action, _public_fact_diff
 from app.main import app
-from app.schemas.project_family import ProjectCityCloneCreate, ProjectFamilyMemberOut
+from app.schemas.project_family import (
+    CityProjectReadinessOut,
+    ProjectCityCloneCreate,
+    ProjectFamilyMemberOut,
+)
 from pydantic import ValidationError
 
 
@@ -44,11 +49,73 @@ def test_city_member_out_keeps_confirmed_child_without_draft_facts():
     assert body.draft_fact_revision_id is None
 
 
+def test_city_readiness_keeps_public_fact_diff_and_private_boolean_only():
+    diff = _public_fact_diff(
+        {"service": "repair", "contacts": {"phone": "1"}, "address": "master"},
+        {"service": "repair", "contacts": {"phone": "2"}, "custom": "child"},
+    )
+    body = CityProjectReadinessOut.model_validate(
+        {
+            "project_family_member_id": str(uuid4()),
+            "child_project_id": str(uuid4()),
+            "child_project_name": "Уфа",
+            "child_project_slug": "ufa",
+            "hostname": "ufa.example.test",
+            "geo_id": str(uuid4()),
+            "source_structure_revision_id": None,
+            "facts_state": "draft",
+            "facts_version": 1,
+            "public_fact_diff": diff,
+            "private_recipient_configured": False,
+            "keyword_count": 0,
+            "primary_geo_ready": True,
+            "page_plans_by_state": {},
+            "site_exists": False,
+            "next_action": "review_city_facts",
+        }
+    )
+
+    assert body.public_fact_diff == {
+        "changed": ["contacts"],
+        "missing": ["address"],
+        "additional": ["custom"],
+    }
+    assert body.private_recipient_configured is False
+    assert "private_lead_email_enc" not in body.model_dump()
+
+
+@pytest.mark.parametrize(
+    ("facts_state", "keyword_count", "plans", "site_exists", "expected"),
+    [
+        ("draft", 1, {}, False, "review_city_facts"),
+        ("confirmed", 0, {}, False, "select_keywords"),
+        ("confirmed", 1, {"draft": 1}, False, "submit_plan_for_review"),
+        ("confirmed", 1, {"review": 1}, False, "approve_plan"),
+        ("confirmed", 1, {"approved": 1}, False, "generate_draft"),
+        ("confirmed", 1, {}, False, "prepare_page_plan"),
+        ("confirmed", 1, {}, True, "create_candidate"),
+    ],
+)
+def test_city_readiness_next_action_is_read_only_and_deterministic(
+    facts_state, keyword_count, plans, site_exists, expected
+):
+    assert (
+        _city_next_action(
+            facts_state=facts_state,
+            keyword_count=keyword_count,
+            plan_counts=plans,
+            site_exists=site_exists,
+        )
+        == expected
+    )
+
+
 def test_city_project_routes_are_registered():
     routes = app.openapi()["paths"]
     path = "/api/v1/projects/{project_id}/city-projects"
 
     assert {"get", "post"}.issubset(routes[path])
+    assert "get" in routes[f"{path}/readiness"]
 
 
 def test_city_project_migration_keeps_tenant_scope_and_one_city_one_hostname():

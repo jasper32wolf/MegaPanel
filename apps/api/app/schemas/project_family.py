@@ -15,6 +15,27 @@ class ProjectCityCloneCreate(BaseModel):
     source_structure_revision_id: UUID | None = None
 
 
+class CityProjectReadinessOut(BaseModel):
+    project_family_member_id: UUID
+    child_project_id: UUID
+    child_project_name: str
+    child_project_slug: str
+    hostname: str
+    geo_id: UUID
+    source_structure_revision_id: UUID | None
+    facts_state: str | None
+    facts_version: int | None
+    public_fact_diff: dict[str, list[str]]
+    private_recipient_configured: bool
+    keyword_count: int
+    primary_geo_ready: bool
+    page_plans_by_state: dict[str, int]
+    site_exists: bool
+    next_action: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class ProjectFamilyMemberOut(BaseModel):
     id: UUID
     master_project_id: UUID
