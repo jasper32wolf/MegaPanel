@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 from app.main import app
-from app.schemas.project_family import ProjectCityCloneCreate
+from app.schemas.project_family import ProjectCityCloneCreate, ProjectFamilyMemberOut
 from pydantic import ValidationError
 
 
@@ -25,6 +25,23 @@ def test_city_project_schema_requires_safe_operator_slug():
     assert body.slug == "repair-ufa"
     with pytest.raises(ValidationError, match="pattern"):
         ProjectCityCloneCreate.model_validate(city_clone_payload(slug="Ремонт Уфа"))
+
+
+def test_city_member_out_keeps_confirmed_child_without_draft_facts():
+    body = ProjectFamilyMemberOut.model_validate(
+        {
+            "id": str(uuid4()),
+            "master_project_id": str(uuid4()),
+            "child_project_id": str(uuid4()),
+            "geo_id": str(uuid4()),
+            "hostname": "ufa.example.test",
+            "source_structure_revision_id": None,
+            "child_project": {},
+            "draft_fact_revision_id": None,
+        }
+    )
+
+    assert body.draft_fact_revision_id is None
 
 
 def test_city_project_routes_are_registered():

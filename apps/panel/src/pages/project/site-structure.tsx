@@ -30,7 +30,8 @@ type Page = {
 type Run = { id: string; action: string; status: string; prompt_version: string; created_at: string | null; cost_usd: number | null };
 type SemanticCollection = { id: string; version: number; state: string };
 type Evidence = { id: string; kind: string; state: string; title: string | null };
-type DialogAction = { kind: "import"; run: Run } | { kind: "submit" | "approve" | "reject" | "materialize"; revision: Revision } | null;
+type CityProject = { id: string; geo_id: string; hostname: string; child_project: { id: string; name: string; slug: string }; draft_fact_revision_id: string | null };
+type DialogAction = { kind: "import"; run: Run } | { kind: "submit" | "approve" | "reject" | "materialize" | "materialize-cities"; revision: Revision } | null;
 
 function tone(state: Revision["state"]) {
   if (state === "approved") return "ok" as const;
@@ -46,6 +47,8 @@ export function ProjectSiteStructurePage() {
   const [runs, setRuns] = useState<Run[]>([]);
   const [collections, setCollections] = useState<SemanticCollection[]>([]);
   const [evidence, setEvidence] = useState<Evidence[]>([]);
+  const [cityProjects, setCityProjects] = useState<CityProject[]>([]);
+  const [selectedCityIds, setSelectedCityIds] = useState<string[]>([]);
   const [collectionId, setCollectionId] = useState("");
   const [evidenceIds, setEvidenceIds] = useState<string[]>([]);
   const [dialog, setDialog] = useState<DialogAction>(null);
@@ -55,16 +58,18 @@ export function ProjectSiteStructurePage() {
 
   async function load() {
     if (!projectId) return;
-    const [nextRevisions, nextRuns, nextCollections, nextEvidence] = await Promise.all([
+    const [nextRevisions, nextRuns, nextCollections, nextEvidence, nextCities] = await Promise.all([
       api<Revision[]>(`/api/v1/projects/${projectId}/site-structure/revisions`, {}, token),
       api<Run[]>(`/api/v1/ai/runs?project_id=${encodeURIComponent(projectId)}&action=architecture.site-map&status=approved`, {}, token),
       api<SemanticCollection[]>(`/api/v1/projects/${projectId}/semantic-collections`, {}, token),
       api<Evidence[]>(`/api/v1/competitors/projects/${projectId}/evidence`, {}, token),
+      api<CityProject[]>(`/api/v1/projects/${projectId}/city-projects`, {}, token),
     ]);
     setRevisions(nextRevisions);
     setRuns(nextRuns);
     setCollections(nextCollections.filter((item) => item.state === "approved"));
     setEvidence(nextEvidence.filter((item) => item.state === "approved"));
+    setCityProjects(nextCities);
     if (!collectionId && nextCollections.some((item) => item.state === "approved")) {
       setCollectionId(nextCollections.find((item) => item.state === "approved")!.id);
     }
@@ -76,6 +81,10 @@ export function ProjectSiteStructurePage() {
 
   function toggleEvidence(id: string) {
     setEvidenceIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+  }
+
+  function toggleCity(id: string) {
+    setSelectedCityIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
   }
 
   async function confirm(reason: string) {
@@ -91,6 +100,14 @@ export function ProjectSiteStructurePage() {
           token,
         );
         setMessage(result.imported ? `Создан draft структуры v${result.revision.version}. Review, approval и materialization остаются отдельными действиями.` : `Этот AI run уже импортирован в структуру v${result.revision.version}.`);
+      } else if (dialog.kind === "materialize-cities") {
+        const result = await api<{ children: { child_project_id: string; page_plan_ids: string[] }[] }>(
+          `/api/v1/projects/${projectId}/site-structure/revisions/${dialog.revision.id}/materialize-city-children`,
+          { method: "POST", body: JSON.stringify({ child_project_ids: selectedCityIds, confirm_create_drafts: true }) },
+          token,
+        );
+        setMessage(`В ${result.children.length} городских проектах созданы только draft PagePlan. Facts, generation, QA, build и публикация не запускались.`);
+        setSelectedCityIds([]);
       } else {
         const endpoint = dialog.kind === "submit" ? "submit-review" : dialog.kind;
         await api(`/api/v1/projects/${projectId}/site-structure/revisions/${dialog.revision.id}/${endpoint}`, {
@@ -130,12 +147,13 @@ export function ProjectSiteStructurePage() {
     <Surface title="Версии структуры">
       {revisions.length === 0 ? <EmptyState title="Версий пока нет" hint="Импортируйте утверждённое AI-предложение или создайте структуру вручную через API." /> : <DataTable headers={["Версия", "Источники", "Страницы", "Состояние", "Действия"]}>{revisions.map((revision) => <tr key={revision.id}><td>v{revision.version}<br /><span className="muted"><code>{revision.id.slice(0, 8)}…</code></span></td><td>semantic <code>{revision.semantic_collection_id.slice(0, 8)}…</code><br />evidence: {revision.evidence_ids.length}<br />{revision.source_snapshot.ai_import && <span className="muted">AI run <code>{revision.source_snapshot.ai_import.ai_run_id.slice(0, 8)}…</code></span>}</td><td>{revision.structure.pages?.length || 0}</td><td><StatusPill tone={tone(revision.state)}>{revision.state}</StatusPill>{revision.materialized_at && <p className="muted">materialized</p>}</td><td><div className="row">{revision.state === "draft" && <button className="btn btn-ghost" type="button" disabled={busy} onClick={() => setDialog({ kind: "submit", revision })}>На review</button>}{revision.state === "review" && <><button className="btn" type="button" disabled={busy} onClick={() => setDialog({ kind: "approve", revision })}>Одобрить</button><button className="btn btn-ghost" type="button" disabled={busy} onClick={() => setDialog({ kind: "reject", revision })}>Отклонить</button></>}{revision.state === "approved" && !revision.materialized_at && <button className="btn" type="button" disabled={busy} onClick={() => setDialog({ kind: "materialize", revision })}>Создать draft PagePlan</button>}</div></td></tr>)}</DataTable>}
     </Surface>
+    {revisions.filter((revision) => revision.state === "approved").map((revision) => <Surface key={`${revision.id}-cities`} title={`Развернуть в городские проекты · v${revision.version}`}><p className="muted">Выберите существующие city child projects вручную. Операция создаёт только их draft PagePlan; она не подтверждает facts и не запускает generation, QA, build или publish.</p>{cityProjects.length === 0 ? <EmptyState title="Городские проекты не созданы" hint="Сначала создайте самостоятельные city child projects в разделе «Города»." /> : <div className="stack">{cityProjects.map((city) => <label key={city.id}><input type="checkbox" checked={selectedCityIds.includes(city.child_project.id)} onChange={() => toggleCity(city.child_project.id)} disabled={busy} /> <strong>{city.child_project.name}</strong> · {city.hostname} · {city.draft_fact_revision_id ? "facts draft" : "без активного facts draft"}</label>)}<button className="btn" type="button" disabled={busy || selectedCityIds.length === 0} onClick={() => setDialog({ kind: "materialize-cities", revision })}>Создать draft PagePlan в выбранных городах ({selectedCityIds.length})</button></div>}</Surface>)}
     {revisions.map((revision) => <Surface key={`${revision.id}-preview`} title={`Preview структуры · v${revision.version}`}><DataTable headers={["Страница", "SEO", "Outline", "Blocks", "Риски"]}>{(revision.structure.pages || []).map((page) => <tr key={page.key}><td><strong>{page.slug}</strong><br /><span className="muted">{page.parent_key ? `parent: ${page.parent_key}` : "root"}</span></td><td><strong>{page.title}</strong><br />H1: {page.h1 || "—"}<br /><span className="muted">{page.meta_description || "—"}</span></td><td>{page.heading_outline.map((heading) => `${heading.level.toUpperCase()}: ${heading.text}`).join(" · ") || "—"}</td><td>{page.kit_key}<br /><span className="muted">{page.block_ids.join(", ") || "—"}</span></td><td>{page.risk_notes || "—"}</td></tr>)}</DataTable></Surface>)}
     <ConfirmDialog
       open={Boolean(dialog)}
-      title={dialog?.kind === "import" ? "Создать черновик структуры?" : dialog?.kind === "materialize" ? "Создать draft PagePlan?" : dialog?.kind === "approve" ? "Одобрить структуру?" : dialog?.kind === "reject" ? "Отклонить структуру?" : "Передать структуру на review?"}
-      description={dialog?.kind === "import" ? "Будет создан только draft Site Structure Revision из уже одобренного AI run. Никакие PagePlan, генерация, build или публикация сейчас не создаются." : dialog?.kind === "materialize" ? "Будут созданы только draft PagePlan. Генерация содержимого, build и публикация не запускаются." : dialog?.kind === "approve" ? "Утверждённая структура станет immutable; materialization останется отдельным действием." : dialog?.kind === "reject" ? "Версия будет отклонена. Укажите причину для audit trail." : "Сервер зафиксирует approved sources, confirmed facts и selected keyword/geo snapshots для независимой проверки."}
-      confirmLabel={dialog?.kind === "import" ? "Создать draft" : dialog?.kind === "materialize" ? "Создать draft PagePlan" : dialog?.kind === "approve" ? "Одобрить" : dialog?.kind === "reject" ? "Отклонить" : "На review"}
+      title={dialog?.kind === "import" ? "Создать черновик структуры?" : dialog?.kind === "materialize" ? "Создать draft PagePlan?" : dialog?.kind === "materialize-cities" ? "Развернуть структуру в города?" : dialog?.kind === "approve" ? "Одобрить структуру?" : dialog?.kind === "reject" ? "Отклонить структуру?" : "Передать структуру на review?"}
+      description={dialog?.kind === "import" ? "Будет создан только draft Site Structure Revision из уже одобренного AI run. Никакие PagePlan, генерация, build или публикация сейчас не создаются." : dialog?.kind === "materialize" ? "Будут созданы только draft PagePlan. Генерация содержимого, build и публикация не запускаются." : dialog?.kind === "materialize-cities" ? "В каждом выбранном самостоятельном городском проекте будут созданы только draft PagePlan. Facts, generation, QA, build и публикация не запускаются." : dialog?.kind === "approve" ? "Утверждённая структура станет immutable; materialization останется отдельным действием." : dialog?.kind === "reject" ? "Версия будет отклонена. Укажите причину для audit trail." : "Сервер зафиксирует approved sources, confirmed facts и selected keyword/geo snapshots для независимой проверки."}
+      confirmLabel={dialog?.kind === "import" ? "Создать draft" : dialog?.kind === "materialize" ? "Создать draft PagePlan" : dialog?.kind === "materialize-cities" ? "Создать city drafts" : dialog?.kind === "approve" ? "Одобрить" : dialog?.kind === "reject" ? "Отклонить" : "На review"}
       inputLabel={dialog?.kind === "reject" ? "Причина отклонения" : dialog?.kind === "approve" ? "Комментарий (необязательно)" : undefined}
       inputMinLength={dialog?.kind === "reject" ? 1 : 0}
       dangerous={dialog?.kind === "reject"}

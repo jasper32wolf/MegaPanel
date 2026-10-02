@@ -18,7 +18,7 @@ from app.models import (
 from app.schemas.project_family import ProjectCityCloneCreate, ProjectFamilyMemberOut
 from app.services.audit import append_audit
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
@@ -27,7 +27,7 @@ _WRITE = require_roles("superadmin", "tenant_admin", "manager")
 
 
 def _member_out(
-    member: ProjectFamilyMember, child: Project, draft: ProjectFactRevision
+    member: ProjectFamilyMember, child: Project, draft: ProjectFactRevision | None
 ) -> ProjectFamilyMemberOut:
     return ProjectFamilyMemberOut(
         id=member.id,
@@ -37,25 +37,27 @@ def _member_out(
         hostname=member.hostname,
         source_structure_revision_id=member.source_structure_revision_id,
         child_project=_serialize_project(child),
-        draft_fact_revision_id=draft.id,
+        draft_fact_revision_id=draft.id if draft else None,
     )
 
 
 async def _member_rows(
     db: AsyncSession, *, master_project_id: UUID, tenant_id: UUID
-) -> list[tuple[ProjectFamilyMember, Project, ProjectFactRevision]]:
+) -> list[tuple[ProjectFamilyMember, Project, ProjectFactRevision | None]]:
     rows = (
         await db.execute(
             select(ProjectFamilyMember, Project, ProjectFactRevision)
             .join(Project, Project.id == ProjectFamilyMember.child_project_id)
-            .join(
+            .outerjoin(
                 ProjectFactRevision,
-                ProjectFactRevision.project_id == Project.id,
+                and_(
+                    ProjectFactRevision.project_id == Project.id,
+                    ProjectFactRevision.state == "draft",
+                ),
             )
             .where(
                 ProjectFamilyMember.master_project_id == master_project_id,
                 ProjectFamilyMember.tenant_id == tenant_id,
-                ProjectFactRevision.state == "draft",
             )
             .order_by(ProjectFamilyMember.created_at.desc())
         )

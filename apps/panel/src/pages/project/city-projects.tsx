@@ -11,7 +11,7 @@ type CityProject = {
   geo_id: string;
   hostname: string;
   child_project: Project;
-  draft_fact_revision_id: string;
+  draft_fact_revision_id: string | null;
 };
 
 export function ProjectCityProjectsPage() {
@@ -76,7 +76,7 @@ export function ProjectCityProjectsPage() {
       </form>
     </Surface>
     <Surface title="Созданные городские проекты">
-      {items.length === 0 ? <EmptyState title="Городских проектов пока нет" hint="Создайте отдельный проект для каждого поддомена, которому нужны свои коммерческие данные и независимый workflow публикации." /> : <DataTable headers={["Городской проект", "Hostname", "Facts", "Следующий шаг"]}>{items.map((item) => <tr key={item.id}><td><strong>{item.child_project.name}</strong><br /><span className="muted">{item.child_project.slug}</span></td><td>{item.hostname}</td><td><StatusPill tone="warn">draft</StatusPill><br /><span className="muted">{item.draft_fact_revision_id.slice(0, 8)}…</span></td><td>Откройте проект → Facts, заполните city-specific данные и подтвердите revision.</td></tr>)}</DataTable>}
+      {items.length === 0 ? <EmptyState title="Городских проектов пока нет" hint="Создайте отдельный проект для каждого поддомена, которому нужны свои коммерческие данные и независимый workflow публикации." /> : <DataTable headers={["Городской проект", "Hostname", "Facts", "Следующий шаг"]}>{items.map((item) => <tr key={item.id}><td><strong>{item.child_project.name}</strong><br /><span className="muted">{item.child_project.slug}</span></td><td>{item.hostname}</td><td>{item.draft_fact_revision_id ? <><StatusPill tone="warn">draft</StatusPill><br /><span className="muted">{item.draft_fact_revision_id.slice(0, 8)}…</span></> : <><StatusPill tone="ok">confirmed / no draft</StatusPill><br /><span className="muted">Городской проект остаётся в family.</span></>}</td><td>{item.draft_fact_revision_id ? "Откройте проект → Facts, заполните city-specific данные и подтвердите revision." : "Откройте проект → Pages или Structure; child готов к независимому следующему шагу."}</td></tr>)}</DataTable>}
     </Surface>
   </ProjectWorkspaceLayout>;
 }

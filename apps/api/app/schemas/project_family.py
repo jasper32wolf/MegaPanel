@@ -23,6 +23,6 @@ class ProjectFamilyMemberOut(BaseModel):
     hostname: str
     source_structure_revision_id: UUID | None
     child_project: dict
-    draft_fact_revision_id: UUID
+    draft_fact_revision_id: UUID | None
 
     model_config = ConfigDict(from_attributes=True)

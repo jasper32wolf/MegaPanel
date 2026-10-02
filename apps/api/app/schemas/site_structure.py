@@ -81,6 +81,19 @@ class SiteStructureAIImportCreate(BaseModel):
         return self
 
 
+class SiteStructureCityChildrenMaterializeCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    child_project_ids: list[UUID] = Field(min_length=1, max_length=50)
+    confirm_create_drafts: Literal[True]
+
+    @model_validator(mode="after")
+    def require_unique_children(self) -> SiteStructureCityChildrenMaterializeCreate:
+        if len(self.child_project_ids) != len(set(self.child_project_ids)):
+            raise ValueError("City child selection contains duplicates")
+        return self
+
+
 class SiteStructureRevisionDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -113,5 +126,22 @@ class SiteStructureAIImportOut(BaseModel):
     imported: bool
     ai_run_id: UUID
     source_output_hash: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SiteStructureCityChildMaterializationOut(BaseModel):
+    child_project_id: UUID
+    project_family_member_id: UUID
+    page_plan_ids: list[UUID]
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SiteStructureCityChildrenMaterializationOut(BaseModel):
+    revision_id: UUID
+    master_project_id: UUID
+    structure_hash: str
+    children: list[SiteStructureCityChildMaterializationOut]
 
     model_config = ConfigDict(extra="forbid")

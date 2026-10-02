@@ -12,6 +12,8 @@ from app.models import (
     AIRun,
     KnowledgeDoc,
     PagePlan,
+    Project,
+    ProjectFamilyMember,
     ProjectSemanticCollection,
     SiteStructureAIImport,
     SiteStructureRevision,
@@ -20,6 +22,9 @@ from app.schemas.ai import PageProposal
 from app.schemas.site_structure import (
     SiteStructureAIImportCreate,
     SiteStructureAIImportOut,
+    SiteStructureCityChildMaterializationOut,
+    SiteStructureCityChildrenMaterializationOut,
+    SiteStructureCityChildrenMaterializeCreate,
     SiteStructurePageIn,
     SiteStructureRevisionCreate,
     SiteStructureRevisionDecision,
@@ -492,6 +497,47 @@ async def reject_structure_revision(
     return _serialize(revision)
 
 
+def _page_plan_from_structure(
+    *,
+    revision: SiteStructureRevision,
+    page: dict,
+    project: Project,
+    existing: PagePlan | None,
+    family_materialization: dict | None = None,
+) -> PagePlan:
+    source_refs = {
+        "site_structure_revision_id": str(revision.id),
+        "site_structure_version": revision.version,
+        "page_key": page["key"],
+        "parent_key": page.get("parent_key"),
+        "seo_blueprint": {
+            "title": page["title"],
+            "meta_description": page.get("meta_description", ""),
+            "h1": page.get("h1", ""),
+            "heading_outline": page.get("heading_outline", []),
+        },
+    }
+    if family_materialization:
+        source_refs["family_materialization"] = family_materialization
+    return PagePlan(
+        project_id=project.id,
+        tenant_id=project.tenant_id,
+        supersedes_id=existing.id if existing else None,
+        version=(existing.version + 1) if existing else 1,
+        state="draft",
+        keyword_snapshot={},
+        geo_snapshot={},
+        semantic_target_snapshot={},
+        slug=page["slug"],
+        objective=page["objective"],
+        intent=page.get("intent"),
+        risk_notes=page.get("risk_notes"),
+        kit_key=page["kit_key"],
+        block_selection={"blocks": page.get("block_ids", []), "claim_slot_bindings": []},
+        source_refs=source_refs,
+    )
+
+
 @router.post(
     "/{project_id}/site-structure/revisions/{revision_id}/materialize",
     response_model=SiteStructureRevisionOut,
@@ -526,29 +572,11 @@ async def materialize_structure_revision(
         if existing and existing.state in {"draft", "review"}:
             raise HTTPException(status_code=409, detail=f"Finish draft PagePlan {slug} first")
         plans.append(
-            PagePlan(
-                project_id=project.id,
-                tenant_id=project.tenant_id,
-                supersedes_id=existing.id if existing else None,
-                version=(existing.version + 1) if existing else 1,
-                slug=slug,
-                objective=page["objective"],
-                intent=page.get("intent"),
-                risk_notes=page.get("risk_notes"),
-                kit_key=page["kit_key"],
-                block_selection={"blocks": page.get("block_ids", []), "claim_slot_bindings": []},
-                source_refs={
-                    "site_structure_revision_id": str(revision.id),
-                    "site_structure_version": revision.version,
-                    "page_key": page["key"],
-                    "parent_key": page.get("parent_key"),
-                    "seo_blueprint": {
-                        "title": page["title"],
-                        "meta_description": page.get("meta_description", ""),
-                        "h1": page.get("h1", ""),
-                        "heading_outline": page.get("heading_outline", []),
-                    },
-                },
+            _page_plan_from_structure(
+                revision=revision,
+                page=page,
+                project=project,
+                existing=existing,
             )
         )
     db.add_all(plans)
@@ -568,3 +596,162 @@ async def materialize_structure_revision(
     )
     await db.commit()
     return _serialize(revision)
+
+
+@router.post(
+    "/{project_id}/site-structure/revisions/{revision_id}/materialize-city-children",
+    response_model=SiteStructureCityChildrenMaterializationOut,
+)
+async def materialize_structure_city_children(
+    project_id: UUID,
+    revision_id: UUID,
+    body: SiteStructureCityChildrenMaterializeCreate,
+    auth: AuthContext = Depends(_REVIEW),
+    db: AsyncSession = Depends(get_db),
+) -> SiteStructureCityChildrenMaterializationOut:
+    master = await _project_or_404(db, project_id, auth)
+    revision = await _revision_or_404(db, project_id=master.id, revision_id=revision_id, auth=auth)
+    if revision.state != "approved":
+        raise HTTPException(
+            status_code=409, detail="Approve the site structure before city materialization"
+        )
+
+    member_rows = list(
+        (
+            await db.execute(
+                select(ProjectFamilyMember)
+                .where(
+                    ProjectFamilyMember.master_project_id == master.id,
+                    ProjectFamilyMember.tenant_id == master.tenant_id,
+                    ProjectFamilyMember.child_project_id.in_(body.child_project_ids),
+                )
+                .with_for_update()
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if len(member_rows) != len(body.child_project_ids):
+        raise HTTPException(
+            status_code=409,
+            detail="Select only city children of this master project",
+        )
+    members = {member.child_project_id: member for member in member_rows}
+    children = list(
+        (
+            await db.execute(
+                select(Project)
+                .where(
+                    Project.id.in_(body.child_project_ids),
+                    Project.tenant_id == master.tenant_id,
+                )
+                .with_for_update()
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if len(children) != len(body.child_project_ids):
+        raise HTTPException(status_code=409, detail="Selected city project is unavailable")
+    child_by_id = {child.id: child for child in children}
+    pages = revision.structure.get("pages", [])
+    preflight: dict[UUID, dict[str, PagePlan | None]] = {}
+    for child_id in body.child_project_ids:
+        child = child_by_id[child_id]
+        member = members[child_id]
+        existing_plans = list(
+            (
+                await db.execute(
+                    select(PagePlan)
+                    .where(PagePlan.project_id == child.id)
+                    .order_by(PagePlan.slug, PagePlan.version.desc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if any(
+            (plan.source_refs or {})
+            .get("family_materialization", {})
+            .get("site_structure_revision_id")
+            == str(revision.id)
+            for plan in existing_plans
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="This structure is already materialized in a selected city project",
+            )
+        latest_by_slug: dict[str, PagePlan] = {}
+        for plan in existing_plans:
+            latest_by_slug.setdefault(plan.slug, plan)
+        for page in pages:
+            existing = latest_by_slug.get(page["slug"])
+            if existing and existing.state in {"draft", "review"}:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Finish draft PagePlan {page['slug']} in city project first",
+                )
+        preflight[child_id] = latest_by_slug
+
+    results: list[SiteStructureCityChildMaterializationOut] = []
+    all_plans: list[PagePlan] = []
+    for child_id in body.child_project_ids:
+        child = child_by_id[child_id]
+        member = members[child_id]
+        latest_by_slug = preflight[child_id]
+        child_plans: list[PagePlan] = []
+        for page in pages:
+            existing = latest_by_slug.get(page["slug"])
+            plan = _page_plan_from_structure(
+                revision=revision,
+                page=page,
+                project=child,
+                existing=existing,
+                family_materialization={
+                    "site_structure_revision_id": str(revision.id),
+                    "master_project_id": str(master.id),
+                    "child_project_id": str(child.id),
+                    "project_family_member_id": str(member.id),
+                    "source_structure_hash": revision.structure_hash,
+                },
+            )
+            child_plans.append(plan)
+            latest_by_slug[page["slug"]] = plan
+        db.add_all(child_plans)
+        all_plans.extend(child_plans)
+        results.append(
+            SiteStructureCityChildMaterializationOut(
+                child_project_id=child.id,
+                project_family_member_id=member.id,
+                page_plan_ids=[],
+            )
+        )
+    await db.flush()
+    for result, child_id in zip(results, body.child_project_ids, strict=True):
+        result.page_plan_ids = [plan.id for plan in all_plans if plan.project_id == child_id]
+    await append_audit(
+        db,
+        action="site_structure.city_children.materialize",
+        payload={
+            "master_project_id": str(master.id),
+            "revision_id": str(revision.id),
+            "structure_hash": revision.structure_hash,
+            "children": [
+                {
+                    "child_project_id": str(item.child_project_id),
+                    "project_family_member_id": str(item.project_family_member_id),
+                    "page_plan_ids": [str(plan_id) for plan_id in item.page_plan_ids],
+                }
+                for item in results
+            ],
+        },
+        tenant_id=master.tenant_id,
+        actor_id=auth.user.id,
+    )
+    await db.commit()
+    return SiteStructureCityChildrenMaterializationOut(
+        revision_id=revision.id,
+        master_project_id=master.id,
+        structure_hash=revision.structure_hash,
+        children=results,
+    )
