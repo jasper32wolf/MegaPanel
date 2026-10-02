@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Literal
 from uuid import UUID
@@ -98,6 +99,53 @@ class BukvarixProviderStatus(BaseModel):
     status: Literal["disabled_unsafe_transport"] = "disabled_unsafe_transport"
     message: str
     supported_modes: list[Literal["domain", "compare", "multi_domain"]]
+
+
+class SemanticSourceRunCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: Literal["bukvarix"]
+    acquisition: Literal["manual_export"]
+    mode: Literal["domain", "compare", "multi_domain"]
+    source_label: str = Field(min_length=2, max_length=255)
+    observed_at: datetime
+    notes: str | None = Field(default=None, max_length=4000)
+    project_keyword_ids: list[UUID] = Field(min_length=1, max_length=1000)
+    confirm_record_manual_export: Literal[True]
+
+    @field_validator("source_label", "notes")
+    @classmethod
+    def reject_urls_and_secrets(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if "://" in normalized:
+            raise ValueError("Manual source metadata cannot contain a URL")
+        credential_pattern = r"(?i)api[_ -]?key|authorization|bearer\s+|password\s*=|token\s*="
+        if re.search(credential_pattern, normalized):
+            raise ValueError("Manual source metadata cannot contain credentials")
+        return normalized or None
+
+    @model_validator(mode="after")
+    def require_unique_project_keywords(self) -> SemanticSourceRunCreate:
+        if len(self.project_keyword_ids) != len(set(self.project_keyword_ids)):
+            raise ValueError("Manual source keyword selection contains duplicates")
+        return self
+
+
+class SemanticSourceRunOut(BaseModel):
+    id: UUID
+    project_id: UUID
+    provider: Literal["bukvarix"]
+    acquisition: Literal["manual_export"]
+    mode: Literal["domain", "compare", "multi_domain"]
+    source_label: str
+    observed_at: datetime
+    notes: str | None
+    selected_keyword_count: int
+    created_at: datetime | None
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class StructureSourceSelection(BaseModel):

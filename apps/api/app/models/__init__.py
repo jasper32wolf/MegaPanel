@@ -294,6 +294,10 @@ from app.models.publish import (  # noqa: E402
     SitePage,
 )
 from app.models.research import CompetitorCrawlPage, CompetitorCrawlRun  # noqa: E402
+from app.models.semantic_source import (  # noqa: E402
+    ProjectSemanticSourceRun,
+    ProjectSemanticSourceRunKeyword,
+)
 from app.models.site_structure import SiteStructureAIImport, SiteStructureRevision  # noqa: E402
 from app.models.system_operation import SystemOperation  # noqa: E402
 from app.models.worker_heartbeat import WorkerHeartbeat  # noqa: E402
@@ -347,6 +351,8 @@ __all__ = [
     "ProjectSemanticCollection",
     "ProjectSemanticCollectionKeyword",
     "ProjectSemanticKeywordGeoBinding",
+    "ProjectSemanticSourceRun",
+    "ProjectSemanticSourceRunKeyword",
     "PagePlan",
     "PageDraft",
     "PageIndexPromotion",

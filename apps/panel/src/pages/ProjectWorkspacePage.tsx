@@ -16,6 +16,8 @@ type ProjectGeo = { id: string; geo_id: string; name: string; kind: string; vali
 type ClaimSlotBinding = { block_id: string; slot: string; claim_index: number };
 type Plan = { id: string; slug: string; objective: string; intent: string | null; kit_key: string; block_selection: { blocks?: string[]; claim_slot_bindings?: ClaimSlotBinding[] }; state: string; version: number; decision_reason: string | null };
 type StructureRevision = { id: string; version: number; state: string };
+type BukvarixStatus = { enabled: false; status: "disabled_unsafe_transport"; message: string; supported_modes: ("domain" | "compare" | "multi_domain")[] };
+type SemanticSourceRun = { id: string; project_id: string; provider: "bukvarix"; acquisition: "manual_export"; mode: "domain" | "compare" | "multi_domain"; source_label: string; observed_at: string; notes: string | null; selected_keyword_count: number; created_at: string | null };
 type Draft = { id: string; page_plan_id: string; revision: number; state: string; content_hash: string | null; last_qa_verdict: string | null; qa_runs: { verdict: string; findings: { verdict: string; rule: string; evidence: string }[] }[]; page_manifest: { blocks?: { type?: unknown }[] } & Record<string, unknown>; failure_message: string | null };
 type Coverage = { selected: number; covered: number; uncovered: { keyword_id: string; phrase: string }[]; plans: number };
 type LegalReviewHistory = { decision: string; evidence_ref: string | null; reason: string | null; replacement_guidance: string | null; legal_snapshot_hash: string | null; actor_id: string | null; reviewed_at: string | null };
@@ -61,6 +63,13 @@ export function ProjectWorkspacePage() {
   const [semanticCollections, setSemanticCollections] = useState<SemanticCollection[]>([]);
   const [semanticSignals, setSemanticSignals] = useState<SemanticSignals | null>(null);
   const [structureRevisions, setStructureRevisions] = useState<StructureRevision[]>([]);
+  const [bukvarixStatus, setBukvarixStatus] = useState<BukvarixStatus | null>(null);
+  const [semanticSourceRuns, setSemanticSourceRuns] = useState<SemanticSourceRun[]>([]);
+  const [sourceKeywordIds, setSourceKeywordIds] = useState<string[]>([]);
+  const [sourceLabel, setSourceLabel] = useState("");
+  const [sourceMode, setSourceMode] = useState<SemanticSourceRun["mode"]>("domain");
+  const [semanticSourceNotes, setSemanticSourceNotes] = useState("");
+  const [sourceConfirmed, setSourceConfirmed] = useState(false);
   const [semanticName, setSemanticName] = useState("Основная семантика");
   const [builds, setBuilds] = useState<Build[]>([]);
   const [indexPromotions, setIndexPromotions] = useState<IndexPromotionCandidate[]>([]);
@@ -152,7 +161,7 @@ export function ProjectWorkspacePage() {
   );
 
   async function load() {
-    const [nextProject, nextFacts, nextKeywords, nextProjectKeywords, nextPlaces, nextProjectGeo, nextPlans, nextDrafts, nextCoverage, nextBuilds, nextAssetUsage, nextIndexPromotions, nextSeoRuns, nextSlotRuns, nextCollections, nextSignals, nextStructureRevisions] = await Promise.all([
+    const [nextProject, nextFacts, nextKeywords, nextProjectKeywords, nextPlaces, nextProjectGeo, nextPlans, nextDrafts, nextCoverage, nextBuilds, nextAssetUsage, nextIndexPromotions, nextSeoRuns, nextSlotRuns, nextCollections, nextSignals, nextStructureRevisions, nextBukvarixStatus, nextSourceRuns] = await Promise.all([
       api<Project>(`/api/v1/projects/${projectId}`, {}, token),
       api<FactRevision[]>(`/api/v1/projects/${projectId}/facts`, {}, token),
       api<{ items: Keyword[] }>("/api/v1/keywords?limit=100", {}, token),
@@ -170,6 +179,8 @@ export function ProjectWorkspacePage() {
       api<SemanticCollection[]>(`/api/v1/projects/${projectId}/semantic-collections`, {}, token),
       api<SemanticSignals>(`/api/v1/projects/${projectId}/semantic-signals`, {}, token),
       api<StructureRevision[]>(`/api/v1/projects/${projectId}/site-structure/revisions`, {}, token),
+      api<BukvarixStatus>(`/api/v1/projects/${projectId}/semantic-sources/bukvarix/status`, {}, token),
+      api<SemanticSourceRun[]>(`/api/v1/projects/${projectId}/semantic-source-runs`, {}, token),
     ]);
     setProject(nextProject);
     setFacts(nextFacts);
@@ -193,6 +204,8 @@ export function ProjectWorkspacePage() {
     setSemanticCollections(nextCollections);
     setSemanticSignals(nextSignals);
     setStructureRevisions(nextStructureRevisions);
+    setBukvarixStatus(nextBukvarixStatus);
+    setSemanticSourceRuns(nextSourceRuns);
     if (nextProject.site_id) {
       const routing = await api<{ items: LeadRoutingPolicy[] }>(`/api/v1/projects/${projectId}/lead-routing`, {}, token);
       setRoutingPolicies(routing.items);
@@ -311,6 +324,40 @@ export function ProjectWorkspacePage() {
 
   async function saveKeywords() {
     await run("keywords", () => api(`/api/v1/projects/${projectId}/keywords`, { method: "PUT", body: JSON.stringify({ items: selectedKeywordIds.map((keyword_id) => ({ keyword_id })) }) }, token), "Семантика проекта сохранена.");
+  }
+
+  function toggleSourceKeyword(projectKeywordId: string) {
+    setSourceKeywordIds((current) => current.includes(projectKeywordId)
+      ? current.filter((item) => item !== projectKeywordId)
+      : [...current, projectKeywordId]);
+  }
+
+  async function recordManualBukvarixExport() {
+    if (!sourceLabel.trim() || !sourceKeywordIds.length || !sourceConfirmed) {
+      setError("Для ручного источника нужны название, выбранные ключи и явное подтверждение.");
+      return;
+    }
+    await run(
+      "semantic-source-run",
+      () => api(`/api/v1/projects/${projectId}/semantic-source-runs`, {
+        method: "POST",
+        body: JSON.stringify({
+          provider: "bukvarix",
+          acquisition: "manual_export",
+          mode: sourceMode,
+          source_label: sourceLabel.trim(),
+          observed_at: new Date().toISOString(),
+          notes: semanticSourceNotes.trim() || null,
+          project_keyword_ids: sourceKeywordIds,
+          confirm_record_manual_export: true,
+        }),
+      }, token),
+      "Зафиксирован ручной экспорт Букварикса как provenance. Данные не загружались из провайдера и никакие страницы не созданы.",
+    );
+    setSourceKeywordIds([]);
+    setSourceLabel("");
+    setSemanticSourceNotes("");
+    setSourceConfirmed(false);
   }
 
   async function createSemanticCollection() {
@@ -864,6 +911,20 @@ export function ProjectWorkspacePage() {
         <DataTable headers={["", "Основное", "Место", "Тип"]}>{places.map((place) => <tr key={place.id}><td><input aria-label={`Добавить ${place.name}`} type="checkbox" disabled={busy !== null} checked={selectedGeoSet.has(place.id)} onChange={() => toggleGeo(place.id)} /></td><td><input aria-label={`Основное место ${place.name}`} type="radio" name="primary-geo" disabled={busy !== null || !selectedGeoSet.has(place.id)} checked={primaryGeoId === place.id} onChange={() => setPrimaryGeoId(place.id)} /></td><td>{place.name}</td><td>{place.kind}</td></tr>)}</DataTable>
         {places.length === 0 && <EmptyState title="Справочник географии пуст" hint="Добавьте город или район в разделе «География»." />}
         <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={saveGeo}>Сохранить географию</button>
+      </Surface>
+      <Surface title="3.5. Источник семантики: Букварикс">
+        <p className="muted">{bukvarixStatus?.message || "Проверка статуса Букварикса…"}</p>
+        <p className="muted">Панель не принимает API key, endpoint или URL Букварикса и не отправляет запросы поставщику. Здесь можно только зафиксировать provenance уже вручную полученного экспорта для ранее сохранённых project keywords.</p>
+        <div className="stack">
+          <label className="field">Название ручного экспорта<input value={sourceLabel} onChange={(event) => setSourceLabel(event.target.value)} placeholder="Например: экспорт семантики за 2026-10-02" /></label>
+          <label className="field">Режим<select value={sourceMode} onChange={(event) => setSourceMode(event.target.value as SemanticSourceRun["mode"])}><option value="domain">Один домен</option><option value="compare">Сравнение доменов</option><option value="multi_domain">Несколько доменов</option></select></label>
+          <label className="field">Заметка (необязательно)<textarea value={semanticSourceNotes} onChange={(event) => setSemanticSourceNotes(event.target.value)} placeholder="Без URL, API key и других секретов" /></label>
+          <p className="muted">Выберите уже добавленные в проект ключи, присутствовавшие в вручную полученном экспорте.</p>
+          {projectKeywords.length === 0 ? <EmptyState title="В проекте нет сохранённых ключей" hint="Сначала выберите ключи из библиотеки проекта; эта форма не импортирует новые фразы." /> : <DataTable headers={["", "Фраза", "Intent", "Priority"]}>{projectKeywords.map((item) => <tr key={item.id}><td><input aria-label={`Источник Букварикс: ${item.phrase}`} type="checkbox" checked={sourceKeywordIds.includes(item.id)} onChange={() => toggleSourceKeyword(item.id)} disabled={busy !== null} /></td><td>{item.phrase}</td><td>{item.intent || "—"}</td><td>{item.priority ?? "—"}</td></tr>)}</DataTable>}
+          <label className="field"><span><input type="checkbox" checked={sourceConfirmed} onChange={(event) => setSourceConfirmed(event.target.checked)} disabled={busy !== null} /> Подтверждаю, что этот экспорт получен вручную; панель не выполняет обращение к Буквариксу и не хранит его credentials.</span></label>
+          <button className="btn btn-ghost" type="button" disabled={busy !== null || !sourceLabel.trim() || !sourceKeywordIds.length || !sourceConfirmed} onClick={() => void recordManualBukvarixExport()}>{busy === "semantic-source-run" ? "Сохранение…" : "Записать ручной экспорт как provenance"}</button>
+        </div>
+        {semanticSourceRuns.length === 0 ? <p className="muted">Ручные provenance runs пока не записаны.</p> : <DataTable headers={["Экспорт", "Режим", "Ключи", "Наблюдалось", "Создано"]}>{semanticSourceRuns.map((item) => <tr key={item.id}><td><strong>{item.source_label}</strong>{item.notes && <p className="muted">{item.notes}</p>}</td><td>{item.mode}</td><td>{item.selected_keyword_count}</td><td>{new Date(item.observed_at).toLocaleString()}</td><td>{item.created_at ? new Date(item.created_at).toLocaleString() : "—"}</td></tr>)}</DataTable>}
       </Surface>
       <Surface title="4. Семантические коллекции и сигналы">
         <p className="muted">Коллекция группирует только выбранные ключи и выбранную географию проекта. Сначала создаётся draft, затем отдельные review/approve; это не создаёт PagePlan и не запускает генерацию.</p>
