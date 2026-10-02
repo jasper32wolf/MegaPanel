@@ -29,6 +29,7 @@ from app.schemas.site_structure import (
     SiteStructureRevisionCreate,
     SiteStructureRevisionDecision,
     SiteStructureRevisionOut,
+    SiteStructureRevisionUpdate,
 )
 from app.services.audit import append_audit
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -270,6 +271,62 @@ async def create_structure_revision(
         db,
         action="site_structure.create",
         payload={"project_id": str(project.id), "revision_id": str(revision.id)},
+        tenant_id=project.tenant_id,
+        actor_id=auth.user.id,
+    )
+    await db.commit()
+    return _serialize(revision)
+
+
+@router.patch(
+    "/{project_id}/site-structure/revisions/{revision_id}",
+    response_model=SiteStructureRevisionOut,
+)
+async def update_structure_revision(
+    project_id: UUID,
+    revision_id: UUID,
+    body: SiteStructureRevisionUpdate,
+    auth: AuthContext = Depends(_WRITE),
+    db: AsyncSession = Depends(get_db),
+) -> SiteStructureRevisionOut:
+    project = await _project_or_404(db, project_id, auth)
+    revision = (
+        await db.execute(
+            select(SiteStructureRevision)
+            .where(
+                SiteStructureRevision.id == revision_id,
+                SiteStructureRevision.project_id == project.id,
+                SiteStructureRevision.tenant_id == project.tenant_id,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if not revision:
+        raise HTTPException(status_code=404, detail="Site structure revision not found")
+    if revision.state != "draft":
+        raise HTTPException(status_code=409, detail="Only draft site structures can be edited")
+    if body.expected_structure_hash != revision.structure_hash:
+        raise HTTPException(
+            status_code=409,
+            detail="Site structure changed; reload before saving edits",
+        )
+    collection, evidence = await _validated_sources(
+        db, project_id=project.id, tenant_id=project.tenant_id, body=body
+    )
+    structure = _validate_catalog_pages(body)
+    revision.semantic_collection_id = collection.id
+    revision.evidence_ids = [str(item.id) for item in evidence]
+    revision.structure = structure
+    revision.structure_hash = _hash(structure)
+    await append_audit(
+        db,
+        action="site_structure.update",
+        payload={
+            "project_id": str(project.id),
+            "revision_id": str(revision.id),
+            "structure_hash": revision.structure_hash,
+            "page_count": len(body.pages),
+        },
         tenant_id=project.tenant_id,
         actor_id=auth.user.id,
     )

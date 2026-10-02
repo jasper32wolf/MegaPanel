@@ -3,30 +3,15 @@ import { Link, useParams } from "react-router-dom";
 import { ConfirmDialog, DataTable, EmptyState, PageHeader, StatusPill, Surface } from "../../components/ui";
 import { api, useAuth } from "../../lib/auth";
 import { ProjectWorkspaceLayout } from "./ProjectWorkspaceLayout";
+import { SiteStructureEditor, type StructureRevisionEditorValue } from "./site-structure-editor";
 
-type Revision = {
-  id: string;
+type Revision = StructureRevisionEditorValue & {
   version: number;
   state: "draft" | "review" | "approved" | "rejected";
-  semantic_collection_id: string;
-  evidence_ids: string[];
-  structure: { pages?: Page[] };
-  source_snapshot: { ai_import?: { ai_run_id: string; prompt_version: string; output_hash: string } };
   materialized_at: string | null;
   materialized_page_plan_ids: string[];
 };
-type Page = {
-  key: string;
-  parent_key: string | null;
-  slug: string;
-  title: string;
-  meta_description: string;
-  h1: string;
-  heading_outline: { level: string; text: string }[];
-  kit_key: string;
-  block_ids: string[];
-  risk_notes: string | null;
-};
+type Kit = { key: string; name?: string; blocks: string[] };
 type Run = { id: string; action: string; status: string; prompt_version: string; created_at: string | null; cost_usd: number | null };
 type SemanticCollection = { id: string; version: number; state: string };
 type Evidence = { id: string; kind: string; state: string; title: string | null };
@@ -47,6 +32,7 @@ export function ProjectSiteStructurePage() {
   const [runs, setRuns] = useState<Run[]>([]);
   const [collections, setCollections] = useState<SemanticCollection[]>([]);
   const [evidence, setEvidence] = useState<Evidence[]>([]);
+  const [kits, setKits] = useState<Kit[]>([]);
   const [cityProjects, setCityProjects] = useState<CityProject[]>([]);
   const [selectedCityIds, setSelectedCityIds] = useState<string[]>([]);
   const [collectionId, setCollectionId] = useState("");
@@ -58,17 +44,19 @@ export function ProjectSiteStructurePage() {
 
   async function load() {
     if (!projectId) return;
-    const [nextRevisions, nextRuns, nextCollections, nextEvidence, nextCities] = await Promise.all([
+    const [nextRevisions, nextRuns, nextCollections, nextEvidence, nextKits, nextCities] = await Promise.all([
       api<Revision[]>(`/api/v1/projects/${projectId}/site-structure/revisions`, {}, token),
       api<Run[]>(`/api/v1/ai/runs?project_id=${encodeURIComponent(projectId)}&action=architecture.site-map&status=approved`, {}, token),
       api<SemanticCollection[]>(`/api/v1/projects/${projectId}/semantic-collections`, {}, token),
       api<Evidence[]>(`/api/v1/competitors/projects/${projectId}/evidence`, {}, token),
+      api<Kit[]>("/api/v1/blocks/kits", {}, token),
       api<CityProject[]>(`/api/v1/projects/${projectId}/city-projects`, {}, token),
     ]);
     setRevisions(nextRevisions);
     setRuns(nextRuns);
     setCollections(nextCollections.filter((item) => item.state === "approved"));
     setEvidence(nextEvidence.filter((item) => item.state === "approved"));
+    setKits(nextKits);
     setCityProjects(nextCities);
     if (!collectionId && nextCollections.some((item) => item.state === "approved")) {
       setCollectionId(nextCollections.find((item) => item.state === "approved")!.id);
@@ -144,6 +132,7 @@ export function ProjectSiteStructurePage() {
       {evidence.length > 0 && <fieldset className="stack"><legend>Approved competitor evidence (необязательно)</legend>{evidence.map((item) => <label key={item.id}><input type="checkbox" checked={evidenceIds.includes(item.id)} onChange={() => toggleEvidence(item.id)} disabled={busy || Boolean(activeRevision)} /> {item.title || item.kind} · {item.id.slice(0, 8)}…</label>)}</fieldset>}
       {importableRuns.length === 0 ? <EmptyState title="Нет доступных утверждённых AI-предложений" hint="Одобрите architecture proposal в AI workspace либо завершите текущую версию структуры." /> : <DataTable headers={["AI run", "Prompt", "Стоимость", "Действие"]}>{importableRuns.map((run) => <tr key={run.id}><td><code>{run.id.slice(0, 8)}…</code><br /><span className="muted">{run.created_at?.slice(0, 19) || "—"}</span></td><td>v{run.prompt_version}</td><td>{run.cost_usd === null ? "—" : `$${run.cost_usd.toFixed(6)}`}</td><td><button className="btn" type="button" disabled={busy || !collectionId || Boolean(activeRevision)} onClick={() => setDialog({ kind: "import", run })}>Создать draft структуры</button></td></tr>)}</DataTable>}
     </Surface>
+    {activeRevision?.state === "review" ? <Surface title="Редактирование draft структуры"><EmptyState title="Структура уже на review" hint="Черновик immutable на время review. Одобрите или отклоните revision, чтобы продолжить с новой версией." /></Surface> : <SiteStructureEditor projectId={projectId} token={token} revision={activeRevision?.state === "draft" ? activeRevision : null} collections={collections} evidence={evidence} kits={kits} busy={busy} onSaved={async (nextMessage) => { setMessage(nextMessage); await load(); }} onError={setError} />}
     <Surface title="Версии структуры">
       {revisions.length === 0 ? <EmptyState title="Версий пока нет" hint="Импортируйте утверждённое AI-предложение или создайте структуру вручную через API." /> : <DataTable headers={["Версия", "Источники", "Страницы", "Состояние", "Действия"]}>{revisions.map((revision) => <tr key={revision.id}><td>v{revision.version}<br /><span className="muted"><code>{revision.id.slice(0, 8)}…</code></span></td><td>semantic <code>{revision.semantic_collection_id.slice(0, 8)}…</code><br />evidence: {revision.evidence_ids.length}<br />{revision.source_snapshot.ai_import && <span className="muted">AI run <code>{revision.source_snapshot.ai_import.ai_run_id.slice(0, 8)}…</code></span>}</td><td>{revision.structure.pages?.length || 0}</td><td><StatusPill tone={tone(revision.state)}>{revision.state}</StatusPill>{revision.materialized_at && <p className="muted">materialized</p>}</td><td><div className="row">{revision.state === "draft" && <button className="btn btn-ghost" type="button" disabled={busy} onClick={() => setDialog({ kind: "submit", revision })}>На review</button>}{revision.state === "review" && <><button className="btn" type="button" disabled={busy} onClick={() => setDialog({ kind: "approve", revision })}>Одобрить</button><button className="btn btn-ghost" type="button" disabled={busy} onClick={() => setDialog({ kind: "reject", revision })}>Отклонить</button></>}{revision.state === "approved" && !revision.materialized_at && <button className="btn" type="button" disabled={busy} onClick={() => setDialog({ kind: "materialize", revision })}>Создать draft PagePlan</button>}</div></td></tr>)}</DataTable>}
     </Surface>

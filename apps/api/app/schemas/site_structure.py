@@ -44,6 +44,30 @@ class SiteStructurePageIn(BaseModel):
         return self
 
 
+def validate_site_structure_tree(
+    pages: list[SiteStructurePageIn], evidence_ids: list[UUID]
+) -> None:
+    keys = [page.key for page in pages]
+    slugs = [page.slug for page in pages]
+    if len(keys) != len(set(keys)):
+        raise ValueError("Site structure contains duplicate page keys")
+    if len(slugs) != len(set(slugs)):
+        raise ValueError("Site structure contains duplicate page slugs")
+    if len(evidence_ids) != len(set(evidence_ids)):
+        raise ValueError("Site structure contains duplicate evidence")
+    parents = {page.key: page.parent_key for page in pages}
+    if any(parent_key and parent_key not in parents for parent_key in parents.values()):
+        raise ValueError("Site structure references an unknown parent page")
+    for key in parents:
+        visited: set[str] = set()
+        current: str | None = key
+        while current:
+            if current in visited:
+                raise ValueError("Site structure contains a parent cycle")
+            visited.add(current)
+            current = parents[current]
+
+
 class SiteStructureRevisionCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -53,16 +77,16 @@ class SiteStructureRevisionCreate(BaseModel):
 
     @model_validator(mode="after")
     def require_unique_tree(self) -> SiteStructureRevisionCreate:
-        keys = [page.key for page in self.pages]
-        slugs = [page.slug for page in self.pages]
-        if len(keys) != len(set(keys)):
-            raise ValueError("Site structure contains duplicate page keys")
-        if len(slugs) != len(set(slugs)):
-            raise ValueError("Site structure contains duplicate page slugs")
-        if len(self.evidence_ids) != len(set(self.evidence_ids)):
-            raise ValueError("Site structure contains duplicate evidence")
-        if any(page.parent_key and page.parent_key not in keys for page in self.pages):
-            raise ValueError("Site structure references an unknown parent page")
+        validate_site_structure_tree(self.pages, self.evidence_ids)
+        return self
+
+
+class SiteStructureRevisionUpdate(SiteStructureRevisionCreate):
+    expected_structure_hash: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def require_unique_updated_tree(self) -> SiteStructureRevisionUpdate:
+        validate_site_structure_tree(self.pages, self.evidence_ids)
         return self
 
 

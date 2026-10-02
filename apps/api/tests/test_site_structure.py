@@ -10,6 +10,7 @@ from app.main import app
 from app.schemas.site_structure import (
     SiteStructureCityChildrenMaterializeCreate,
     SiteStructureRevisionCreate,
+    SiteStructureRevisionUpdate,
 )
 from pydantic import ValidationError
 
@@ -67,6 +68,20 @@ def test_site_structure_schema_rejects_invalid_tree_and_duplicate_inputs(payload
         SiteStructureRevisionCreate.model_validate(payload)
 
 
+def test_site_structure_schema_rejects_parent_cycle_and_validates_update_hash():
+    pages = [
+        structure_page(key="services", slug="/services", parent_key="repair"),
+        structure_page(key="repair", slug="/repair", parent_key="services"),
+    ]
+    with pytest.raises(ValidationError, match="parent cycle"):
+        SiteStructureRevisionCreate.model_validate(revision_payload(pages=pages))
+
+    update = SiteStructureRevisionUpdate.model_validate(
+        {**revision_payload(), "expected_structure_hash": "a" * 64}
+    )
+    assert update.expected_structure_hash == "a" * 64
+
+
 def test_city_materialization_plan_keeps_only_structure_provenance():
     revision = SimpleNamespace(id=uuid4(), version=3)
     project = SimpleNamespace(id=uuid4(), tenant_id=uuid4())
@@ -119,6 +134,7 @@ def test_site_structure_routes_are_registered():
     root = "/api/v1/projects/{project_id}/site-structure/revisions"
 
     assert {"get", "post"}.issubset(paths[root])
+    assert "patch" in paths[f"{root}/{{revision_id}}"]
     for action in (
         "submit-review",
         "approve",
