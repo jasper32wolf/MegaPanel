@@ -16,6 +16,7 @@ import { LoginPage } from "./pages/LoginPage";
 import { MediaPage } from "./pages/MediaPage";
 import { OpsPage } from "./pages/OpsPage";
 import { ProjectActivityPage } from "./pages/project/activity";
+import { ProjectCityProjectsPage } from "./pages/project/city-projects";
 import { ProjectFactsPage } from "./pages/project/facts";
 import { ProjectOverviewPage } from "./pages/project/overview";
 import { ProjectPagesPage } from "./pages/project/pages";
@@ -54,6 +55,7 @@ export default function App() {
                 <Route path="/projects/:projectId/releases" element={<ProjectReleasesPage />} />
                 <Route path="/projects/:projectId/routing" element={<ProjectRoutingPage />} />
                 <Route path="/projects/:projectId/semantic-coverage" element={<SemanticCoveragePage />} />
+                <Route path="/projects/:projectId/city-projects" element={<ProjectCityProjectsPage />} />
                 {/* Existing activity URL remains unchanged for bookmarks and E2E coverage. */}
                 <Route path="/projects/:projectId/activity" element={<ProjectActivityPage />} />
                 <Route path="/sites" element={<SitesPage />} />

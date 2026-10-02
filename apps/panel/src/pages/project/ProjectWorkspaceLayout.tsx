@@ -8,6 +8,7 @@ const sections = [
   ["releases", "Releases"],
   ["routing", "Routing"],
   ["semantic-coverage", "Coverage"],
+  ["city-projects", "Города"],
   ["activity", "Activity"],
 ] as const;
 
