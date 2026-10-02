@@ -3,6 +3,30 @@ import { expect, test, type Page } from "@playwright/test";
 const email = process.env.E2E_OPERATOR_EMAIL || "e2e@example.com";
 const password = process.env.E2E_OPERATOR_PASSWORD || "e2e-ci-password";
 
+async function panelApi<T>(page: Page, path: string, init: RequestInit = {}): Promise<T> {
+  const result = await page.evaluate(async ({ path, init }) => {
+    const csrf = document.cookie
+      .split("; ")
+      .find((item) => item.startsWith("site_panel_csrf="))
+      ?.split("=", 2)[1];
+    const headers = new Headers(init.headers);
+    if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+    if (init.method && !["GET", "HEAD", "OPTIONS"].includes(init.method) && csrf) {
+      headers.set("X-CSRF-Token", csrf);
+    }
+    const response = await fetch(path, { ...init, headers, credentials: "include" });
+    return { status: response.status, text: await response.text() };
+  }, { path, init });
+  expect(result.status, `${init.method || "GET"} ${path}: ${result.text}`).toBeLessThan(300);
+  return JSON.parse(result.text) as T;
+}
+
+function projectIdFromUrl(url: string) {
+  const projectId = new URL(url).pathname.split("/")[2];
+  if (!projectId) throw new Error("Project ID is missing from the workspace URL");
+  return projectId;
+}
+
 async function login(page: Page) {
   await page.goto("/");
 
@@ -88,6 +112,7 @@ test("оператор видит и отзывает другую сессию"
 });
 
 test("оператор создаёт и готовит candidate без публикации", async ({ page }) => {
+  test.setTimeout(90_000);
   const publishRequests: string[] = [];
   page.on("request", (request) => {
     if (request.method() === "POST" && /\/builds\/[^/]+\/publish$/.test(new URL(request.url()).pathname)) {
@@ -204,6 +229,45 @@ test("оператор создаёт и готовит candidate без пуб�
   await expect(addPlace).toBeChecked();
   await expect(primaryPlace).toBeChecked();
   await expect(selectedKeyword).toBeChecked();
+
+  await page.getByRole("button", { name: "Создать draft collection из выбранных ключей и географии" }).click();
+  await expect(page.getByText("Semantic collection создана как draft.")).toBeVisible();
+  await page.getByRole("button", { name: "На review", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Одобрить", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Одобрить", exact: true }).click();
+
+  const collections = await panelApi<Array<{ id: string; state: string }>>(
+    page,
+    `/api/v1/projects/${projectIdFromUrl(page.url())}/semantic-collections`,
+  );
+  const collection = collections.find((item) => item.state === "approved");
+  expect(collection).toBeTruthy();
+  const revision = await panelApi<{ id: string }>(
+    page,
+    `/api/v1/projects/${projectIdFromUrl(page.url())}/site-structure/revisions`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        semantic_collection_id: collection!.id,
+        evidence_ids: [],
+        pages: [{
+          key: "home",
+          slug: "/",
+          title: "E2E услуга",
+          meta_description: "E2E описание услуги",
+          h1: "E2E услуга",
+          heading_outline: [],
+          objective: "Проверка основного operator workflow",
+          kit_key: "service-local-v1",
+          block_ids: ["hero"],
+        }],
+      }),
+    },
+  );
+  await panelApi(page, `/api/v1/projects/${projectIdFromUrl(page.url())}/site-structure/revisions/${revision.id}/submit-review`, { method: "POST" });
+  await panelApi(page, `/api/v1/projects/${projectIdFromUrl(page.url())}/site-structure/revisions/${revision.id}/approve`, { method: "POST", body: JSON.stringify({}) });
+  await page.reload();
+  await expect(page.getByRole("heading", { name: projectName })).toBeVisible();
 
   await page.getByLabel("Путь страницы").fill("/");
   await page.getByLabel("Цель страницы").fill("Проверка основного operator workflow");

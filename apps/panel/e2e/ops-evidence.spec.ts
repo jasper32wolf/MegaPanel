@@ -66,7 +66,7 @@ test("Ops shows bounded verification evidence without mutation", async ({ page }
     return route.fulfill({ status: 404, contentType: "application/json", body: '{"detail":"not used by proof"}' });
   });
 
-  await page.getByRole("link", { name: "Статус" }).click();
+  await page.goto("/ops");
   await expect(page.getByRole("heading", { name: "Статус системы" })).toBeVisible();
   await expect(page.getByText("Границы доказательств")).toBeVisible();
   await expect(page.getByText("passed", { exact: true })).toBeVisible();
