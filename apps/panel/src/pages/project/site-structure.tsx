@@ -44,14 +44,21 @@ export function ProjectSiteStructurePage() {
 
   async function load() {
     if (!projectId) return;
-    const [nextRevisions, nextRuns, nextCollections, nextEvidence, nextKits, nextCities] = await Promise.all([
+    // Manual structure needs these three resources. Optional AI/evidence/city panels
+    // must not hide the editor if one secondary endpoint is temporarily unavailable.
+    const [nextRevisions, nextCollections, nextKits] = await Promise.all([
       api<Revision[]>(`/api/v1/projects/${projectId}/site-structure/revisions`, {}, token),
-      api<Run[]>(`/api/v1/ai/runs?project_id=${encodeURIComponent(projectId)}&action=architecture.site-map&status=approved`, {}, token),
       api<SemanticCollection[]>(`/api/v1/projects/${projectId}/semantic-collections`, {}, token),
-      api<Evidence[]>(`/api/v1/competitors/projects/${projectId}/evidence`, {}, token),
       api<Kit[]>("/api/v1/blocks/kits", {}, token),
+    ]);
+    const [runsResult, evidenceResult, citiesResult] = await Promise.allSettled([
+      api<Run[]>(`/api/v1/ai/runs?project_id=${encodeURIComponent(projectId)}&action=architecture.site-map&status=approved`, {}, token),
+      api<Evidence[]>(`/api/v1/competitors/projects/${projectId}/evidence`, {}, token),
       api<CityProject[]>(`/api/v1/projects/${projectId}/city-projects`, {}, token),
     ]);
+    const nextRuns = runsResult.status === "fulfilled" ? runsResult.value : [];
+    const nextEvidence = evidenceResult.status === "fulfilled" ? evidenceResult.value : [];
+    const nextCities = citiesResult.status === "fulfilled" ? citiesResult.value : [];
     setRevisions(nextRevisions);
     setRuns(nextRuns);
     setCollections(nextCollections.filter((item) => item.state === "approved"));

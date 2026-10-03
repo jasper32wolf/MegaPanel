@@ -213,6 +213,8 @@ test("оператор создаёт и готовит candidate без пуб�
   await page.getByRole("button", { name: "На review", exact: true }).click();
   await expect(page.getByRole("button", { name: "Одобрить", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Одобрить", exact: true }).click();
+  await expect(page.getByText("Коллекция одобрена.")).toBeVisible();
+  await expect(page.getByText("approved", { exact: true })).toBeVisible();
 
   await page.getByRole("link", { name: "Структура", exact: true }).click();
   await expect(
