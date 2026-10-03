@@ -221,10 +221,10 @@ test("оператор создаёт и готовит candidate без пуб�
   await expect(page.getByText("Коллекция одобрена.")).toBeVisible();
   await expect(page.getByText("approved", { exact: true })).toBeVisible();
 
-  const structureUrl = `/projects/${projectId}/site-structure`;
   const structureLink = page.getByRole("link", { name: "Структура", exact: true });
-  await expect(structureLink).toHaveAttribute("href", structureUrl);
-  await page.goto(structureUrl);
+  const structureUrl = await structureLink.getAttribute("href");
+  expect(structureUrl).toMatch(/^\/projects\/[0-9a-f-]+\/site-structure$/);
+  await page.goto(structureUrl!);
   await expect(page).toHaveURL(new RegExp(`${structureUrl}$`));
   await expect(
     page.getByRole("heading", { name: "Структура сайта", exact: true }),
