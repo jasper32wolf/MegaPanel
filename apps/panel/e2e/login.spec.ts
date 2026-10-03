@@ -211,12 +211,21 @@ test("оператор создаёт и готовит candidate без пуб�
   await page.getByRole("button", { name: "Создать draft collection из выбранных ключей и географии" }).click();
   await expect(page.getByText("Semantic collection создана как draft.")).toBeVisible();
   await page.getByRole("button", { name: "На review", exact: true }).click();
+  const approveCollectionResponse = page.waitForResponse((response) =>
+    response.request().method() === "POST" &&
+    /\/semantic-collections\/[^/]+\/approve$/.test(new URL(response.url()).pathname),
+  );
   await expect(page.getByRole("button", { name: "Одобрить", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Одобрить", exact: true }).click();
+  expect((await approveCollectionResponse).ok()).toBe(true);
   await expect(page.getByText("Коллекция одобрена.")).toBeVisible();
   await expect(page.getByText("approved", { exact: true })).toBeVisible();
 
-  await page.getByRole("link", { name: "Структура", exact: true }).click();
+  const structureUrl = `/projects/${projectId}/site-structure`;
+  const structureLink = page.getByRole("link", { name: "Структура", exact: true });
+  await expect(structureLink).toHaveAttribute("href", structureUrl);
+  await page.goto(structureUrl);
+  await expect(page).toHaveURL(new RegExp(`${structureUrl}$`));
   await expect(
     page.getByRole("heading", { name: "Структура сайта", exact: true }),
   ).toBeVisible({ timeout: 15_000 });
