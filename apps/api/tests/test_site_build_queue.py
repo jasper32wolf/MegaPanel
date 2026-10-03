@@ -335,3 +335,7 @@ def test_build_queue_migration_has_rls_append_only_events_and_legacy_backfill(mo
     assert "FORCE ROW LEVEL SECURITY" in sql
     assert "append-only" in sql
     assert "legacy_incomplete" in sql
+    function_sql = next(item for item in calls if "CREATE FUNCTION" in item)
+    trigger_sql = next(item for item in calls if "CREATE TRIGGER" in item)
+    assert "CREATE TRIGGER" not in function_sql
+    assert "CREATE FUNCTION" not in trigger_sql

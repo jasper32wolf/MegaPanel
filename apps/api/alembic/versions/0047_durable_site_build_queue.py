@@ -187,6 +187,10 @@ def upgrade() -> None:
           RAISE EXCEPTION 'site_build_events are append-only';
         END;
         $$ LANGUAGE plpgsql;
+        """
+    )
+    op.execute(
+        """
         CREATE TRIGGER trg_forbid_site_build_event_mutation
         BEFORE UPDATE OR DELETE ON site_build_events
         FOR EACH ROW EXECUTE FUNCTION forbid_site_build_event_mutation();
