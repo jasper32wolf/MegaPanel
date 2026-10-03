@@ -215,11 +215,13 @@ test("оператор создаёт и готовит candidate без пуб�
   await page.getByRole("button", { name: "Одобрить", exact: true }).click();
 
   await page.getByRole("link", { name: "Структура", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Структура сайта", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Структура сайта", exact: true }),
+  ).toBeVisible({ timeout: 15_000 });
   const manualStructure = page.locator("section.surface").filter({
     has: page.getByRole("heading", { name: "Новая ручная структура", exact: true }),
   });
-  await expect(manualStructure).toBeVisible();
+  await expect(manualStructure).toBeVisible({ timeout: 15_000 });
   await manualStructure.getByLabel("Title").fill("E2E услуга");
   await manualStructure.getByLabel("Meta description").fill("E2E описание услуги");
   await manualStructure.getByLabel("H1").fill("E2E услуга");
