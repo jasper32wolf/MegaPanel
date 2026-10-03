@@ -317,6 +317,8 @@ def test_materializing_candidate_does_not_mutate_active_site_page_projection(mon
     monkeypatch.setattr(projects, "_project_or_404", AsyncMock(return_value=project))
     monkeypatch.setattr(projects, "_project_site_or_409", AsyncMock(return_value=site))
     monkeypatch.setattr(projects, "SiteBuilder", Builder)
+    monkeypatch.setattr(projects, "append_site_build_event", AsyncMock())
+    monkeypatch.setattr(projects, "enqueue_site_build", AsyncMock())
     monkeypatch.setattr(projects, "append_audit", AsyncMock())
     auth = SimpleNamespace(user=SimpleNamespace(id=uuid4()))
     before = {
@@ -336,30 +338,15 @@ def test_materializing_candidate_does_not_mutate_active_site_page_projection(mon
     response = asyncio.run(materialize_project_build(project_id, auth, db))
 
     assert response["activated"] is False
-    assert Builder.calls == [
-        {"index_states": {"/": "noindex", "/new": "noindex"}, "assets": [], "activate": False}
-    ]
-    assert {type(item).__name__ for item in db.added} == {
-        "BuildReleaseGate",
-        "OperationalEvent",
-        "SiteBuild",
-    }
-    event = next(item for item in db.added if type(item).__name__ == "OperationalEvent")
-    assert (event.event_type, event.severity, event.outcome, event.quantity) == (
-        "release",
-        "info",
-        "success",
-        1,
-    )
-    gate = next(item for item in db.added if type(item).__name__ == "BuildReleaseGate")
-    assert gate.status == "block"
-    assert "Set the legal organization before publish" in gate.blockers
+    assert response["published"] is False
+    assert response["status"] == "queued"
+    assert Builder.calls == []
+    assert {type(item).__name__ for item in db.added} == {"SiteBuild"}
     build = db.added[0]
     assert build.manifest_snapshot == snapshot
-    assert [item["index_state"] for item in build.page_metadata_snapshot] == ["noindex", "noindex"]
-    assert all(len(item["source_hash"]) == 64 for item in build.page_metadata_snapshot)
-    assert all(item["promoted_at"] is None for item in build.page_metadata_snapshot)
-    assert all("index_promotion" not in item for item in build.page_metadata_snapshot)
+    assert build.input_snapshot["manifest"] == snapshot
+    assert build.page_metadata_snapshot is None
+    assert build.build_hash is None
     assert {name: getattr(active_page, name) for name in before} == before
     assert db.committed is True
 
@@ -472,6 +459,8 @@ def test_materialized_build_snapshots_only_matched_index_promotion_evidence(monk
     monkeypatch.setattr(projects, "_project_or_404", AsyncMock(return_value=project))
     monkeypatch.setattr(projects, "_project_site_or_409", AsyncMock(return_value=site))
     monkeypatch.setattr(projects, "SiteBuilder", Builder)
+    monkeypatch.setattr(projects, "append_site_build_event", AsyncMock())
+    monkeypatch.setattr(projects, "enqueue_site_build", AsyncMock())
     monkeypatch.setattr(projects, "append_audit", AsyncMock())
 
     asyncio.run(
@@ -479,7 +468,7 @@ def test_materialized_build_snapshots_only_matched_index_promotion_evidence(monk
     )
 
     build = next(item for item in db.added if type(item).__name__ == "SiteBuild")
-    assert build.page_metadata_snapshot[0]["index_promotion"] == {
+    assert build.input_snapshot["index_promotions"]["/"] == {
         "id": str(promotion.id),
         "slug": "/",
         "source_hash": source_hash,
@@ -487,7 +476,7 @@ def test_materialized_build_snapshots_only_matched_index_promotion_evidence(monk
         "reason": promotion.reason,
         "decided_at": decided_at.isoformat(),
     }
-    assert build.page_metadata_snapshot[0]["promoted_at"] == decided_at.isoformat()
+    assert build.input_snapshot["promoted_at"]["/"] == decided_at.isoformat()
 
 
 def test_list_builds_projects_only_immutable_index_promotion_snapshot(monkeypatch):
@@ -522,8 +511,11 @@ def test_list_builds_projects_only_immutable_index_promotion_snapshot(monkeypatc
         page_metadata_snapshot=metadata,
     )
     project = SimpleNamespace(id=project_id, tenant_id=tenant_id, site_id=site_id)
-    db = BuildWorkflowDatabase([[build], [], []])
+    db = BuildWorkflowDatabase([[build], [], [], []])
     monkeypatch.setattr(projects, "_project_or_404", AsyncMock(return_value=project))
+    monkeypatch.setattr(
+        projects, "_project_site_or_409", AsyncMock(return_value=SimpleNamespace(build_hash=None))
+    )
 
     response = asyncio.run(projects.list_project_builds(project_id, SimpleNamespace(), db))
 
@@ -777,7 +769,13 @@ def test_rollback_restores_target_snapshot_and_archives_newer_only_pages(monkeyp
         tenant_id,
         [_page_manifest("/", "Старая страница"), _page_manifest("/old", "Старый путь")],
     )
-    project = SimpleNamespace(id=project_id, tenant_id=tenant_id, site_id=site_id)
+    project = SimpleNamespace(
+        id=project_id,
+        tenant_id=tenant_id,
+        site_id=site_id,
+        domain="example.test",
+        domain_check_meta={"dns_status": "ok"},
+    )
     site = SimpleNamespace(
         id=site_id,
         tenant_id=tenant_id,
@@ -790,10 +788,11 @@ def test_rollback_restores_target_snapshot_and_archives_newer_only_pages(monkeyp
         project_id=project_id,
         tenant_id=tenant_id,
         site_id=site_id,
-        status="published",
+        status="ready",
         build_hash="a" * 64,
         manifest_snapshot=target_snapshot,
         page_metadata_snapshot=[_page_metadata("/"), _page_metadata("/old")],
+        first_published_at=datetime.now(UTC),
         activated_at=None,
     )
     current = SimpleNamespace(
@@ -838,13 +837,18 @@ def test_rollback_restores_target_snapshot_and_archives_newer_only_pages(monkeyp
     monkeypatch.setattr(projects, "_project_site_or_409", AsyncMock(return_value=site))
     monkeypatch.setattr(projects, "SiteBuilder", Builder)
     monkeypatch.setattr(projects, "CaddyClient", Caddy)
+    monkeypatch.setattr(projects, "evaluate_build_release_gate", lambda *_args: {"blockers": []})
+    monkeypatch.setattr(projects, "legal_review_status", lambda _build: {"blockers": []})
+    monkeypatch.setattr(projects, "_lead_routing_publish_blockers", AsyncMock(return_value=[]))
     monkeypatch.setattr(projects, "append_audit", AsyncMock())
     auth = SimpleNamespace(user=SimpleNamespace(id=uuid4()))
 
     response = asyncio.run(
         rollback_project_build(
             project_id,
-            BuildRollbackRequest(build_hash="a" * 64, confirmed=True),
+            BuildRollbackRequest(
+                build_hash="a" * 64, confirmation_text=f"ROLLBACK {'a' * 64}"
+            ),
             auth,
             db,
         )
@@ -870,7 +874,7 @@ def test_rollback_restores_target_snapshot_and_archives_newer_only_pages(monkeyp
         "published",
         "indexed",
     )
-    assert target.status == "published"
+    assert target.status == "ready"
     assert target.activated_at is not None
     assert db.committed is True
 
@@ -1103,7 +1107,13 @@ def test_first_publish_caddy_failure_compensates_without_persistence(monkeypatch
 
 def test_rollback_caddy_failure_restores_release_without_projection_mutation(monkeypatch):
     tenant_id, project_id, site_id = (uuid4() for _ in range(3))
-    project = SimpleNamespace(id=project_id, tenant_id=tenant_id, site_id=site_id)
+    project = SimpleNamespace(
+        id=project_id,
+        tenant_id=tenant_id,
+        site_id=site_id,
+        domain="example.test",
+        domain_check_meta={"dns_status": "ok"},
+    )
     site = SimpleNamespace(
         id=site_id,
         tenant_id=tenant_id,
@@ -1116,12 +1126,13 @@ def test_rollback_caddy_failure_restores_release_without_projection_mutation(mon
         project_id=project_id,
         tenant_id=tenant_id,
         site_id=site_id,
-        status="published",
+        status="ready",
         build_hash="a" * 64,
         manifest_snapshot=_build_manifest_snapshot(
             site_id, tenant_id, [_page_manifest("/", "Старая")]
         ),
         page_metadata_snapshot=[_page_metadata("/")],
+        first_published_at=datetime.now(UTC),
         activated_at=None,
     )
 
@@ -1152,13 +1163,18 @@ def test_rollback_caddy_failure_restores_release_without_projection_mutation(mon
     monkeypatch.setattr(projects, "_project_site_or_409", AsyncMock(return_value=site))
     monkeypatch.setattr(projects, "SiteBuilder", Builder)
     monkeypatch.setattr(projects, "CaddyClient", Caddy)
+    monkeypatch.setattr(projects, "evaluate_build_release_gate", lambda *_args: {"blockers": []})
+    monkeypatch.setattr(projects, "legal_review_status", lambda _build: {"blockers": []})
+    monkeypatch.setattr(projects, "_lead_routing_publish_blockers", AsyncMock(return_value=[]))
     monkeypatch.setattr(projects, "append_audit", audit)
 
     with pytest.raises(HTTPException, match="previous release restored") as exc_info:
         asyncio.run(
             rollback_project_build(
                 project_id,
-                BuildRollbackRequest(build_hash="a" * 64, confirmed=True),
+                BuildRollbackRequest(
+                build_hash="a" * 64, confirmation_text=f"ROLLBACK {'a' * 64}"
+            ),
                 object(),
                 db,
             )
@@ -1170,7 +1186,7 @@ def test_rollback_caddy_failure_restores_release_without_projection_mutation(mon
     assert (site.build_hash, site.publish_state, target.status, target.activated_at) == (
         "b" * 64,
         "published",
-        "published",
+        "ready",
         None,
     )
     assert db.added == []

@@ -353,8 +353,8 @@ class BuildPublishRequest(BaseModel):
 
 
 class BuildRollbackRequest(BaseModel):
-    build_hash: str = Field(min_length=16, max_length=64)
-    confirmed: bool
+    build_hash: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+    confirmation_text: str = Field(min_length=73, max_length=73)
 
 
 class LeadOutcomeIn(BaseModel):

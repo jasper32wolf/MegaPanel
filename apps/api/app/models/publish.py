@@ -161,11 +161,14 @@ class SiteBuild(Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE")
     )
-    status: Mapped[str] = mapped_column(String(32), default="pending")
+    # Candidate execution state only. Publication is derived from Site.build_hash and
+    # first_published_at, never from this queue state.
+    status: Mapped[str] = mapped_column(String(32), default="queued")
     build_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     previous_build_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     pages_built: Mapped[int] = mapped_column(Integer, default=0)
     duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    # Legacy summary only. New execution history is stored in SiteBuildEvent.
     log: Mapped[str] = mapped_column(Text, default="")
     project_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
@@ -173,10 +176,55 @@ class SiteBuild(Base):
         nullable=True,
         index=True,
     )
+    # Frozen before enqueue; workers must not rebuild from mutable project state.
+    input_snapshot: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    input_snapshot_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    snapshot_version: Mapped[int] = mapped_column(Integer, default=0)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_enqueued_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    failure_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     manifest_snapshot: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     page_metadata_snapshot: Mapped[list[dict] | None] = mapped_column(JSONB, nullable=True)
     page_plan_ids: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     legal_review: Mapped[dict] = mapped_column(JSONB, default=dict)
     requested_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    first_published_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SiteBuildEvent(Base):
+    __tablename__ = "site_build_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    site_build_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("site_builds.id", ondelete="CASCADE"), nullable=False
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    site_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sites.id", ondelete="CASCADE"), nullable=False
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    attempt: Mapped[int] = mapped_column(Integer, default=0)
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    safe_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    details: Mapped[dict] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("site_build_id", "sequence", name="uq_site_build_event_sequence"),
+    )

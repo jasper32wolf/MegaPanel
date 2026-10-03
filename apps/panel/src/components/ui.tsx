@@ -131,6 +131,7 @@ export function ConfirmDialog({
   confirmLabel,
   inputLabel,
   inputMinLength = 0,
+  requiredValue,
   dangerous = false,
   onCancel,
   onConfirm,
@@ -141,12 +142,16 @@ export function ConfirmDialog({
   confirmLabel: string;
   inputLabel?: string;
   inputMinLength?: number;
+  requiredValue?: string;
   dangerous?: boolean;
   onCancel: () => void;
   onConfirm: (value: string) => void;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [value, setValue] = useState("");
+  const confirmationValid = requiredValue
+    ? value.trim() === requiredValue
+    : value.trim().length >= inputMinLength;
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -175,7 +180,7 @@ export function ConfirmDialog({
         method="dialog"
         onSubmit={(event) => {
           event.preventDefault();
-          if (value.trim().length < inputMinLength) return;
+          if (!confirmationValid) return;
           onConfirm(value.trim());
         }}
       >
@@ -202,7 +207,7 @@ export function ConfirmDialog({
             className={`btn${dangerous ? " btn-danger" : ""}`}
             type="submit"
             autoFocus={!inputLabel}
-            disabled={value.trim().length < inputMinLength}
+            disabled={!confirmationValid}
           >
             {confirmLabel}
           </button>

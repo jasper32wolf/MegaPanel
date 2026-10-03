@@ -292,11 +292,12 @@ test("оператор создаёт и готовит candidate без пуб�
     page.getByRole("heading", { name: "4.5. Использование media в snapshots", exact: true }),
   ).toBeVisible();
 
+  await page.getByRole("link", { name: "Releases", exact: true }).click();
   const createCandidate = page.getByRole("button", { name: "Создать candidate-сборку" });
   await expect(createCandidate).toBeVisible();
   await createCandidate.click();
-  const preview = page.getByRole("link", { name: "Preview" });
-  await expect(preview).toBeVisible();
+  const preview = page.getByRole("link", { name: "Открыть private preview" });
+  await expect(preview).toBeVisible({ timeout: 30_000 });
   const [previewPage] = await Promise.all([page.waitForEvent("popup"), preview.click()]);
   await expect(previewPage).toHaveURL(/\/preview\/$/);
   await expect(previewPage.getByRole("heading", { name: "E2E услуга", exact: true })).toBeVisible();
@@ -327,9 +328,8 @@ test("оператор создаёт и готовит candidate без пуб�
   const submittedLead = JSON.parse(leadResponseBody) as { id: string };
   await expect(leadForm.getByText("Заявка отправлена. Мы скоро свяжемся с вами.")).toBeVisible();
 
-  const candidateRow = page.getByRole("row").filter({ has: preview });
-  await expect(candidateRow.getByRole("cell", { name: "ready", exact: true })).toBeVisible();
-  const publish = candidateRow.getByRole("button", { name: "Опубликовать" });
+  await expect(page.getByText("ready", { exact: true }).first()).toBeVisible();
+  const publish = page.getByRole("button", { name: "Опубликовать выбранную сборку" });
   await expect(publish).toBeVisible();
   await expect(publish).toBeDisabled();
   expect(publishRequests).toEqual([]);

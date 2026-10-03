@@ -20,6 +20,13 @@ type Build = {
   created_at: string | null;
 };
 
+function buildTone(status: string) {
+  if (status === "ready") return "ok" as const;
+  if (status === "failed") return "danger" as const;
+  if (["queued", "running"].includes(status)) return "warn" as const;
+  return "accent" as const;
+}
+
 type SitePage = {
   id: string;
   slug: string;
@@ -129,7 +136,7 @@ export function SitesPage() {
             {history.map((build) => (
               <tr key={build.id}>
                 <td>{build.created_at?.slice(0, 19) || "—"}</td>
-                <td><StatusPill tone={build.status === "success" ? "ok" : "danger"}>{build.status}</StatusPill></td>
+                <td><StatusPill tone={buildTone(build.status)}>{build.status}</StatusPill></td>
                 <td className="muted">{build.build_hash?.slice(0, 12) || "—"}</td>
                 <td>{build.pages_built}</td>
                 <td>{build.duration_ms === null ? "—" : `${build.duration_ms} мс`}</td>

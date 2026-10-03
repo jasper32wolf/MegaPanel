@@ -291,6 +291,7 @@ from app.models.publish import (  # noqa: E402
     PageIndexPromotion,
     Redirect,
     SiteBuild,
+    SiteBuildEvent,
     SitePage,
 )
 from app.models.research import CompetitorCrawlPage, CompetitorCrawlRun  # noqa: E402
@@ -365,6 +366,7 @@ __all__ = [
     "SerpCheck",
     "Site",
     "SiteBuild",
+    "SiteBuildEvent",
     "SitePage",
     "SiteStructureAIImport",
     "SiteStructureRevision",

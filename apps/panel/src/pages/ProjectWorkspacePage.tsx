@@ -20,9 +20,6 @@ type BukvarixStatus = { enabled: false; status: "disabled_unsafe_transport"; mes
 type SemanticSourceRun = { id: string; project_id: string; provider: "bukvarix"; acquisition: "manual_export"; mode: "domain" | "compare" | "multi_domain"; source_label: string; observed_at: string; notes: string | null; selected_keyword_count: number; created_at: string | null };
 type Draft = { id: string; page_plan_id: string; revision: number; state: string; content_hash: string | null; last_qa_verdict: string | null; qa_runs: { verdict: string; findings: { verdict: string; rule: string; evidence: string }[] }[]; page_manifest: { blocks?: { type?: unknown }[] } & Record<string, unknown>; failure_message: string | null };
 type Coverage = { selected: number; covered: number; uncovered: { keyword_id: string; phrase: string }[]; plans: number };
-type LegalReviewHistory = { decision: string; evidence_ref: string | null; reason: string | null; replacement_guidance: string | null; legal_snapshot_hash: string | null; actor_id: string | null; reviewed_at: string | null };
-type IndexPromotionProvenance = { slug: string; reason: string; decided_at: string };
-type Build = { id: string; status: string; build_hash: string | null; previous_build_hash: string | null; pages_built: number; created_at: string | null; activated_at: string | null; release_gate: { status: string; blockers: string[]; warnings: string[] } | null; legal_review: { status: "pass" | "block"; blockers: string[]; review: { state: string; evidence_ref: string | null; reason: string | null; replacement_guidance: string | null; reviewed_at: string | null }; history: LegalReviewHistory[] }; index_promotion_provenance: IndexPromotionProvenance[] };
 type IndexPromotion = { id: string; reason: string; decided_at: string | null };
 type IndexPromotionCandidate = { slug: string; source_hash: string; qa_verdict: string | null; status: "approved" | "eligible" | "stale"; promotion: IndexPromotion | null };
 type AIProvider = { id: string; label: string; provider_id: string; enabled: boolean };
@@ -72,7 +69,6 @@ export function ProjectWorkspacePage() {
   const [sourceConfirmed, setSourceConfirmed] = useState(false);
   const [semanticCollectionSourceRunIds, setSemanticCollectionSourceRunIds] = useState<string[]>([]);
   const [semanticName, setSemanticName] = useState("Основная семантика");
-  const [builds, setBuilds] = useState<Build[]>([]);
   const [indexPromotions, setIndexPromotions] = useState<IndexPromotionCandidate[]>([]);
   const [aiProviders, setAiProviders] = useState<AIProvider[]>([]);
   const [aiProviderId, setAiProviderId] = useState("");
@@ -103,7 +99,6 @@ export function ProjectWorkspacePage() {
   const [mediaBlockId, setMediaBlockId] = useState("");
   const [mediaAssetId, setMediaAssetId] = useState("");
   const [mediaAlt, setMediaAlt] = useState("");
-  const [legalRejections, setLegalRejections] = useState<Record<string, { reason: string; guidance: string }>>({});
   const [organization, setOrganization] = useState("");
   const [service, setService] = useState("");
   const [phone, setPhone] = useState("");
@@ -162,7 +157,7 @@ export function ProjectWorkspacePage() {
   );
 
   async function load() {
-    const [nextProject, nextFacts, nextKeywords, nextProjectKeywords, nextPlaces, nextProjectGeo, nextPlans, nextDrafts, nextCoverage, nextBuilds, nextAssetUsage, nextIndexPromotions, nextSeoRuns, nextSlotRuns, nextCollections, nextSignals, nextStructureRevisions, nextBukvarixStatus, nextSourceRuns] = await Promise.all([
+    const [nextProject, nextFacts, nextKeywords, nextProjectKeywords, nextPlaces, nextProjectGeo, nextPlans, nextDrafts, nextCoverage, nextAssetUsage, nextIndexPromotions, nextSeoRuns, nextSlotRuns, nextCollections, nextSignals, nextStructureRevisions, nextBukvarixStatus, nextSourceRuns] = await Promise.all([
       api<Project>(`/api/v1/projects/${projectId}`, {}, token),
       api<FactRevision[]>(`/api/v1/projects/${projectId}/facts`, {}, token),
       api<{ items: Keyword[] }>("/api/v1/keywords?limit=100", {}, token),
@@ -172,7 +167,6 @@ export function ProjectWorkspacePage() {
       api<Plan[]>(`/api/v1/projects/${projectId}/page-plans`, {}, token),
       api<Draft[]>(`/api/v1/projects/${projectId}/page-drafts`, {}, token),
       api<Coverage>(`/api/v1/projects/${projectId}/coverage`, {}, token),
-      api<Build[]>(`/api/v1/projects/${projectId}/builds`, {}, token),
       api<AssetUsage[]>(`/api/v1/projects/${projectId}/asset-usage`, {}, token),
       api<IndexPromotionCandidate[]>(`/api/v1/projects/${projectId}/index-promotions`, {}, token),
       api<AIRunBrief[]>(`/api/v1/projects/${projectId}/seo-briefs`, {}, token),
@@ -195,7 +189,6 @@ export function ProjectWorkspacePage() {
     setPlans(nextPlans);
     setDrafts(nextDrafts);
     setCoverage(nextCoverage);
-    setBuilds(nextBuilds);
     setAssetUsage(nextAssetUsage);
     setIndexPromotions(nextIndexPromotions);
     setSeoRuns(nextSeoRuns);
@@ -714,45 +707,6 @@ export function ProjectWorkspacePage() {
     });
   }
 
-  async function materializeBuild() {
-    await run("build", () => api(`/api/v1/projects/${projectId}/builds`, { method: "POST" }, token), "Candidate-сборка готова. Откройте приватный preview перед публикацией.");
-  }
-
-  function reviewBuildLegal(build: Build, decision: "approved" | "rejected") {
-    const rejection = legalRejections[build.id] || { reason: "", guidance: "" };
-    setConfirmation({
-      title: decision === "approved" ? "Подтвердить legal review candidate-сборки?" : "Отклонить legal review candidate-сборки?",
-      description: decision === "approved"
-        ? "Решение привязывается к legal snapshot этой candidate-сборки. Изменение facts потребует новую сборку и review."
-        : "Отклонение не меняет immutable candidate. Исправьте facts или явно прикрепите eligible media к draft, затем повторите QA, review и candidate build.",
-      confirmLabel: decision === "approved" ? "Подтвердить legal review" : "Подтвердить отклонение",
-      inputLabel: "Ссылка или внутренний идентификатор evidence",
-      inputMinLength: 3,
-      dangerous: decision === "rejected",
-      onConfirm: (evidence_ref) => {
-        void run(
-          `legal-review:${build.id}`,
-          () => api(`/api/v1/projects/${projectId}/builds/${build.id}/legal-review`, {
-            method: "POST",
-            body: JSON.stringify({
-              decision,
-              evidence_ref,
-              reason: decision === "rejected" ? rejection.reason.trim() : undefined,
-              replacement_guidance: decision === "rejected" ? rejection.guidance.trim() || undefined : undefined,
-            }),
-          }, token),
-          decision === "approved"
-            ? "Legal review сохранён для immutable candidate. Перед публикацией проверьте preview."
-            : "Отклонение сохранено в history. Candidate и historical releases не изменялись.",
-        );
-      },
-    });
-  }
-
-  async function checkDomain() {
-    await run("domain-check", () => api(`/api/v1/projects/${projectId}/domain/check`, { method: "POST" }, token), "DNS-проверка сохранена. TLS проверяется после активации Caddy-vhost.");
-  }
-
   function promoteForIndex(item: IndexPromotionCandidate) {
     setConfirmation({
       title: `Разрешить индексацию ${item.slug}?`,
@@ -829,36 +783,6 @@ export function ProjectWorkspacePage() {
           "Policy маршрутизации активирована для новых заявок.",
         );
       },
-    });
-  }
-
-  function publishBuild(build: Build) {
-    if (!build.build_hash) return;
-    setConfirmation({
-      title: "Опубликовать candidate-сборку?",
-      description: `Сборка ${build.build_hash.slice(0, 12)} станет публичной для домена проекта.`,
-      confirmLabel: "Опубликовать",
-      dangerous: true,
-      onConfirm: () => void run(
-        `publish:${build.id}`,
-        () => api(`/api/v1/projects/${projectId}/builds/${build.id}/publish`, { method: "POST", body: JSON.stringify({ confirmed: true }) }, token),
-        "Сборка опубликована.",
-      ),
-    });
-  }
-
-  function rollbackBuild(build: Build) {
-    if (!build.build_hash) return;
-    setConfirmation({
-      title: "Откатить сайт на эту сборку?",
-      description: `Публичная версия будет заменена сборкой ${build.build_hash.slice(0, 12)}.`,
-      confirmLabel: "Откатить",
-      dangerous: true,
-      onConfirm: () => void run(
-        `rollback:${build.id}`,
-        () => api(`/api/v1/projects/${projectId}/rollbacks`, { method: "POST", body: JSON.stringify({ build_hash: build.build_hash, confirmed: true }) }, token),
-        "Откат выполнен.",
-      ),
     });
   }
 
@@ -1030,9 +954,8 @@ export function ProjectWorkspacePage() {
         {!project.site_id ? <EmptyState title="Сначала примените черновик" hint="После применения страницы будут доступны для QA и явного решения об индексации." /> : indexPromotions.length === 0 ? <EmptyState title="В текущем манифесте нет страниц" /> : <DataTable headers={["Путь", "QA", "Статус", "Действие"]}>{indexPromotions.map((item) => <tr key={item.slug}><td>{item.slug}</td><td><StatusPill tone={tone(item.qa_verdict || "stale")}>{item.qa_verdict || "требуется QA"}</StatusPill></td><td><StatusPill tone={item.status === "approved" ? "ok" : item.status === "eligible" ? "accent" : "warn"}>{item.status === "approved" ? "разрешена" : item.status === "eligible" ? "можно подтвердить" : "устарело"}</StatusPill>{item.promotion?.decided_at && <p className="muted">решение: {new Date(item.promotion.decided_at).toLocaleString()}</p>}</td><td>{item.status === "eligible" ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => promoteForIndex(item)}>Разрешить индексацию</button> : <span className="muted">{item.status === "approved" ? "Создайте candidate для применения" : "Повторно примените и проверьте текущий черновик"}</span>}</td></tr>)}</DataTable>}
       </Surface>
       <Surface title="7. Candidate-сборки, preview и публикация">
-        <p className="muted">Candidate создаётся без активации. Preview приватен, публикация и откат требуют отдельного подтверждения.</p>
-        <div className="row"><button className="btn btn-ghost" type="button" disabled={busy !== null || !project.domain} onClick={checkDomain}>{busy === "domain-check" ? "Проверка DNS…" : "Проверить DNS"}</button><StatusPill tone={project.domain_check_meta?.dns_status === "ok" ? "ok" : "warn"}>DNS: {project.domain_check_meta?.dns_status || "не проверен"}</StatusPill><button className="btn" type="button" disabled={busy !== null || !project.site_id} onClick={materializeBuild}>{busy === "build" ? "Сборка…" : "Создать candidate-сборку"}</button>{!project.site_id && <span className="muted">Сначала примените черновик страницы.</span>}</div>
-        {builds.length === 0 ? <EmptyState title="Сборок пока нет" hint="После применения черновика создайте candidate-сборку." /> : <DataTable headers={["Статус", "Release gate", "Индексация", "Hash", "Страниц", "Действия"]}>{builds.map((build) => <tr key={build.id}><td><StatusPill tone={tone(build.status)}>{build.status}</StatusPill></td><td><StatusPill tone={build.release_gate?.status === "pass" ? "ok" : "warn"}>{build.release_gate?.status || "не проверен"}</StatusPill>{build.release_gate?.blockers.map((blocker) => <p className="error" key={blocker}>{blocker}</p>)}{build.release_gate?.warnings.map((warning) => <p className="muted" key={warning}>{warning}</p>)}<StatusPill tone={build.legal_review.status === "pass" ? "ok" : "warn"}>legal review: {build.legal_review.review.state}</StatusPill>{build.legal_review.review.reason && <p className="error">{build.legal_review.review.reason}</p>}{build.legal_review.review.replacement_guidance && <p className="muted">{build.legal_review.review.replacement_guidance}</p>}{build.legal_review.blockers.map((blocker) => <p className="error" key={blocker}>{blocker}</p>)}{build.legal_review.history.length > 0 && <details><summary>Legal review history · {build.legal_review.history.length}</summary><ul>{build.legal_review.history.map((event, index) => <li key={`${event.reviewed_at}-${index}`}><StatusPill tone={tone(event.decision)}>{event.decision}</StatusPill> {event.reviewed_at?.slice(0, 19) || "—"} · {event.evidence_ref || "—"}{event.reason ? ` · ${event.reason}` : ""}{event.replacement_guidance ? ` · ${event.replacement_guidance}` : ""}</li>)}</ul></details>}</td><td>{build.index_promotion_provenance.length === 0 ? <span className="muted">Нет snapshot provenance / legacy build</span> : <details><summary>Подтверждений индексации: {build.index_promotion_provenance.length}</summary>{build.index_promotion_provenance.map((promotion) => <p className="muted" key={promotion.slug}><strong>{promotion.slug}</strong> · {promotion.reason}<br /><time dateTime={promotion.decided_at}>{new Date(promotion.decided_at).toLocaleString()}</time></p>)}</details>}</td><td className="muted">{build.build_hash?.slice(0, 16) || "—"}</td><td>{build.pages_built}</td><td className="row">{build.build_hash && project.site_id && <a className="btn btn-ghost" href={`/api/v1/projects/${project.id}/builds/${build.id}/preview/`} target="_blank" rel="noreferrer">Preview</a>}{build.status === "ready" && build.legal_review.status === "block" && <><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => reviewBuildLegal(build, "approved")}>Одобрить legal review</button><label className="field">Причина отклонения<input value={legalRejections[build.id]?.reason || ""} minLength={3} maxLength={2000} onChange={(event) => setLegalRejections((current) => ({ ...current, [build.id]: { reason: event.target.value, guidance: current[build.id]?.guidance || "" } }))} /></label><label className="field">Рекомендация по исправлению<input value={legalRejections[build.id]?.guidance || ""} minLength={3} maxLength={2000} onChange={(event) => setLegalRejections((current) => ({ ...current, [build.id]: { reason: current[build.id]?.reason || "", guidance: event.target.value } }))} placeholder="Исправьте facts или выберите новый eligible asset для draft" /></label><button className="btn btn-ghost" type="button" disabled={busy !== null || (legalRejections[build.id]?.reason || "").trim().length < 3 || (legalRejections[build.id]?.guidance || "").trim().length < 3} onClick={() => reviewBuildLegal(build, "rejected")}>Отклонить legal review</button></>}{build.status === "ready" && <button className="btn btn-ghost" type="button" disabled={busy !== null || build.release_gate?.status === "block" || build.legal_review.status === "block"} onClick={() => publishBuild(build)}>Опубликовать</button>}{build.status === "published" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => rollbackBuild(build)}>Откатить на эту сборку</button>}</td></tr>)}</DataTable>}
+        <p className="muted">Candidate создаётся из зафиксированного snapshot в отдельной durable queue. Private preview, legal review, публикация и безопасный rollback доступны только в центре Releases; worker никогда не публикует сайт и не запускает IndexNow.</p>
+        <Link className="btn" to={`/projects/${projectId}/releases`}>Открыть центр candidate-сборок</Link>
       </Surface>
       <Surface title="Следующий шаг"><p className="muted">После применения черновик меняет только манифест проекта. Candidate-сборка не становится публичной до явной публикации.</p>{project.site_id && <Link className="btn btn-ghost" to="/sites">Открыть сайт и сборки</Link>}</Surface>
       <ConfirmDialog

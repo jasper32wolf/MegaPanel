@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from app.api.v1.ai_providers import _adapter
 from app.api.v1.ai_workspace import _actual_cost, _usage_payload, _validate_proposal
+from app.api.v1.projects import run_queued_candidate_build
 from app.core.config import get_settings
 from app.db.session import open_db_session
 from app.models import AIProviderConnection, AIRun
@@ -17,6 +18,11 @@ from app.services.ai_secrets import decrypt_provider_key
 from app.services.audit import append_audit
 from app.services.competitor_crawl import run_competitor_crawl
 from app.services.operations import auto_resolve_inactive_incidents
+from app.services.site_build_queue import (
+    due_site_build_ids,
+    enqueue_site_build,
+    expire_stale_site_builds,
+)
 from app.services.webhook_delivery import due_delivery_ids, process_delivery, recover_expired_leases
 from app.services.worker_heartbeat import record_worker_heartbeat
 
@@ -63,6 +69,41 @@ async def webhook_delivery_sweep_task(ctx: dict) -> dict:
     except Exception as exc:  # noqa: BLE001
         logger.error("webhook_delivery_sweep_failed", error=str(exc))
         return {"error": str(exc)}
+
+
+async def candidate_build_task(ctx: dict, build_id: str) -> dict:
+    """Execute a single durable candidate build; never activate or publish it."""
+    try:
+        async with open_db_session() as session:
+            result = await run_queued_candidate_build(session, uuid.UUID(build_id))
+        logger.info("candidate_build_processed", build_id=build_id, status=result["status"])
+        return result
+    except Exception:  # noqa: BLE001
+        # The durable record is recovered by its lease/sweep path; do not leak execution details.
+        logger.exception("candidate_build_task_failed", build_id=build_id)
+        return {"status": "failed", "build_id": build_id, "error_code": "worker_execution_failed"}
+
+
+async def candidate_build_sweep_task(ctx: dict) -> dict:
+    """Redeliver only durable queued IDs after a temporary Redis or worker outage."""
+    try:
+        async with open_db_session() as session:
+            recovered = await expire_stale_site_builds(session)
+            build_ids = await due_site_build_ids(session)
+        enqueued = 0
+        for build_id in build_ids:
+            try:
+                await enqueue_site_build(build_id)
+                enqueued += 1
+            except Exception:  # noqa: BLE001
+                logger.warning("candidate_build_enqueue_deferred", build_id=str(build_id))
+        logger.info(
+            "candidate_build_sweep", recovered=recovered, queued=len(build_ids), enqueued=enqueued
+        )
+        return {"recovered": recovered, "queued": len(build_ids), "enqueued": enqueued}
+    except Exception:  # noqa: BLE001
+        logger.exception("candidate_build_sweep_failed")
+        return {"status": "failed", "error_code": "worker_sweep_failed"}
 
 
 async def competitor_crawl_task(ctx: dict, crawl_id: str) -> dict:
@@ -201,6 +242,8 @@ class WorkerSettings:
         webhook_delivery_task,
         webhook_delivery_sweep_task,
         architecture_proposal_task,
+        candidate_build_task,
+        candidate_build_sweep_task,
         competitor_crawl_task,
         operational_incident_auto_resolve_task,
     ]
@@ -211,6 +254,7 @@ class WorkerSettings:
             run_at_startup=True,
         ),
         cron(webhook_delivery_sweep_task, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}),
+        cron(candidate_build_sweep_task, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}),
         cron(
             operational_incident_auto_resolve_task,
             minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55},

@@ -4,12 +4,12 @@ Site Panel — self-hosted панель для одного оператора �
 
 ```text
 Проект → факты бизнеса → семантика/география → план страниц →
-черновик и QA → candidate build → preview → явная публикация → rollback → лиды
+черновик и QA → candidate queue → private preview → явная публикация → typed rollback → лиды
 ```
 
 Это **не публичный SaaS**, не клиентский кабинет и не готовый multi-tenant hosting. Внутренний `tenant_id` пока сохраняется только для совместимости текущей схемы; публичная регистрация, roles, API keys, plugins, client portal и неподтверждённые AI/analytics/DSAR surfaces не входят в release API.
 
-> **Фактический статус на 2026-09-20: single-operator VPS release candidate.** Автоматические API tests, production panel build, restricted release/recovery scripts и новый production installer существуют. Реальные Docker/VPS, PostgreSQL/RLS, Caddy/TLS, browser login, client lead form/webhook и restore drill всё ещё требуют staging-доказательства. Единственный источник фактического статуса и release gate: [docs/ХОД-РАБОТ.md](./docs/ХОД-РАБОТ.md).
+> **Фактический статус на 2026-10-03: single-operator VPS release candidate.** Автоматические API tests, production panel build, durable candidate queue и restricted release/recovery scripts существуют. Реальные PostgreSQL/Redis worker, Docker/VPS, RLS, Caddy/TLS, production-origin browser login, lead delivery и restore drill всё ещё требуют staging-доказательства. Единственный источник фактического статуса и release gate: [docs/ХОД-РАБОТ.md](./docs/ХОД-РАБОТ.md).
 
 ## С чего начать
 
@@ -84,7 +84,7 @@ docs/                 current status, roadmap, security and operational runbooks
 observability/        Prometheus configuration
 ```
 
-The legacy standalone `apps/worker` package was removed: the only supported worker is [`apps/api/app/worker.py`](./apps/api/app/worker.py), limited to durable lead webhook delivery tasks.
+The legacy standalone `apps/worker` package was removed: the only supported worker is [`apps/api/app/worker.py`](./apps/api/app/worker.py), which processes durable lead delivery, approved AI/crawler work and frozen candidate-build UUIDs. It never publishes a candidate automatically.
 
 ## Основной операторский workflow
 
@@ -95,10 +95,11 @@ The legacy standalone `apps/worker` package was removed: the only supported work
 5. Получите deterministic PageDraft и QA verdict.
 6. При `warn` внесите audit override с причиной; `block` исправьте и создайте новый candidate.
 7. Примените approved draft в manifest — без build, Caddy или публикации.
-8. Materialize candidate build, посмотрите authenticated preview.
-9. Проверьте DNS и явно опубликуйте выбранный build.
-10. При необходимости выполните selected rollback.
-11. Записывайте business outcome лида вручную; он не изменяет content или SEO автоматически.
+8. Поставьте candidate в очередь: snapshot фиксируется до worker, а completion не публикует сайт и не запускает IndexNow.
+9. В Releases дождитесь ready, посмотрите authenticated private preview и выполните legal review.
+10. Проверьте DNS и явно опубликуйте выбранный build.
+11. При необходимости выполните typed rollback только на ранее опубликованный immutable build.
+12. Записывайте business outcome лида вручную; он не изменяет content или SEO автоматически.
 
 Подробное фактическое покрытие и непроверенные runtime-гейты: [docs/ХОД-РАБОТ.md](./docs/ХОД-РАБОТ.md).
 
@@ -115,9 +116,9 @@ The legacy standalone `apps/worker` package was removed: the only supported work
 
 Последний локальный прогон в этом working tree:
 
-- `pytest apps/api/tests -q` — **315 passed, 4 Docker-gated/integration tests skipped**;
-- `ruff check .`, `ruff format --check .` и `git diff --check` — проходят;
-- panel production build проходит;
+- `pytest apps/api/tests -q` — **591 passed, 6 service-gated tests skipped**;
+- `ruff check apps/api` и `git diff --check` — проходят;
+- panel production build проходит; mocked Chromium Releases suite — **12 passed**;
 - Docker/browser execution, hosted CI и реальный VPS staging drill здесь не выполнялись.
 
 Не заменяйте реальное доказательство конфигурационным review или unit tests. До public use выполните checklist из [README-VPS.md](./README-VPS.md) и обновите фактический журнал только подтверждёнными результатами.

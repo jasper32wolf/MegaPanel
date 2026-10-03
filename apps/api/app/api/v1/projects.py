@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import secrets
 import time
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -33,6 +34,7 @@ from app.models import (
     ProjectSemanticKeywordGeoBinding,
     Site,
     SiteBuild,
+    SiteBuildEvent,
     SitePage,
     SiteStructureRevision,
 )
@@ -75,6 +77,7 @@ from app.services.release_gate import (
     store_release_gate,
 )
 from app.services.site_build_metadata import validate_page_metadata_snapshot
+from app.services.site_build_queue import append_site_build_event, enqueue_site_build
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
 from site_panel_blocks import list_kits
@@ -2252,6 +2255,39 @@ async def list_project_builds(
                 "reviewed_at": event.created_at.isoformat() if event.created_at else None,
             }
         )
+    build_events = (
+        list(
+            (
+                await db.execute(
+                    select(SiteBuildEvent)
+                    .where(
+                        SiteBuildEvent.tenant_id == project.tenant_id,
+                        SiteBuildEvent.project_id == project.id,
+                        SiteBuildEvent.site_build_id.in_([build.id for build in builds]),
+                    )
+                    .order_by(SiteBuildEvent.site_build_id, SiteBuildEvent.sequence.desc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if builds
+        else []
+    )
+    event_history: dict[UUID, list[dict]] = {}
+    for event in reversed(build_events):
+        event_history.setdefault(event.site_build_id, []).append(
+            {
+                "sequence": event.sequence,
+                "attempt": event.attempt,
+                "type": event.event_type,
+                "code": event.safe_code,
+                "details": event.details or {},
+                "created_at": event.created_at.isoformat() if event.created_at else None,
+            }
+        )
+    site = await _project_site_or_409(db, project) if project.site_id else None
+    active_hash = site.build_hash if site else None
     return [
         {
             "id": str(build.id),
@@ -2259,8 +2295,42 @@ async def list_project_builds(
             "build_hash": build.build_hash,
             "previous_build_hash": build.previous_build_hash,
             "pages_built": build.pages_built,
+            "duration_ms": getattr(build, "duration_ms", 0),
+            "attempt_count": getattr(build, "attempt_count", 0),
+            "failure_code": getattr(build, "failure_code", None),
+            "input_snapshot_hash": getattr(build, "input_snapshot_hash", None),
+            "snapshot_version": getattr(build, "snapshot_version", 0),
             "created_at": build.created_at.isoformat() if build.created_at else None,
+            "started_at": (
+                build.started_at.isoformat() if getattr(build, "started_at", None) else None
+            ),
+            "completed_at": (
+                build.completed_at.isoformat() if getattr(build, "completed_at", None) else None
+            ),
             "activated_at": build.activated_at.isoformat() if build.activated_at else None,
+            "first_published_at": (
+                build.first_published_at.isoformat()
+                if getattr(build, "first_published_at", None)
+                else None
+            ),
+            "is_active": bool(build.build_hash and build.build_hash == active_hash),
+            "is_historical_published": bool(
+                getattr(build, "first_published_at", None)
+                and build.build_hash
+                and build.build_hash != active_hash
+            ),
+            "retryable": bool(
+                build.status == "failed"
+                and getattr(build, "snapshot_version", 0) == 1
+                and getattr(build, "input_snapshot", None)
+            ),
+            "rollback_eligible": bool(
+                build.status == "ready"
+                and getattr(build, "first_published_at", None)
+                and build.build_hash
+                and build.build_hash != active_hash
+            ),
+            "events": event_history.get(build.id, [])[-20:],
             "release_gate": serialize_release_gate(gates.get(build.id)),
             "legal_review": {
                 **legal_review_status(build),
@@ -2320,11 +2390,11 @@ def _asset_usage_status(asset: MediaAsset | None, expected_sha256: str) -> str:
 
 
 def _asset_usage_build_scope(build: SiteBuild, active_build: SiteBuild | None) -> str:
-    if build.status == "ready":
-        return "candidate"
     if active_build is not None and build.id == active_build.id:
         return "published"
-    return "historical"
+    if getattr(build, "first_published_at", None) or build.status in {"published", "rolled_back"}:
+        return "historical"
+    return "candidate"
 
 
 @router.get("/{project_id}/asset-usage")
@@ -2355,7 +2425,7 @@ async def list_project_asset_usage(
                     SiteBuild.project_id == project.id,
                     SiteBuild.tenant_id == project.tenant_id,
                     SiteBuild.site_id == project.site_id,
-                    SiteBuild.status.in_(("ready", "published", "rolled_back")),
+                    SiteBuild.status == "ready",
                 )
             )
         )
@@ -2583,6 +2653,205 @@ async def _candidate_index_states(
     return index_states, source_hashes, promoted_at, matched_promotions
 
 
+async def _freeze_candidate_build_input(
+    db: AsyncSession, *, project: Project, site: Site
+) -> tuple[dict, str]:
+    """Capture every mutable content decision before the durable job is queued."""
+    manifest = SiteManifest.model_validate(site.manifest)
+    rows = list(
+        (await db.execute(select(SitePage).where(SitePage.site_id == site.id))).scalars().all()
+    )
+    index_states, source_hashes, promoted_at, matched_promotions = await _candidate_index_states(
+        db,
+        project=project,
+        site=site,
+        manifest=manifest,
+        rows=rows,
+    )
+    plan_ids = [
+        str(plan_id)
+        for plan_id in (
+            await db.execute(
+                select(PagePlan.id).where(
+                    PagePlan.project_id == project.id, PagePlan.state == "approved"
+                )
+            )
+        )
+        .scalars()
+        .all()
+    ]
+    contacts = site.manifest.get("contacts") or {}
+    snapshot = {
+        "version": 1,
+        "manifest": manifest.model_dump(mode="json"),
+        "context": {
+            "manifest_context": manifest.context or {},
+            "phone": str(contacts.get("phone") or ""),
+        },
+        "index_states": index_states,
+        "source_hashes": source_hashes,
+        "promoted_at": {
+            slug: value.isoformat() if value else None for slug, value in promoted_at.items()
+        },
+        "index_promotions": {
+            slug: _serialize_index_promotion(promotion)
+            for slug, promotion in matched_promotions.items()
+        },
+        "page_plan_ids": plan_ids,
+    }
+    snapshot_hash = sha256_hex(
+        json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    )
+    return snapshot, snapshot_hash
+
+
+def _page_metadata_from_candidate_result(result: dict, snapshot: dict) -> list[dict]:
+    source_hashes = snapshot["source_hashes"]
+    promoted_at = snapshot["promoted_at"]
+    promotions = snapshot["index_promotions"]
+    return [
+        {
+            **item,
+            "source_hash": source_hashes[item["slug"]],
+            "promoted_at": promoted_at[item["slug"]],
+            **(
+                {"index_promotion": promotions[item["slug"]]}
+                if item["slug"] in promotions
+                else {}
+            ),
+        }
+        for item in result["pages"]
+    ]
+
+
+async def run_queued_candidate_build(db: AsyncSession, build_id: UUID) -> dict:
+    """Run one already-frozen candidate build. It never activates or publishes a release."""
+    build = (
+        await db.execute(select(SiteBuild).where(SiteBuild.id == build_id).with_for_update())
+    ).scalar_one_or_none()
+    if build is None:
+        return {"status": "missing", "build_id": str(build_id)}
+    if build.status != "queued":
+        return {"status": build.status, "build_id": str(build_id), "duplicate": True}
+    if not build.input_snapshot or build.snapshot_version != 1 or build.project_id is None:
+        build.status = "failed"
+        build.failure_code = "snapshot_invalid"
+        build.completed_at = datetime.now(UTC)
+        build.lease_expires_at = None
+        await append_site_build_event(
+            db, build=build, event_type="failed", safe_code="snapshot_invalid"
+        )
+        await db.commit()
+        return {"status": build.status, "build_id": str(build_id), "error_code": build.failure_code}
+
+    snapshot = build.input_snapshot
+    project = await db.get(Project, build.project_id)
+    site = await db.get(Site, build.site_id)
+    if (
+        project is None
+        or site is None
+        or project.tenant_id != build.tenant_id
+        or project.id != build.project_id
+        or site.tenant_id != build.tenant_id
+        or site.project_id not in {None, project.id}
+    ):
+        build.status = "failed"
+        build.failure_code = "tenant_scope_violation"
+        build.completed_at = datetime.now(UTC)
+        build.lease_expires_at = None
+        await append_site_build_event(
+            db, build=build, event_type="failed", safe_code="tenant_scope_violation"
+        )
+        await db.commit()
+        return {"status": build.status, "build_id": str(build_id), "error_code": build.failure_code}
+
+    build.status = "running"
+    build.attempt_count += 1
+    build.started_at = datetime.now(UTC)
+    build.completed_at = None
+    build.failure_code = None
+    build.lease_expires_at = build.started_at + timedelta(minutes=10)
+    await append_site_build_event(db, build=build, event_type="started")
+    await db.commit()
+
+    try:
+        manifest = SiteManifest.model_validate(snapshot["manifest"])
+        if manifest.site_id != site.id or manifest.tenant_id != build.tenant_id:
+            raise ValueError("snapshot_scope")
+        assets = await _build_assets_for_manifest(
+            db, manifest=manifest, tenant_id=build.tenant_id
+        )
+        frozen_context = snapshot["context"]
+        context = {
+            **dict(frozen_context["manifest_context"]),
+            "phone": str(frozen_context["phone"]),
+            # The token is never exposed from the frozen snapshot or list API.
+            "lead_token": site.lead_token,
+            "lead_api_url": "/api/v1/leads/public",
+        }
+        started = time.perf_counter()
+        result = await asyncio.to_thread(
+            SiteBuilder(Path(settings.sites_root)).build,
+            manifest,
+            context,
+            index_states=dict(snapshot["index_states"]),
+            assets=assets,
+            activate=False,
+        )
+        page_metadata_snapshot = _page_metadata_from_candidate_result(result, snapshot)
+        build.build_hash = result["build_hash"]
+        build.pages_built = len(result["pages"])
+        build.duration_ms = int((time.perf_counter() - started) * 1000)
+        build.log = f"candidate=true; indexed={result['indexed_count']}"
+        build.manifest_snapshot = snapshot["manifest"]
+        build.page_metadata_snapshot = page_metadata_snapshot
+        build.page_plan_ids = snapshot["page_plan_ids"]
+        build.status = "ready"
+        build.completed_at = datetime.now(UTC)
+        build.lease_expires_at = None
+        await store_release_gate(db, build=build, site=site, actor_id=None)
+        await append_site_build_event(db, build=build, event_type="ready")
+        await append_audit(
+            db,
+            action="project.build.materialize",
+            payload={
+                "project_id": str(project.id),
+                "build_id": str(build.id),
+                "build_hash": build.build_hash,
+                "activated": False,
+            },
+            tenant_id=build.tenant_id,
+            actor_id=build.requested_by,
+        )
+        _record_release_event(db, tenant_id=build.tenant_id, outcome="success")
+        await db.commit()
+        record_release_transition(action="build", outcome="success")
+        return {"status": build.status, "build_id": str(build_id), "build_hash": build.build_hash}
+    except Exception:  # noqa: BLE001
+        build.status = "failed"
+        build.failure_code = "build_execution_failed"
+        build.completed_at = datetime.now(UTC)
+        build.lease_expires_at = None
+        await append_site_build_event(
+            db, build=build, event_type="failed", safe_code=build.failure_code
+        )
+        await append_audit(
+            db,
+            action="project.build.failed",
+            payload={
+                "project_id": str(build.project_id),
+                "build_id": str(build.id),
+                "code": build.failure_code,
+            },
+            tenant_id=build.tenant_id,
+            actor_id=build.requested_by,
+        )
+        _record_release_event(db, tenant_id=build.tenant_id, outcome="failure")
+        await db.commit()
+        record_release_transition(action="build", outcome="failed")
+        return {"status": build.status, "build_id": str(build_id), "error_code": build.failure_code}
+
+
 async def _reconcile_site_page_projection(
     db: AsyncSession,
     *,
@@ -2632,111 +2901,107 @@ async def materialize_project_build(
     auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor")),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    """Freeze and queue a candidate. Building and publication never run in this request."""
     project = await _project_or_404(db, project_id, auth)
     if not project.site_id:
         raise HTTPException(
             status_code=409, detail={"blockers": ["Apply a page draft before building"]}
         )
     site = await _project_site_or_409(db, project)
-    manifest = SiteManifest.model_validate(site.manifest)
-    rows = list(
-        (await db.execute(select(SitePage).where(SitePage.site_id == site.id))).scalars().all()
-    )
-    index_states, source_hashes, promoted_at, matched_promotions = await _candidate_index_states(
-        db,
-        project=project,
-        site=site,
-        manifest=manifest,
-        rows=rows,
-    )
-    contacts = site.manifest.get("contacts") or {}
-    context = {
-        **(manifest.context or {}),
-        "phone": contacts.get("phone", ""),
-        "lead_token": site.lead_token,
-        "lead_api_url": "/api/v1/leads/public",
-    }
-    build_assets = await _build_assets_for_manifest(
-        db,
-        manifest=manifest,
-        tenant_id=project.tenant_id,
-    )
-    builder = SiteBuilder(Path(settings.sites_root))
-    started = time.perf_counter()
-    try:
-        result = builder.build(
-            manifest,
-            context,
-            index_states=index_states,
-            assets=build_assets,
-            activate=False,
-        )
-    except Exception as exc:
-        record_release_transition(action="build", outcome="failed")
-        _record_release_event(db, tenant_id=project.tenant_id, outcome="failure")
-        raise HTTPException(status_code=422, detail=f"Candidate build failed: {exc}") from exc
-    page_metadata_snapshot = [
-        {
-            **item,
-            "source_hash": source_hashes[item["slug"]],
-            "promoted_at": (
-                promoted_at[item["slug"]].isoformat() if promoted_at[item["slug"]] else None
-            ),
-            **(
-                {"index_promotion": _serialize_index_promotion(matched_promotions[item["slug"]])}
-                if item["slug"] in matched_promotions
-                else {}
-            ),
-        }
-        for item in result["pages"]
-    ]
-    plan_ids = [
-        str(plan_id)
-        for plan_id in (
-            await db.execute(
-                select(PagePlan.id).where(
-                    PagePlan.project_id == project.id, PagePlan.state == "approved"
-                )
-            )
-        )
-        .scalars()
-        .all()
-    ]
+    snapshot, snapshot_hash = await _freeze_candidate_build_input(db, project=project, site=site)
+    now = datetime.now(UTC)
     build = SiteBuild(
         site_id=site.id,
         tenant_id=site.tenant_id,
         project_id=project.id,
-        status="ready",
-        build_hash=result["build_hash"],
+        status="queued",
         previous_build_hash=site.build_hash,
-        pages_built=len(result["pages"]),
-        duration_ms=int((time.perf_counter() - started) * 1000),
-        log=f"candidate=true; indexed={result['indexed_count']}",
-        manifest_snapshot=manifest.model_dump(mode="json"),
-        page_metadata_snapshot=page_metadata_snapshot,
-        page_plan_ids=plan_ids,
+        input_snapshot=snapshot,
+        input_snapshot_hash=snapshot_hash,
+        snapshot_version=1,
+        manifest_snapshot=snapshot["manifest"],
+        page_plan_ids=snapshot["page_plan_ids"],
         requested_by=auth.user.id,
+        last_enqueued_at=now,
     )
     db.add(build)
     await db.flush()
-    gate = await store_release_gate(db, build=build, site=site, actor_id=auth.user.id)
+    await append_site_build_event(db, build=build, event_type="queued")
     await append_audit(
         db,
-        action="project.build.materialize",
-        payload={"project_id": str(project.id), "build_hash": build.build_hash, "activated": False},
+        action="project.build.queued",
+        payload={
+            "project_id": str(project.id),
+            "build_id": str(build.id),
+            "input_snapshot_hash": snapshot_hash,
+        },
         tenant_id=project.tenant_id,
         actor_id=auth.user.id,
     )
-    _record_release_event(db, tenant_id=project.tenant_id, outcome="success")
     await db.commit()
-    record_release_transition(action="build", outcome="success")
+
+    try:
+        await enqueue_site_build(build.id)
+    except Exception:  # noqa: BLE001
+        # Redis is transport only. The durable job remains recoverable by the worker sweep.
+        await append_site_build_event(db, build=build, event_type="enqueue_deferred")
+        await db.commit()
+
     return {
         "id": str(build.id),
         "status": build.status,
-        "build_hash": build.build_hash,
+        "input_snapshot_hash": snapshot_hash,
         "activated": False,
-        "release_gate": serialize_release_gate(gate),
+        "published": False,
     }
+
+
+@router.post("/{project_id}/builds/{build_id}/retry", status_code=status.HTTP_202_ACCEPTED)
+async def retry_project_build(
+    project_id: UUID,
+    build_id: UUID,
+    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    project = await _project_or_404(db, project_id, auth)
+    site = await _project_site_or_409(db, project)
+    build = (
+        await db.execute(
+            select(SiteBuild)
+            .where(
+                SiteBuild.id == build_id,
+                SiteBuild.project_id == project.id,
+                SiteBuild.tenant_id == project.tenant_id,
+                SiteBuild.site_id == site.id,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if not build or build.status != "failed":
+        raise HTTPException(status_code=409, detail="Select a failed candidate build")
+    if not build.input_snapshot or build.snapshot_version != 1:
+        raise HTTPException(status_code=409, detail="Legacy build has no retryable frozen snapshot")
+    build.status = "queued"
+    build.failure_code = None
+    build.started_at = None
+    build.completed_at = None
+    build.lease_expires_at = None
+    build.last_enqueued_at = datetime.now(UTC)
+    await append_site_build_event(db, build=build, event_type="retry_requested")
+    await append_audit(
+        db,
+        action="project.build.retry_queued",
+        payload={"project_id": str(project.id), "build_id": str(build.id)},
+        tenant_id=project.tenant_id,
+        actor_id=auth.user.id,
+    )
+    await db.commit()
+    try:
+        await enqueue_site_build(build.id)
+    except Exception:  # noqa: BLE001
+        await append_site_build_event(db, build=build, event_type="enqueue_deferred")
+        await db.commit()
+    return {"id": str(build.id), "status": build.status, "retryable": False}
 
 
 @router.post("/{project_id}/builds/{build_id}/legal-review")
@@ -2820,7 +3085,7 @@ async def preview_project_build(
             )
         )
     ).scalar_one_or_none()
-    if not build or build.status not in {"ready", "published"} or not build.build_hash:
+    if not build or build.status != "ready" or not build.build_hash:
         raise HTTPException(status_code=404, detail="Preview build not found")
     root = (
         SiteBuilder(Path(settings.sites_root))
@@ -2852,7 +3117,7 @@ async def publish_project_build(
         raise HTTPException(
             status_code=409, detail={"blockers": ["Project domain and site are required"]}
         )
-    if (project.domain_check_meta or {}).get("dns_status") != "ok":
+    if (getattr(project, "domain_check_meta", None) or {}).get("dns_status") != "ok":
         raise HTTPException(
             status_code=409,
             detail={"blockers": ["Run a successful DNS check before publish"]},
@@ -2902,11 +3167,13 @@ async def publish_project_build(
             detail = "Caddy configuration failed; release activation recovery is unverified"
         record_release_transition(action="publish", outcome="failed")
         raise HTTPException(status_code=503, detail=detail)
+    activated_at = datetime.now(UTC)
     site.previous_build_hash = old_hash
     site.build_hash = build.build_hash
     site.publish_state = "published"
-    build.status = "published"
-    build.activated_at = datetime.now(UTC)
+    build.first_published_at = getattr(build, "first_published_at", None) or activated_at
+    build.activated_at = activated_at
+    # Keep execution state ready: publication is a separate immutable-release fact.
     await _reconcile_site_page_projection(
         db,
         site=site,
@@ -2944,12 +3211,20 @@ async def rollback_project_build(
     auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager")),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    if not body.confirmed:
-        raise HTTPException(status_code=400, detail="Explicit rollback confirmation is required")
+    if body.confirmation_text != f"ROLLBACK {body.build_hash}":
+        raise HTTPException(status_code=400, detail="Exact rollback confirmation is required")
     project = await _project_or_404(db, project_id, auth)
-    if not project.site_id:
-        raise HTTPException(status_code=409, detail="Project has no site")
+    if not project.site_id or not project.domain:
+        raise HTTPException(
+            status_code=409, detail={"blockers": ["Project domain and site are required"]}
+        )
+    if (getattr(project, "domain_check_meta", None) or {}).get("dns_status") != "ok":
+        raise HTTPException(
+            status_code=409, detail={"blockers": ["Run a successful DNS check before rollback"]}
+        )
     site = await _project_site_or_409(db, project)
+    if site.build_hash == body.build_hash:
+        raise HTTPException(status_code=409, detail="Selected build is already active")
     target = (
         await db.execute(
             select(SiteBuild).where(
@@ -2957,20 +3232,26 @@ async def rollback_project_build(
                 SiteBuild.tenant_id == project.tenant_id,
                 SiteBuild.site_id == site.id,
                 SiteBuild.build_hash == body.build_hash,
-                SiteBuild.status.in_(["published", "ready", "rolled_back"]),
+                SiteBuild.status == "ready",
+                SiteBuild.first_published_at.is_not(None),
             )
         )
     ).scalar_one_or_none()
     if not target:
-        raise HTTPException(status_code=404, detail="Approved build hash not found")
+        raise HTTPException(
+            status_code=404, detail="Previously published immutable build hash not found"
+        )
     try:
         manifest, metadata_by_slug = _selected_build_projection(target, site)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail={"blockers": [str(exc)]}) from exc
+    gate_evaluation = evaluate_build_release_gate(target, site)
     legal_review = legal_review_status(target)
-    if legal_review["blockers"]:
+    routing_blockers = await _lead_routing_publish_blockers(db, site)
+    blockers = [*gate_evaluation["blockers"], *legal_review["blockers"], *routing_blockers]
+    if blockers:
         record_release_transition(action="rollback", outcome="blocked")
-        raise HTTPException(status_code=409, detail={"blockers": legal_review["blockers"]})
+        raise HTTPException(status_code=409, detail={"blockers": blockers})
     old_hash = site.build_hash
     builder = SiteBuilder(Path(settings.sites_root))
     if not builder.activate(str(site.id), body.build_hash):
@@ -2990,11 +3271,12 @@ async def rollback_project_build(
             detail = "Caddy configuration failed; release activation recovery is unverified"
         record_release_transition(action="rollback", outcome="failed")
         raise HTTPException(status_code=503, detail=detail)
+    activated_at = datetime.now(UTC)
     site.previous_build_hash = old_hash
     site.build_hash = body.build_hash
     site.publish_state = "published"
-    target.status = "published"
-    target.activated_at = datetime.now(UTC)
+    target.activated_at = activated_at
+    # A rollback changes the active pointer, not the candidate execution state.
     await _reconcile_site_page_projection(
         db,
         site=site,

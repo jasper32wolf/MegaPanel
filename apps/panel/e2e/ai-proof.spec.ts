@@ -229,7 +229,7 @@ test("pages deep link shows PagePlan and QA lineage without mutation", async ({ 
   expect(mutationRequests).toEqual([]);
 });
 
-test("releases deep link shows immutable candidate history without mutation", async ({ page }) => {
+test("releases center shows queued candidate details without mutation", async ({ page }) => {
   await mockAuth(page);
   const projectId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
   const mutationRequests: string[] = [];
@@ -241,14 +241,19 @@ test("releases deep link shows immutable candidate history without mutation", as
     }
     if (request.method() !== "GET") mutationRequests.push(`${request.method()} ${url.pathname}`);
     if (url.pathname === `/api/v1/projects/${projectId}`) {
-      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ id: projectId, name: "Releases proof" }) });
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+        id: projectId, name: "Releases proof", domain: "example.test", site_id: "site-proof", domain_check_meta: { dns_status: "ok" },
+      }) });
     }
     if (url.pathname === `/api/v1/projects/${projectId}/builds`) {
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([{
-        id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", status: "ready", build_hash: "c".repeat(64), previous_build_hash: null, pages_built: 2, created_at: "2026-10-01T12:00:00Z", activated_at: null,
-        release_gate: { status: "pass", blockers: [], warnings: [] },
-        legal_review: { status: "pass", blockers: [], review: { state: "approved", evidence_ref: "LEGAL-1", reason: null, replacement_guidance: null, reviewed_at: "2026-10-01T12:00:00Z" } },
-        index_promotion_provenance: [{ slug: "/repair", reason: "QA and operator review passed", decided_at: "2026-10-01T11:00:00Z" }],
+        id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", status: "queued", build_hash: null, previous_build_hash: null, pages_built: 0, duration_ms: 0,
+        attempt_count: 0, failure_code: null, input_snapshot_hash: "c".repeat(64), snapshot_version: 1, created_at: "2026-10-01T12:00:00Z", started_at: null,
+        completed_at: null, activated_at: null, first_published_at: null, is_active: false, is_historical_published: false, retryable: false, rollback_eligible: false,
+        events: [{ sequence: 1, attempt: 0, type: "queued", code: null, details: {}, created_at: "2026-10-01T12:00:00Z" }],
+        release_gate: null,
+        legal_review: { status: "block", blockers: ["Approve the legal review for this candidate build"], review: { state: "pending", evidence_ref: null, reason: null, replacement_guidance: null, reviewed_at: null } },
+        index_promotion_provenance: [],
       }]) });
     }
     return route.fulfill({ status: 404, contentType: "application/json", body: '{"detail":"not used by proof"}' });
@@ -259,13 +264,62 @@ test("releases deep link shows immutable candidate history without mutation", as
     window.dispatchEvent(new PopStateEvent("popstate"));
   }, `/projects/${projectId}/releases`);
 
-  await expect(page.getByRole("heading", { name: "Releases · Releases proof" })).toBeVisible();
-  await expect(page.getByText("approved", { exact: true })).toBeVisible();
-  const provenance = page.locator("details").filter({ hasText: "Подтверждений индексации: 1" });
-  await provenance.locator("summary").click();
-  await expect(provenance.locator("p")).toContainText("QA and operator review passed");
-  await expect(page.getByRole("button", { name: /Создать candidate|Одобрить legal|Опубликовать|Откатить/ })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Candidate-сборки · Releases proof" })).toBeVisible();
+  await expect(page.getByText("queued", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Безопасная история выполнения · 1")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Создать candidate-сборку" })).toBeVisible();
   expect(mutationRequests).toEqual([]);
+});
+
+test("rollback requires exact hash phrase and never publishes", async ({ page }) => {
+  await mockAuth(page);
+  const projectId = "abababab-abab-4bab-8bab-abababababab";
+  const buildHash = "d".repeat(64);
+  const mutationRequests: { path: string; body: unknown }[] = [];
+  await page.route("**/api/v1/**", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.pathname === "/api/v1/security/me" || url.pathname === "/api/v1/auth/refresh") {
+      return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+    }
+    if (request.method() === "POST") mutationRequests.push({ path: url.pathname, body: request.postDataJSON() });
+    if (url.pathname === `/api/v1/projects/${projectId}`) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+        id: projectId, name: "Rollback proof", domain: "example.test", site_id: "site-proof", domain_check_meta: { dns_status: "ok" },
+      }) });
+    }
+    if (url.pathname === `/api/v1/projects/${projectId}/builds`) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([{
+        id: "bcbcbcbc-bcbc-4cbc-8cbc-bcbcbcbcbcbc", status: "ready", build_hash: buildHash, previous_build_hash: "e".repeat(64), pages_built: 1, duration_ms: 12,
+        attempt_count: 1, failure_code: null, input_snapshot_hash: "c".repeat(64), snapshot_version: 1, created_at: "2026-10-01T12:00:00Z", started_at: "2026-10-01T12:00:01Z",
+        completed_at: "2026-10-01T12:00:02Z", activated_at: "2026-10-01T12:00:02Z", first_published_at: "2026-10-01T12:00:02Z", is_active: false, is_historical_published: true, retryable: false, rollback_eligible: true,
+        events: [], release_gate: { status: "pass", blockers: [], warnings: [] },
+        legal_review: { status: "pass", blockers: [], review: { state: "approved", evidence_ref: "LEGAL-1", reason: null, replacement_guidance: null, reviewed_at: "2026-10-01T12:00:02Z" } },
+        index_promotion_provenance: [],
+      }]) });
+    }
+    if (url.pathname === `/api/v1/projects/${projectId}/rollbacks`) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+    }
+    return route.fulfill({ status: 404, contentType: "application/json", body: '{"detail":"not used by proof"}' });
+  });
+
+  await page.goto(`/projects/${projectId}/releases`);
+  await page.getByRole("button", { name: "Откатить на выбранный hash" }).click();
+  const dialog = page.getByRole("dialog");
+  const confirm = dialog.getByRole("button", { name: "Выполнить откат" });
+  await dialog.getByLabel(`Введите: ROLLBACK ${buildHash}`).fill("ROLLBACK wrong");
+  await expect(confirm).toBeDisabled();
+  expect(mutationRequests).toEqual([]);
+  await dialog.getByLabel(`Введите: ROLLBACK ${buildHash}`).fill(`ROLLBACK ${buildHash}`);
+  await expect(confirm).toBeEnabled();
+  await confirm.click();
+  await expect.poll(() => mutationRequests.length).toBe(1);
+  expect(mutationRequests).toEqual([{
+    path: `/api/v1/projects/${projectId}/rollbacks`,
+    body: { build_hash: buildHash, confirmation_text: `ROLLBACK ${buildHash}` },
+  }]);
+  expect(mutationRequests.some((request) => request.path.endsWith("/publish"))).toBe(false);
 });
 
 test("routing deep link shows redacted policy metadata without mutation", async ({ page }) => {
@@ -321,27 +375,25 @@ test("legal rejection сохраняет reason и manual remediation без п�
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ status: "block" }) });
     }
     if (url.pathname === `/api/v1/projects/${projectId}`) {
-      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ id: projectId, name: "Legal proof", domain: "proof.test", niche: null, site_id: "site-proof", current_fact_revision_id: null, domain_check_meta: {} }) });
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ id: projectId, name: "Legal proof", domain: "proof.test", site_id: "site-proof", domain_check_meta: {} }) });
     }
-    if (url.pathname.endsWith("/coverage")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ selected: 0, covered: 0, uncovered: [], plans: 0 }) });
-    if (url.pathname.endsWith("/semantic-signals")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ totals: { members: 0, bindings: 0, covered: 0, planned: 0, uncovered: 0, unbound: 0 }, cannibalization: [], unmapped_plans: [] }) });
-    if (url.pathname.endsWith("/lead-routing")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [] }) });
-    if (url.pathname.endsWith("/builds")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([{ id: buildId, status: "ready", build_hash: "b".repeat(64), previous_build_hash: null, pages_built: 1, created_at: "2026-10-01T12:00:00Z", activated_at: null, release_gate: { status: "pass", blockers: [], warnings: [] }, legal_review: { status: "block", blockers: ["Approve the legal review for this candidate build"], review: { state: "pending", evidence_ref: null, reason: null, replacement_guidance: null, reviewed_at: null }, history: [] }, index_promotion_provenance: [] }]) });
-
-    if (url.pathname === "/api/v1/keywords") return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [] }) });
-    return route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+    if (url.pathname.endsWith("/builds")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([{
+      id: buildId, status: "ready", build_hash: "b".repeat(64), previous_build_hash: null, pages_built: 1, duration_ms: 0,
+      attempt_count: 1, failure_code: null, input_snapshot_hash: "c".repeat(64), snapshot_version: 1, created_at: "2026-10-01T12:00:00Z", started_at: null,
+      completed_at: null, activated_at: null, first_published_at: null, is_active: false, is_historical_published: false, retryable: false, rollback_eligible: false,
+      events: [], release_gate: { status: "pass", blockers: [], warnings: [] },
+      legal_review: { status: "block", blockers: ["Approve the legal review for this candidate build"], review: { state: "pending", evidence_ref: null, reason: null, replacement_guidance: null, reviewed_at: null } },
+      index_promotion_provenance: [],
+    }]) });
+    return route.fulfill({ status: 404, contentType: "application/json", body: '{"detail":"not used by proof"}' });
   });
 
-  await page.evaluate((path) => {
-    window.history.pushState({}, "", path);
-    window.dispatchEvent(new PopStateEvent("popstate"));
-  }, `/projects/${projectId}`);
-  await expect(page.getByText("Legal proof")).toBeVisible();
+  await page.goto(`/projects/${projectId}/releases`);
+  await expect(page.getByRole("heading", { name: "Candidate-сборки · Legal proof" })).toBeVisible();
+  await page.getByLabel("Ссылка или внутренний идентификатор evidence").fill("LEGAL-PROOF-1");
   await page.getByLabel("Причина отклонения").fill("Юридический адрес требует подтверждения.");
   await page.getByLabel("Рекомендация по исправлению").fill("Обновите подтверждённые facts и создайте новый candidate.");
   await page.getByRole("button", { name: "Отклонить legal review" }).click();
-  await page.getByLabel("Ссылка или внутренний идентификатор evidence").fill("LEGAL-PROOF-1");
-  await page.getByRole("button", { name: "Подтвердить отклонение" }).click();
   await expect.poll(() => legalReviewBody).not.toBeNull();
   expect(legalReviewBody).toMatchObject({
     decision: "rejected",
@@ -434,108 +486,38 @@ test("prompt history показывает stale evidence и блокирует �
   await expect(page.getByText("old-contract")).toBeVisible();
 });
 
-test("build table renders immutable index-promotion provenance without mutation", async ({ page }) => {
+test("releases center renders immutable index-promotion provenance without mutation", async ({ page }) => {
+  await mockAuth(page);
   const projectId = "33333333-3333-4333-8333-333333333333";
   const buildId = "44444444-4444-4444-8444-444444444444";
   const siteId = "55555555-5555-4555-8555-555555555555";
   const mutationRequests: string[] = [];
-  const projectPath = `/api/v1/projects/${projectId}`;
-  let authenticated = false;
-
   await page.route("**/api/v1/**", (route) => {
     const request = route.request();
     const url = new URL(request.url());
-    if (url.pathname === "/api/v1/security/me") {
-      return route.fulfill({
-        status: authenticated ? 200 : 401,
-        contentType: "application/json",
-        body: authenticated ? '{"id":"operator"}' : '{"detail":"not authenticated"}',
-      });
-    }
-    if (url.pathname === "/api/v1/auth/login") {
-      authenticated = true;
-      return route.fulfill({ status: 200, contentType: "application/json", body: '{"ok":true}' });
-    }
-    if (url.pathname === "/api/v1/auth/refresh") {
-      return route.fulfill({
-        status: authenticated ? 200 : 401,
-        contentType: "application/json",
-        body: authenticated ? '{"ok":true}' : '{"detail":"not authenticated"}',
-      });
+    if (url.pathname === "/api/v1/security/me" || url.pathname === "/api/v1/auth/refresh") {
+      return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
     }
     if (request.method() !== "GET") mutationRequests.push(`${request.method()} ${url.pathname}`);
-    if (request.method() !== "GET") {
-      return route.fulfill({ status: 405, contentType: "application/json", body: '{"detail":"read-only proof"}' });
+    if (url.pathname === `/api/v1/projects/${projectId}`) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+        id: projectId, name: "Controlled provenance project", domain: "example.test", site_id: siteId, domain_check_meta: {},
+      }) });
     }
-    if (url.pathname === projectPath) {
-      return route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          id: projectId,
-          name: "Controlled provenance project",
-          domain: "example.test",
-          niche: null,
-          site_id: siteId,
-          current_fact_revision_id: null,
-          domain_check_meta: {},
-        }),
-      });
+    if (url.pathname === `/api/v1/projects/${projectId}/builds`) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([{
+        id: buildId, status: "ready", build_hash: "a".repeat(64), previous_build_hash: null, pages_built: 1, duration_ms: 0,
+        attempt_count: 1, failure_code: null, input_snapshot_hash: "c".repeat(64), snapshot_version: 1, created_at: "2026-10-01T12:00:00Z", started_at: null,
+        completed_at: null, activated_at: null, first_published_at: null, is_active: false, is_historical_published: false, retryable: false, rollback_eligible: false,
+        events: [], release_gate: { status: "pass", blockers: [], warnings: [] },
+        legal_review: { status: "pass", blockers: [], review: { state: "approved", evidence_ref: "LEGAL-1", reason: null, replacement_guidance: null, reviewed_at: "2026-10-01T12:00:00Z" } },
+        index_promotion_provenance: [{ slug: "/", reason: "Подтверждено для выдачи после passing QA", decided_at: "2026-10-01T11:30:00Z" }],
+      }]) });
     }
-    if (url.pathname === `${projectPath}/builds`) {
-      return route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify([{
-          id: buildId,
-          status: "ready",
-          build_hash: "a".repeat(64),
-          previous_build_hash: null,
-          pages_built: 1,
-          created_at: "2026-10-01T12:00:00Z",
-          activated_at: null,
-          release_gate: { status: "pass", blockers: [], warnings: [] },
-          legal_review: {
-            status: "pass",
-            blockers: [],
-            review: {
-              state: "approved",
-              evidence_ref: "LEGAL-1",
-              reason: null,
-              replacement_guidance: null,
-              reviewed_at: "2026-10-01T12:00:00Z",
-            },
-            history: [],
-          },
-          index_promotion_provenance: [{ slug: "/", reason: "Подтверждено для выдачи после passing QA", decided_at: "2026-10-01T11:30:00Z" }],
-        }]),
-      });
-    }
-    if (url.pathname === `${projectPath}/coverage`) {
-      return route.fulfill({ status: 200, contentType: "application/json", body: '{"selected":0,"covered":0,"uncovered":[],"plans":0}' });
-    }
-    if (url.pathname === `${projectPath}/lead-routing`) {
-      return route.fulfill({ status: 200, contentType: "application/json", body: '{"items":[]}' });
-    }
-    if (url.pathname === `${projectPath}/semantic-signals`) {
-      return route.fulfill({ status: 200, contentType: "application/json", body: '{"totals":{"members":0,"bindings":0,"covered":0,"uncovered":0,"unbound":0},"cannibalization":[],"unmapped_plans":[]}' });
-    }
-    if (url.pathname === "/api/v1/keywords") {
-      return route.fulfill({ status: 200, contentType: "application/json", body: '{"items":[]}' });
-    }
-    if (url.pathname === "/api/v1/ai/providers") {
-      return route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
-    }
-    return route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+    return route.fulfill({ status: 404, contentType: "application/json", body: '{"detail":"not used by proof"}' });
   });
 
-  await page.goto("/login");
-  await page.getByLabel("Email").fill("operator@example.test");
-  await page.getByLabel("Пароль").fill("controlled-e2e-password");
-  await page.getByRole("button", { name: "Войти" }).click();
-  await page.goto(`/projects/${projectId}`);
-
-  await expect(page.getByRole("columnheader", { name: "Индексация" })).toBeVisible();
+  await page.goto(`/projects/${projectId}/releases`);
   const provenance = page.locator("details").filter({ hasText: "Подтверждений индексации: 1" });
   await provenance.locator("summary").click();
   await expect(provenance.locator("p")).toContainText("Подтверждено для выдачи после passing QA");
