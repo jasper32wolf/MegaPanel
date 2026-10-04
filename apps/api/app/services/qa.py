@@ -6,7 +6,6 @@ from app.services.claim_slots import resolve_claim_slot_bindings
 from app.services.dedup import compare_texts
 from site_panel_shared.manifests import PageManifest
 
-
 _HIDDEN_OR_CONDITIONAL_CONTENT = re.compile(
     r"(?i)(display\s*:\s*none|visibility\s*:\s*hidden|aria-hidden|user-agent|crawler|cloaking)"
 )

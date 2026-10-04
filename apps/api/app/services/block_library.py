@@ -7,6 +7,7 @@ from typing import Any
 
 from app.models.blocks import BlockKit, BlockKitItem, ContentBlock, make_hash_class
 from site_panel_blocks import instantiate_blocks, library_version, list_kits, load_kit
+from site_panel_blocks.schema import ThemeProfile
 from site_panel_security import sanitize_html
 from site_panel_shared.manifests import BlockDef
 from sqlalchemy import select

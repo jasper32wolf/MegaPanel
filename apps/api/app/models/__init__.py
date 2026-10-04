@@ -244,6 +244,7 @@ from app.models.blocks import (  # noqa: E402
     MediaAsset,
     make_hash_class,
 )
+from app.models.design_profile import DesignProfileAssignment, DesignProfileRevision  # noqa: E402
 from app.models.github_workflow_delivery import GitHubWorkflowRunDelivery  # noqa: E402
 from app.models.leads import (  # noqa: E402
     AnalyticsEvent,
@@ -283,7 +284,6 @@ from app.models.project import (  # noqa: E402
     ProjectSemanticCollectionKeyword,
     ProjectSemanticKeywordGeoBinding,
 )
-from app.models.design_profile import DesignProfileAssignment, DesignProfileRevision  # noqa: E402
 from app.models.project_family import ProjectFamilyMember  # noqa: E402
 from app.models.publish import (  # noqa: E402
     BuildReleaseGate,
