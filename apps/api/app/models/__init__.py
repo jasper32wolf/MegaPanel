@@ -296,6 +296,8 @@ from app.models.publish import (  # noqa: E402
 )
 from app.models.research import CompetitorCrawlPage, CompetitorCrawlRun  # noqa: E402
 from app.models.semantic_source import (  # noqa: E402
+    ProjectBukvarixKeywordResult,
+    ProjectBukvarixKeywordRun,
     ProjectSemanticSourceRun,
     ProjectSemanticSourceRunKeyword,
 )
@@ -352,6 +354,8 @@ __all__ = [
     "ProjectSemanticCollection",
     "ProjectSemanticCollectionKeyword",
     "ProjectSemanticKeywordGeoBinding",
+    "ProjectBukvarixKeywordResult",
+    "ProjectBukvarixKeywordRun",
     "ProjectSemanticSourceRun",
     "ProjectSemanticSourceRunKeyword",
     "PagePlan",

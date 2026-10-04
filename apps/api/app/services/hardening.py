@@ -24,6 +24,7 @@ DEFAULT_ALLOWLIST = {
     "yandex.com",
     "www.bing.com",
     "api.dataforseo.com",
+    "api.bukvarix.com",
     "hooks.amocrm.ru",
     "oauth.bitrix.info",
     "api.telegram.org",

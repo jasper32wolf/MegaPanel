@@ -9,7 +9,7 @@ Site Panel — self-hosted панель для одного оператора �
 
 Это **не публичный SaaS**, не клиентский кабинет и не готовый multi-tenant hosting. Внутренний `tenant_id` пока сохраняется только для совместимости текущей схемы; публичная регистрация, roles, API keys, plugins, client portal и неподтверждённые AI/analytics/DSAR surfaces не входят в release API.
 
-> **Фактический статус на 2026-10-03: single-operator VPS release candidate.** Автоматические API tests, production panel build, durable candidate queue и restricted release/recovery scripts существуют. Реальные PostgreSQL/Redis worker, Docker/VPS, RLS, Caddy/TLS, production-origin browser login, lead delivery и restore drill всё ещё требуют staging-доказательства. Единственный источник фактического статуса и release gate: [docs/ХОД-РАБОТ.md](./docs/ХОД-РАБОТ.md).
+> **Фактический статус на 2026-10-04: single-operator VPS release candidate.** Есть durable candidate queue и автоматический ограниченный Bukvarix HTTPS public-free preview с явным импортом выбранных результатов; ни один из них не публикует сайт автоматически. Реальные PostgreSQL/Redis worker, Docker/VPS, RLS, Caddy/TLS, production-origin browser login, lead delivery и restore drill всё ещё требуют staging-доказательства. Единственный источник фактического статуса и release gate: [docs/ХОД-РАБОТ.md](./docs/ХОД-РАБОТ.md).
 
 ## С чего начать
 
@@ -91,15 +91,16 @@ The legacy standalone `apps/worker` package was removed: the only supported work
 1. Создайте проект; это не создаёт публичный сайт.
 2. Добавьте и подтвердите facts бизнеса.
 3. Свяжите импортированные keywords и validated geo places с проектом.
-4. Создайте PagePlan и вручную утвердите его.
-5. Получите deterministic PageDraft и QA verdict.
-6. При `warn` внесите audit override с причиной; `block` исправьте и создайте новый candidate.
-7. Примените approved draft в manifest — без build, Caddy или публикации.
-8. Поставьте candidate в очередь: snapshot фиксируется до worker, а completion не публикует сайт и не запускает IndexNow.
-9. В Releases дождитесь ready, посмотрите authenticated private preview и выполните legal review.
-10. Проверьте DNS и явно опубликуйте выбранный build.
-11. При необходимости выполните typed rollback только на ранее опубликованный immutable build.
-12. Записывайте business outcome лида вручную; он не изменяет content или SEO автоматически.
+4. При необходимости поставьте в очередь ограниченный Bukvarix HTTPS public-free preview, просмотрите результаты и явно импортируйте только выбранные фразы с provenance; URL, endpoint и personal API key не вводятся.
+5. Создайте PagePlan и вручную утвердите его.
+6. Получите deterministic PageDraft и QA verdict.
+7. При `warn` внесите audit override с причиной; `block` исправьте и создайте новый candidate.
+8. Примените approved draft в manifest — без build, Caddy или публикации.
+9. Поставьте candidate в очередь: snapshot фиксируется до worker, а completion не публикует сайт и не запускает IndexNow.
+10. В Releases дождитесь ready, посмотрите authenticated private preview и выполните legal review.
+11. Проверьте DNS и явно опубликуйте выбранный build.
+12. При необходимости выполните typed rollback только на ранее опубликованный immutable build.
+13. Записывайте business outcome лида вручную; он не изменяет content или SEO автоматически.
 
 Подробное фактическое покрытие и непроверенные runtime-гейты: [docs/ХОД-РАБОТ.md](./docs/ХОД-РАБОТ.md).
 

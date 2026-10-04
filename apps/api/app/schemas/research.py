@@ -95,10 +95,73 @@ class BukvarixImportPreview(BaseModel):
 
 
 class BukvarixProviderStatus(BaseModel):
-    enabled: Literal[False] = False
-    status: Literal["disabled_unsafe_transport"] = "disabled_unsafe_transport"
+    enabled: Literal[True] = True
+    status: Literal["https_public_free"] = "https_public_free"
     message: str
-    supported_modes: list[Literal["domain", "compare", "multi_domain"]]
+    personal_credentials_supported: Literal[False] = False
+    max_seed_keywords: int
+    max_results_per_run: int
+    non_publish_policy: Literal[True] = True
+
+
+class BukvarixKeywordRunCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    seed_project_keyword_ids: list[UUID] = Field(min_length=1, max_length=10)
+    confirm_https_public_free: Literal[True]
+
+    @model_validator(mode="after")
+    def require_unique_seeds(self) -> BukvarixKeywordRunCreate:
+        if len(self.seed_project_keyword_ids) != len(set(self.seed_project_keyword_ids)):
+            raise ValueError("Bukvarix seed keyword selection contains duplicates")
+        return self
+
+
+class BukvarixKeywordResultOut(BaseModel):
+    id: UUID
+    source_project_keyword_id: UUID
+    phrase: str
+    metrics: list[int | float]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BukvarixKeywordRunOut(BaseModel):
+    id: UUID
+    project_id: UUID
+    status: Literal["queued", "running", "completed", "failed"]
+    provider_mode: Literal["https_public_free"]
+    query_count: int
+    result_count: int
+    failure_code: str | None
+    committed_source_run_id: UUID | None
+    queued_at: datetime | None
+    started_at: datetime | None
+    completed_at: datetime | None
+    created_at: datetime | None
+    results: list[BukvarixKeywordResultOut] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BukvarixKeywordRunCommit(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    selected_result_ids: list[UUID] = Field(min_length=1, max_length=500)
+    confirm_import_https_public_free: Literal[True]
+
+    @model_validator(mode="after")
+    def require_unique_results(self) -> BukvarixKeywordRunCommit:
+        if len(self.selected_result_ids) != len(set(self.selected_result_ids)):
+            raise ValueError("Bukvarix selected results contain duplicates")
+        return self
+
+
+class BukvarixKeywordRunCommitOut(BaseModel):
+    source_run_id: UUID
+    created_keywords: int
+    existing_keywords: int
+    linked_project_keywords: int
 
 
 class SemanticSourceRunCreate(BaseModel):
@@ -137,7 +200,7 @@ class SemanticSourceRunOut(BaseModel):
     id: UUID
     project_id: UUID
     provider: Literal["bukvarix"]
-    acquisition: Literal["manual_export"]
+    acquisition: Literal["manual_export", "https_public_free"]
     mode: Literal["domain", "compare", "multi_domain"]
     source_label: str
     observed_at: datetime

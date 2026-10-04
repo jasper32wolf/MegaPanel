@@ -16,8 +16,10 @@ type ProjectGeo = { id: string; geo_id: string; name: string; kind: string; vali
 type ClaimSlotBinding = { block_id: string; slot: string; claim_index: number };
 type Plan = { id: string; slug: string; objective: string; intent: string | null; kit_key: string; block_selection: { blocks?: string[]; claim_slot_bindings?: ClaimSlotBinding[] }; state: string; version: number; decision_reason: string | null };
 type StructureRevision = { id: string; version: number; state: string };
-type BukvarixStatus = { enabled: false; status: "disabled_unsafe_transport"; message: string; supported_modes: ("domain" | "compare" | "multi_domain")[] };
-type SemanticSourceRun = { id: string; project_id: string; provider: "bukvarix"; acquisition: "manual_export"; mode: "domain" | "compare" | "multi_domain"; source_label: string; observed_at: string; notes: string | null; selected_keyword_count: number; created_at: string | null };
+type BukvarixStatus = { enabled: true; status: "https_public_free"; message: string; personal_credentials_supported: false; max_seed_keywords: number; max_results_per_run: number; non_publish_policy: true };
+type BukvarixKeywordResult = { id: string; source_project_keyword_id: string; phrase: string; metrics: number[] };
+type BukvarixKeywordRun = { id: string; project_id: string; status: "queued" | "running" | "completed" | "failed"; provider_mode: "https_public_free"; query_count: number; result_count: number; failure_code: string | null; committed_source_run_id: string | null; queued_at: string | null; started_at: string | null; completed_at: string | null; created_at: string | null; results: BukvarixKeywordResult[] };
+type SemanticSourceRun = { id: string; project_id: string; provider: "bukvarix"; acquisition: "manual_export" | "https_public_free"; mode: "domain" | "compare" | "multi_domain"; source_label: string; observed_at: string; notes: string | null; selected_keyword_count: number; created_at: string | null };
 type Draft = { id: string; page_plan_id: string; revision: number; state: string; content_hash: string | null; last_qa_verdict: string | null; qa_runs: { verdict: string; findings: { verdict: string; rule: string; evidence: string }[] }[]; page_manifest: { blocks?: { type?: unknown }[] } & Record<string, unknown>; failure_message: string | null };
 type Coverage = { selected: number; covered: number; uncovered: { keyword_id: string; phrase: string }[]; plans: number };
 type IndexPromotion = { id: string; reason: string; decided_at: string | null };
@@ -61,6 +63,11 @@ export function ProjectWorkspacePage() {
   const [semanticSignals, setSemanticSignals] = useState<SemanticSignals | null>(null);
   const [structureRevisions, setStructureRevisions] = useState<StructureRevision[]>([]);
   const [bukvarixStatus, setBukvarixStatus] = useState<BukvarixStatus | null>(null);
+  const [bukvarixRuns, setBukvarixRuns] = useState<BukvarixKeywordRun[]>([]);
+  const [bukvarixSeedIds, setBukvarixSeedIds] = useState<string[]>([]);
+  const [bukvarixConfirmed, setBukvarixConfirmed] = useState(false);
+  const [bukvarixSelectedResultIds, setBukvarixSelectedResultIds] = useState<Record<string, string[]>>({});
+  const [bukvarixImportConfirmed, setBukvarixImportConfirmed] = useState<Record<string, boolean>>({});
   const [semanticSourceRuns, setSemanticSourceRuns] = useState<SemanticSourceRun[]>([]);
   const [sourceKeywordIds, setSourceKeywordIds] = useState<string[]>([]);
   const [sourceLabel, setSourceLabel] = useState("");
@@ -157,7 +164,7 @@ export function ProjectWorkspacePage() {
   );
 
   async function load() {
-    const [nextProject, nextFacts, nextKeywords, nextProjectKeywords, nextPlaces, nextProjectGeo, nextPlans, nextDrafts, nextCoverage, nextAssetUsage, nextIndexPromotions, nextSeoRuns, nextSlotRuns, nextCollections, nextSignals, nextStructureRevisions, nextBukvarixStatus, nextSourceRuns] = await Promise.all([
+    const [nextProject, nextFacts, nextKeywords, nextProjectKeywords, nextPlaces, nextProjectGeo, nextPlans, nextDrafts, nextCoverage, nextAssetUsage, nextIndexPromotions, nextSeoRuns, nextSlotRuns, nextCollections, nextSignals, nextStructureRevisions, nextBukvarixStatus, nextBukvarixRuns, nextSourceRuns] = await Promise.all([
       api<Project>(`/api/v1/projects/${projectId}`, {}, token),
       api<FactRevision[]>(`/api/v1/projects/${projectId}/facts`, {}, token),
       api<{ items: Keyword[] }>("/api/v1/keywords?limit=100", {}, token),
@@ -175,6 +182,7 @@ export function ProjectWorkspacePage() {
       api<SemanticSignals>(`/api/v1/projects/${projectId}/semantic-signals`, {}, token),
       api<StructureRevision[]>(`/api/v1/projects/${projectId}/site-structure/revisions`, {}, token),
       api<BukvarixStatus>(`/api/v1/projects/${projectId}/semantic-sources/bukvarix/status`, {}, token),
+      api<BukvarixKeywordRun[]>(`/api/v1/projects/${projectId}/bukvarix-keyword-runs`, {}, token),
       api<SemanticSourceRun[]>(`/api/v1/projects/${projectId}/semantic-source-runs`, {}, token),
     ]);
     setProject(nextProject);
@@ -199,6 +207,7 @@ export function ProjectWorkspacePage() {
     setSemanticSignals(nextSignals);
     setStructureRevisions(nextStructureRevisions);
     setBukvarixStatus(nextBukvarixStatus);
+    setBukvarixRuns(nextBukvarixRuns);
     setSemanticSourceRuns(nextSourceRuns);
     if (nextProject.site_id) {
       const routing = await api<{ items: LeadRoutingPolicy[] }>(`/api/v1/projects/${projectId}/lead-routing`, {}, token);
@@ -237,6 +246,16 @@ export function ProjectWorkspacePage() {
     if (!projectId) return;
     load().catch((cause) => setError(cause instanceof Error ? cause.message : "Не удалось загрузить проект"));
   }, [projectId, token]);
+
+  useEffect(() => {
+    if (!projectId || !bukvarixRuns.some((run) => run.status === "queued" || run.status === "running")) return;
+    const interval = window.setInterval(() => {
+      api<BukvarixKeywordRun[]>(`/api/v1/projects/${projectId}/bukvarix-keyword-runs`, {}, token)
+        .then(setBukvarixRuns)
+        .catch(() => undefined);
+    }, 2_500);
+    return () => window.clearInterval(interval);
+  }, [projectId, token, bukvarixRuns]);
 
   useEffect(() => {
     api<MediaAsset[]>("/api/v1/media", {}, token)
@@ -330,6 +349,65 @@ export function ProjectWorkspacePage() {
     setSemanticCollectionSourceRunIds((current) => current.includes(sourceRunId)
       ? current.filter((item) => item !== sourceRunId)
       : [...current, sourceRunId]);
+  }
+
+  function toggleBukvarixSeed(projectKeywordId: string) {
+    setBukvarixSeedIds((current) => current.includes(projectKeywordId)
+      ? current.filter((item) => item !== projectKeywordId)
+      : [...current, projectKeywordId]);
+  }
+
+  function toggleBukvarixResult(runId: string, resultId: string) {
+    setBukvarixSelectedResultIds((current) => {
+      const selected = current[runId] || [];
+      return {
+        ...current,
+        [runId]: selected.includes(resultId)
+          ? selected.filter((item) => item !== resultId)
+          : [...selected, resultId],
+      };
+    });
+  }
+
+  async function queueBukvarixRun() {
+    if (!bukvarixSeedIds.length || !bukvarixConfirmed) {
+      setError("Выберите seed keywords и подтвердите HTTPS public free-mode.");
+      return;
+    }
+    await run(
+      "bukvarix-queue",
+      () => api(`/api/v1/projects/${projectId}/bukvarix-keyword-runs`, {
+        method: "POST",
+        body: JSON.stringify({
+          seed_project_keyword_ids: bukvarixSeedIds,
+          confirm_https_public_free: true,
+        }),
+      }, token),
+      "Сбор Букварикса поставлен в очередь. Результаты останутся preview до явного импорта.",
+    );
+    setBukvarixSeedIds([]);
+    setBukvarixConfirmed(false);
+  }
+
+  async function commitBukvarixRun(keywordRun: BukvarixKeywordRun) {
+    const selectedResultIds = bukvarixSelectedResultIds[keywordRun.id] || [];
+    if (!selectedResultIds.length || !bukvarixImportConfirmed[keywordRun.id]) {
+      setError("Выберите результаты и отдельно подтвердите импорт preview-данных.");
+      return;
+    }
+    await run(
+      `bukvarix-commit:${keywordRun.id}`,
+      () => api(`/api/v1/projects/${projectId}/bukvarix-keyword-runs/${keywordRun.id}/commit`, {
+        method: "POST",
+        body: JSON.stringify({
+          selected_result_ids: selectedResultIds,
+          confirm_import_https_public_free: true,
+        }),
+      }, token),
+      "Выбранные фразы импортированы и сохранены с provenance Букварикса. Semantic collection, Structure и публикация не создавались.",
+    );
+    setBukvarixSelectedResultIds((current) => ({ ...current, [keywordRun.id]: [] }));
+    setBukvarixImportConfirmed((current) => ({ ...current, [keywordRun.id]: false }));
   }
 
   async function recordManualBukvarixExport() {
@@ -847,17 +925,40 @@ export function ProjectWorkspacePage() {
       </Surface>
       <Surface title="3.5. Источник семантики: Букварикс">
         <p className="muted">{bukvarixStatus?.message || "Проверка статуса Букварикса…"}</p>
-        <p className="muted">Панель не принимает API key, endpoint или URL Букварикса и не отправляет запросы поставщику. Здесь можно только зафиксировать provenance уже вручную полученного экспорта для ранее сохранённых project keywords.</p>
+        <p className="muted">Автоматический сбор использует только фиксированный HTTPS public free-mode. URL, endpoint, personal API key и параметры запроса в панели не вводятся и не хранятся. Лимит: до {bukvarixStatus?.max_seed_keywords || 10} seed-фраз и {bukvarixStatus?.max_results_per_run || 1000} результатов за запуск.</p>
         <div className="stack">
-          <label className="field">Название ручного экспорта<input value={sourceLabel} onChange={(event) => setSourceLabel(event.target.value)} placeholder="Например: экспорт семантики за 2026-10-02" /></label>
+          <strong>Автоматический HTTPS preview</strong>
+          <p className="muted">Выберите уже сохранённые project keywords. Постановка в очередь не импортирует фразы, не создаёт semantic collection, Structure, candidate, публикацию или IndexNow.</p>
+          {projectKeywords.length === 0 ? <EmptyState title="В проекте нет seed keywords" hint="Сначала сохраните ключевые фразы для проекта." /> : <DataTable headers={["", "Seed-фраза", "Intent", "Priority"]}>{projectKeywords.map((item) => <tr key={item.id}><td><input aria-label={`Seed Букварикс: ${item.phrase}`} type="checkbox" checked={bukvarixSeedIds.includes(item.id)} onChange={() => toggleBukvarixSeed(item.id)} disabled={busy !== null} /></td><td>{item.phrase}</td><td>{item.intent || "—"}</td><td>{item.priority ?? "—"}</td></tr>)}</DataTable>}
+          <label className="field"><span><input type="checkbox" checked={bukvarixConfirmed} onChange={(event) => setBukvarixConfirmed(event.target.checked)} disabled={busy !== null} /> Подтверждаю запуск фиксированного HTTPS public free-mode Букварикса для выбранных seed-фраз.</span></label>
+          <button className="btn btn-ghost" type="button" disabled={busy !== null || !bukvarixSeedIds.length || !bukvarixConfirmed} onClick={() => void queueBukvarixRun()}>{busy === "bukvarix-queue" ? "Постановка в очередь…" : "Получить HTTPS preview"}</button>
+        </div>
+        {bukvarixRuns.length === 0 ? <p className="muted">Автоматические HTTPS runs пока не запускались.</p> : <div className="stack">{bukvarixRuns.map((run) => {
+          const selectedResultIds = bukvarixSelectedResultIds[run.id] || [];
+          const importConfirmed = bukvarixImportConfirmed[run.id] || false;
+          return <div className="surface" key={run.id}>
+            <div className="row"><StatusPill tone={tone(run.status)}>{run.status}</StatusPill><strong>HTTPS public free · {run.id.slice(0, 8)}</strong><span className="muted">queries: {run.query_count}, results: {run.result_count}</span></div>
+            {run.failure_code ? <p className="muted">Безопасный код ошибки: {run.failure_code}</p> : null}
+            {run.status === "completed" && !run.committed_source_run_id ? <div className="stack">
+              <p className="muted">Выберите preview-фразы для явного импорта. Метрики — значения провайдера без неподтверждённой интерпретации.</p>
+              <DataTable headers={["", "Фраза", "Метрики"]}>{run.results.map((result) => <tr key={result.id}><td><input aria-label={`Импорт Букварикс: ${result.phrase}`} type="checkbox" checked={selectedResultIds.includes(result.id)} onChange={() => toggleBukvarixResult(run.id, result.id)} disabled={busy !== null} /></td><td>{result.phrase}</td><td>{result.metrics.join(" · ") || "—"}</td></tr>)}</DataTable>
+              <label className="field"><span><input type="checkbox" checked={importConfirmed} onChange={(event) => setBukvarixImportConfirmed((current) => ({ ...current, [run.id]: event.target.checked }))} disabled={busy !== null} /> Подтверждаю импорт только выбранных preview-фраз с provenance HTTPS public free-mode.</span></label>
+              <button className="btn btn-ghost" type="button" disabled={busy !== null || !selectedResultIds.length || !importConfirmed} onClick={() => void commitBukvarixRun(run)}>{busy === `bukvarix-commit:${run.id}` ? "Импорт…" : "Импортировать выбранные фразы"}</button>
+            </div> : null}
+            {run.committed_source_run_id ? <p className="muted">Выбранные результаты уже импортированы с provenance.</p> : null}
+          </div>;
+        })}</div>}
+        <div className="stack">
+          <strong>Ручной provenance export</strong>
+          <p className="muted">Отдельный вариант для уже полученного вручную экспорта. Он не выполняет сетевой запрос и не импортирует новые фразы.</p>
+          <label className="field">Название ручного экспорта<input value={sourceLabel} onChange={(event) => setSourceLabel(event.target.value)} placeholder="Например: экспорт семантики за 2026-10-04" /></label>
           <label className="field">Режим<select value={sourceMode} onChange={(event) => setSourceMode(event.target.value as SemanticSourceRun["mode"])}><option value="domain">Один домен</option><option value="compare">Сравнение доменов</option><option value="multi_domain">Несколько доменов</option></select></label>
           <label className="field">Заметка (необязательно)<textarea value={semanticSourceNotes} onChange={(event) => setSemanticSourceNotes(event.target.value)} placeholder="Без URL, API key и других секретов" /></label>
-          <p className="muted">Выберите уже добавленные в проект ключи, присутствовавшие в вручную полученном экспорте.</p>
           {projectKeywords.length === 0 ? <EmptyState title="В проекте нет сохранённых ключей" hint="Сначала выберите ключи из библиотеки проекта; эта форма не импортирует новые фразы." /> : <DataTable headers={["", "Фраза", "Intent", "Priority"]}>{projectKeywords.map((item) => <tr key={item.id}><td><input aria-label={`Источник Букварикс: ${item.phrase}`} type="checkbox" checked={sourceKeywordIds.includes(item.id)} onChange={() => toggleSourceKeyword(item.id)} disabled={busy !== null} /></td><td>{item.phrase}</td><td>{item.intent || "—"}</td><td>{item.priority ?? "—"}</td></tr>)}</DataTable>}
           <label className="field"><span><input type="checkbox" checked={sourceConfirmed} onChange={(event) => setSourceConfirmed(event.target.checked)} disabled={busy !== null} /> Подтверждаю, что этот экспорт получен вручную; панель не выполняет обращение к Буквариксу и не хранит его credentials.</span></label>
           <button className="btn btn-ghost" type="button" disabled={busy !== null || !sourceLabel.trim() || !sourceKeywordIds.length || !sourceConfirmed} onClick={() => void recordManualBukvarixExport()}>{busy === "semantic-source-run" ? "Сохранение…" : "Записать ручной экспорт как provenance"}</button>
         </div>
-        {semanticSourceRuns.length === 0 ? <p className="muted">Ручные provenance runs пока не записаны.</p> : <DataTable headers={["Экспорт", "Режим", "Ключи", "Наблюдалось", "Создано"]}>{semanticSourceRuns.map((item) => <tr key={item.id}><td><strong>{item.source_label}</strong>{item.notes && <p className="muted">{item.notes}</p>}</td><td>{item.mode}</td><td>{item.selected_keyword_count}</td><td>{new Date(item.observed_at).toLocaleString()}</td><td>{item.created_at ? new Date(item.created_at).toLocaleString() : "—"}</td></tr>)}</DataTable>}
+        {semanticSourceRuns.length === 0 ? <p className="muted">Provenance runs пока не записаны.</p> : <DataTable headers={["Источник", "Способ", "Режим", "Ключи", "Наблюдалось"]}>{semanticSourceRuns.map((item) => <tr key={item.id}><td><strong>{item.source_label}</strong>{item.notes && <p className="muted">{item.notes}</p>}</td><td>{item.acquisition}</td><td>{item.mode}</td><td>{item.selected_keyword_count}</td><td>{new Date(item.observed_at).toLocaleString()}</td></tr>)}</DataTable>}
       </Surface>
       <Surface title="4. Семантические коллекции и сигналы">
         <p className="muted">Коллекция группирует только выбранные ключи и выбранную географию проекта. Сначала создаётся draft, затем отдельные review/approve; это не создаёт PagePlan и не запускает генерацию.</p>

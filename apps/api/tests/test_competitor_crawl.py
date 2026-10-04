@@ -126,11 +126,14 @@ def test_domain_crawl_api_exposes_only_authenticated_project_routes():
     assert "post" in paths[f"{root}/{{crawl_id}}/cancel"]
 
 
-def test_bukvarix_status_is_exposed_without_an_unsafe_import_route():
+def test_bukvarix_status_and_bounded_project_preview_routes_are_exposed():
     paths = app.openapi()["paths"]
+    run_path = "/api/v1/projects/{project_id}/bukvarix-keyword-runs"
 
     assert "get" in paths["/api/v1/projects/{project_id}/semantic-sources/bukvarix/status"]
-    assert all("bukvarix" not in path or path.endswith("/status") for path in paths)
+    assert {"get", "post"}.issubset(paths[run_path])
+    assert "post" in paths[f"{run_path}/{{run_id}}/commit"]
+    assert all("endpoint" not in path and "credential" not in path for path in paths)
 
 
 def test_crawler_guard_uses_https_public_ips_and_standard_port_only():

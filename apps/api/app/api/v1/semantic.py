@@ -200,7 +200,9 @@ async def _validate_input(
                         ProjectSemanticSourceRun.project_id == project_id,
                         ProjectSemanticSourceRun.tenant_id == tenant_id,
                         ProjectSemanticSourceRun.provider == "bukvarix",
-                        ProjectSemanticSourceRun.acquisition == "manual_export",
+                        ProjectSemanticSourceRun.acquisition.in_(
+                            ("manual_export", "https_public_free")
+                        ),
                     )
                 )
             )

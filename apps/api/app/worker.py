@@ -16,6 +16,12 @@ from app.models import AIProviderConnection, AIRun
 from app.providers import ProviderError, StructuredRequest
 from app.services.ai_secrets import decrypt_provider_key
 from app.services.audit import append_audit
+from app.services.bukvarix_queue import (
+    due_bukvarix_keyword_run_ids,
+    enqueue_bukvarix_keyword_run,
+    recover_stale_bukvarix_keyword_runs,
+    run_bukvarix_keyword_run,
+)
 from app.services.competitor_crawl import run_competitor_crawl
 from app.services.operations import auto_resolve_inactive_incidents
 from app.services.site_build_queue import (
@@ -69,6 +75,43 @@ async def webhook_delivery_sweep_task(ctx: dict) -> dict:
     except Exception as exc:  # noqa: BLE001
         logger.error("webhook_delivery_sweep_failed", error=str(exc))
         return {"error": str(exc)}
+
+
+async def bukvarix_keyword_task(ctx: dict, run_id: str) -> dict:
+    """Fetch a bounded HTTPS public-free Bukvarix preview; never commit or publish."""
+    try:
+        async with open_db_session() as session:
+            result = await run_bukvarix_keyword_run(session, uuid.UUID(run_id))
+        logger.info("bukvarix_keyword_processed", run_id=run_id, status=result["status"])
+        return result
+    except Exception:  # noqa: BLE001
+        logger.exception("bukvarix_keyword_task_failed", run_id=run_id)
+        return {"status": "failed", "run_id": run_id, "error_code": "worker_execution_failed"}
+
+
+async def bukvarix_keyword_sweep_task(ctx: dict) -> dict:
+    """Recover and redeliver only durable Bukvarix run IDs after worker/Redis interruption."""
+    try:
+        async with open_db_session() as session:
+            recovered = await recover_stale_bukvarix_keyword_runs(session)
+            run_ids = await due_bukvarix_keyword_run_ids(session)
+        enqueued = 0
+        for run_id in run_ids:
+            try:
+                await enqueue_bukvarix_keyword_run(run_id)
+                enqueued += 1
+            except Exception:  # noqa: BLE001
+                logger.warning("bukvarix_keyword_enqueue_deferred", run_id=str(run_id))
+        logger.info(
+            "bukvarix_keyword_sweep",
+            recovered=recovered,
+            queued=len(run_ids),
+            enqueued=enqueued,
+        )
+        return {"recovered": recovered, "queued": len(run_ids), "enqueued": enqueued}
+    except Exception:  # noqa: BLE001
+        logger.exception("bukvarix_keyword_sweep_failed")
+        return {"status": "failed", "error_code": "worker_sweep_failed"}
 
 
 async def candidate_build_task(ctx: dict, build_id: str) -> dict:
@@ -242,6 +285,8 @@ class WorkerSettings:
         webhook_delivery_task,
         webhook_delivery_sweep_task,
         architecture_proposal_task,
+        bukvarix_keyword_task,
+        bukvarix_keyword_sweep_task,
         candidate_build_task,
         candidate_build_sweep_task,
         competitor_crawl_task,
@@ -254,6 +299,7 @@ class WorkerSettings:
             run_at_startup=True,
         ),
         cron(webhook_delivery_sweep_task, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}),
+        cron(bukvarix_keyword_sweep_task, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}),
         cron(candidate_build_sweep_task, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}),
         cron(
             operational_incident_auto_resolve_task,
