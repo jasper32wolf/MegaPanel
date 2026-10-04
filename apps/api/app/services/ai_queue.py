@@ -17,7 +17,12 @@ async def _enqueue_ai_run(run_id: UUID, task_name: str) -> None:
 
 
 async def enqueue_ai_run(run_id: UUID) -> None:
-    await _enqueue_ai_run(run_id, "architecture_proposal_task")
+    """Keep the explicit architecture queue contract stable for runtime/source proof."""
+    pool = await create_pool(RedisSettings.from_dsn(get_settings().redis_url))
+    try:
+        await pool.enqueue_job("architecture_proposal_task", str(run_id))
+    finally:
+        await pool.aclose()
 
 
 async def enqueue_intent_generation_run(run_id: UUID) -> None:

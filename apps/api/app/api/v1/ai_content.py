@@ -31,7 +31,6 @@ from app.schemas.ai import (
 from app.services.ai_data_policy import public_fact_rows, safe_provider_context
 from app.services.ai_secrets import decrypt_provider_key
 from app.services.audit import append_audit
-from app.services.design_profiles import design_snapshot, resolve_design_profile, theme_from_profile
 from app.services.generation import create_page_draft
 from app.services.managed_prompts import active_prompt
 from fastapi import APIRouter, Depends, HTTPException
@@ -47,34 +46,14 @@ def _hash_json(value: dict[str, Any]) -> str:
 
 
 async def _create_design_bound_draft(
-    db: AsyncSession,
+    _db: AsyncSession,
     *,
     project: Any,
     plan: Any,
     facts: ProjectFactRevision,
 ) -> tuple[dict, dict, str]:
-    resolved = await resolve_design_profile(
-        db, tenant_id=project.tenant_id, project_id=project.id
-    )
-    if (
-        resolved.effective_profile
-        and plan.kit_key not in resolved.effective_profile.layout.allowed_kits
-    ):
-        raise HTTPException(
-            status_code=409,
-            detail="PagePlan kit is not allowed by the approved design profile",
-        )
-    return create_page_draft(
-        project=project,
-        plan=plan,
-        facts=facts,
-        design=design_snapshot(resolved),
-        theme=(
-            theme_from_profile(resolved.effective_profile)
-            if resolved.effective_profile
-            else None
-        ),
-    )
+    """Legacy proposal paths stay profile-optional; intent generation requires one separately."""
+    return create_page_draft(project=project, plan=plan, facts=facts)
 
 
 def _validate_page_copy(value: dict[str, Any], fact_keys: set[str]) -> dict[str, Any]:
