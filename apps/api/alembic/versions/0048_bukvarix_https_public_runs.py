@@ -98,8 +98,14 @@ def upgrade() -> None:
             "provider_mode = 'https_public_free'",
             name="ck_bukvarix_keyword_run_provider_mode",
         ),
-        sa.CheckConstraint("query_count >= 0 AND query_count <= 10", name="ck_bukvarix_query_count"),
-        sa.CheckConstraint("result_count >= 0 AND result_count <= 1000", name="ck_bukvarix_result_count"),
+        sa.CheckConstraint(
+            "query_count >= 0 AND query_count <= 10",
+            name="ck_bukvarix_query_count",
+        ),
+        sa.CheckConstraint(
+            "result_count >= 0 AND result_count <= 1000",
+            name="ck_bukvarix_result_count",
+        ),
     )
     op.create_index(
         "ix_bukvarix_keyword_runs_tenant_project_created",
@@ -142,7 +148,12 @@ def upgrade() -> None:
         ),
         sa.Column("phrase", sa.String(length=512), nullable=False),
         sa.Column("normalized", sa.String(length=512), nullable=False),
-        sa.Column("metrics", postgresql.JSONB(), nullable=False, server_default=sa.text("'[]'::jsonb")),
+        sa.Column(
+            "metrics",
+            postgresql.JSONB(),
+            nullable=False,
+            server_default=sa.text("'[]'::jsonb"),
+        ),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -150,8 +161,14 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.UniqueConstraint("run_id", "normalized", name="uq_bukvarix_keyword_run_normalized"),
-        sa.CheckConstraint("char_length(phrase) BETWEEN 1 AND 512", name="ck_bukvarix_keyword_phrase"),
-        sa.CheckConstraint("octet_length(metrics::text) <= 1024", name="ck_bukvarix_keyword_metrics_size"),
+        sa.CheckConstraint(
+            "char_length(phrase) BETWEEN 1 AND 512",
+            name="ck_bukvarix_keyword_phrase",
+        ),
+        sa.CheckConstraint(
+            "octet_length(metrics::text) <= 1024",
+            name="ck_bukvarix_keyword_metrics_size",
+        ),
     )
     op.create_index(
         "ix_bukvarix_keyword_results_run",

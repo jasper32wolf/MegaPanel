@@ -5,21 +5,19 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from arq import create_pool
-from arq.connections import RedisSettings
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.core.config import get_settings
-
 from app.models import ProjectBukvarixKeywordResult, ProjectBukvarixKeywordRun
 from app.services.bukvarix_https import (
-    BukvarixHTTPSFailure,
     MAX_RESULTS_PER_RUN,
+    BukvarixHTTPSFailure,
     fetch_public_free_keywords,
     normalize_phrase,
     output_hash,
 )
+from arq import create_pool
+from arq.connections import RedisSettings
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def enqueue_bukvarix_keyword_run(run_id: UUID) -> None:

@@ -4,13 +4,9 @@ import json
 from datetime import UTC, datetime
 from uuid import UUID
 
-from app.api.v1.keywords import normalize_phrase
-from app.core.security import sha256_hex
-from app.services.bukvarix_https import MAX_RESULTS_PER_RUN, MAX_SEED_QUERIES
-from app.services.bukvarix_queue import enqueue_bukvarix_keyword_run
-
 from app.api.deps import AuthContext, require_roles
 from app.api.v1.projects import _project_or_404
+from app.core.security import sha256_hex
 from app.db.session import get_db
 from app.models import (
     Keyword,
@@ -21,16 +17,18 @@ from app.models import (
     ProjectSemanticSourceRunKeyword,
 )
 from app.schemas.research import (
+    BukvarixKeywordResultOut,
     BukvarixKeywordRunCommit,
     BukvarixKeywordRunCommitOut,
     BukvarixKeywordRunCreate,
     BukvarixKeywordRunOut,
-    BukvarixKeywordResultOut,
     BukvarixProviderStatus,
     SemanticSourceRunCreate,
     SemanticSourceRunOut,
 )
 from app.services.audit import append_audit
+from app.services.bukvarix_https import MAX_RESULTS_PER_RUN, MAX_SEED_QUERIES
+from app.services.bukvarix_queue import enqueue_bukvarix_keyword_run
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession

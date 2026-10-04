@@ -9,7 +9,6 @@ from collections.abc import Iterable
 from typing import Any
 
 import httpx
-
 from app.services.hardening import EgressGuard
 
 BUKVARIX_KEYWORDS_URL = "https://api.bukvarix.com/v1/keywords/"

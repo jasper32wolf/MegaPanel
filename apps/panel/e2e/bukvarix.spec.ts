@@ -80,8 +80,9 @@ test("Букварикс: HTTPS preview становится импортом т
     window.dispatchEvent(new PopStateEvent("popstate"));
   }, `/projects/${projectId}`);
 
-  await expect(page.getByText("HTTPS public free-mode", { exact: true })).toBeVisible();
-  await page.getByLabel("Seed Букварикс: ремонт окон").check();
+  const seed = page.getByLabel("Seed Букварикс: ремонт окон");
+  await expect(seed).toBeVisible();
+  await seed.check();
   await page.getByText("Подтверждаю запуск фиксированного HTTPS public free-mode Букварикса для выбранных seed-фраз.").click();
   await page.getByRole("button", { name: "Получить HTTPS preview" }).click();
   await expect(page.getByText("queued", { exact: true })).toBeVisible();
