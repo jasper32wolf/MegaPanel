@@ -246,7 +246,17 @@ test("оператор создаёт и готовит candidate без пуб�
   await manualStructure.getByLabel("H1").fill("E2E услуга");
   await manualStructure.getByLabel("Цель").fill("Проверка основного operator workflow");
   await manualStructure.getByLabel("H2–H6, по одной строке").fill("h2: Услуги");
+  const createStructureResponse = page.waitForResponse((response) =>
+    response.request().method() === "POST" &&
+    /\/projects\/[0-9a-f-]+\/site-structure\/revisions$/.test(new URL(response.url()).pathname),
+  );
   await manualStructure.getByRole("button", { name: "Создать ручной draft" }).click();
+  const createdStructure = await createStructureResponse;
+  const createdStructureBody = await createdStructure.text();
+  expect(
+    createdStructure.ok(),
+    `create structure ${createdStructure.status()}: ${createdStructureBody}`,
+  ).toBe(true);
   await expect(page.getByText("Создан ручной draft структуры.")).toBeVisible();
   await page.getByRole("button", { name: "На review", exact: true }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
