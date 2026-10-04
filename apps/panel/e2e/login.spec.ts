@@ -224,7 +224,15 @@ test("оператор создаёт и готовит candidate без пуб�
   const structureLink = page.getByRole("link", { name: "Структура", exact: true });
   const structureUrl = await structureLink.getAttribute("href");
   expect(structureUrl).toMatch(/^\/projects\/[0-9a-f-]+\/site-structure$/);
+  const structureCollectionsResponse = page.waitForResponse((response) =>
+    response.request().method() === "GET" &&
+    /\/projects\/[0-9a-f-]+\/semantic-collections$/.test(new URL(response.url()).pathname),
+  );
   await page.goto(structureUrl!);
+  const structureCollections = await structureCollectionsResponse;
+  expect(structureCollections.ok()).toBe(true);
+  const structureCollectionRows = (await structureCollections.json()) as { state: string }[];
+  expect(structureCollectionRows.some((collection) => collection.state === "approved")).toBe(true);
   await expect(page).toHaveURL(new RegExp(`${structureUrl}$`));
   await expect(
     page.getByRole("heading", { name: "Структура сайта", exact: true }),

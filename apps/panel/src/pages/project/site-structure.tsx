@@ -44,30 +44,34 @@ export function ProjectSiteStructurePage() {
 
   async function load() {
     if (!projectId) return;
-    // Manual structure needs these three resources. Optional AI/evidence/city panels
-    // must not hide the editor if one secondary endpoint is temporarily unavailable.
-    const [nextRevisions, nextCollections, nextKits] = await Promise.all([
-      api<Revision[]>(`/api/v1/projects/${projectId}/site-structure/revisions`, {}, token),
-      api<SemanticCollection[]>(`/api/v1/projects/${projectId}/semantic-collections`, {}, token),
-      api<Kit[]>("/api/v1/blocks/kits", {}, token),
-    ]);
-    const [runsResult, evidenceResult, citiesResult] = await Promise.allSettled([
-      api<Run[]>(`/api/v1/ai/runs?project_id=${encodeURIComponent(projectId)}&action=architecture.site-map&status=approved`, {}, token),
-      api<Evidence[]>(`/api/v1/competitors/projects/${projectId}/evidence`, {}, token),
-      api<CityProject[]>(`/api/v1/projects/${projectId}/city-projects`, {}, token),
-    ]);
-    const nextRuns = runsResult.status === "fulfilled" ? runsResult.value : [];
-    const nextEvidence = evidenceResult.status === "fulfilled" ? evidenceResult.value : [];
-    const nextCities = citiesResult.status === "fulfilled" ? citiesResult.value : [];
-    setRevisions(nextRevisions);
-    setRuns(nextRuns);
-    setCollections(nextCollections.filter((item) => item.state === "approved"));
-    setEvidence(nextEvidence.filter((item) => item.state === "approved"));
-    setKits(nextKits);
-    setCityProjects(nextCities);
-    if (!collectionId && nextCollections.some((item) => item.state === "approved")) {
-      setCollectionId(nextCollections.find((item) => item.state === "approved")!.id);
-    }
+    // An approved collection is the only client-side prerequisite for manual editing.
+    // Load it first so a delayed secondary panel cannot hide the editor.
+    const nextCollections = await api<SemanticCollection[]>(
+      `/api/v1/projects/${projectId}/semantic-collections`,
+      {},
+      token,
+    );
+    const approvedCollections = nextCollections.filter((item) => item.state === "approved");
+    setCollections(approvedCollections);
+    if (!collectionId && approvedCollections[0]) setCollectionId(approvedCollections[0].id);
+
+    const [revisionsResult, kitsResult, runsResult, evidenceResult, citiesResult] =
+      await Promise.allSettled([
+        api<Revision[]>(`/api/v1/projects/${projectId}/site-structure/revisions`, {}, token),
+        api<Kit[]>("/api/v1/blocks/kits", {}, token),
+        api<Run[]>(`/api/v1/ai/runs?project_id=${encodeURIComponent(projectId)}&action=architecture.site-map&status=approved`, {}, token),
+        api<Evidence[]>(`/api/v1/competitors/projects/${projectId}/evidence`, {}, token),
+        api<CityProject[]>(`/api/v1/projects/${projectId}/city-projects`, {}, token),
+      ]);
+    setRevisions(revisionsResult.status === "fulfilled" ? revisionsResult.value : []);
+    setKits(kitsResult.status === "fulfilled" ? kitsResult.value : []);
+    setRuns(runsResult.status === "fulfilled" ? runsResult.value : []);
+    setEvidence(
+      evidenceResult.status === "fulfilled"
+        ? evidenceResult.value.filter((item) => item.state === "approved")
+        : [],
+    );
+    setCityProjects(citiesResult.status === "fulfilled" ? citiesResult.value : []);
   }
 
   useEffect(() => {
