@@ -28,6 +28,7 @@ async function mockAuth(page: Page) {
 }
 
 test("Букварикс: HTTPS preview становится импортом только после явного выбора", async ({ page }) => {
+  let createdRun = false;
   let listRequests = 0;
   const mutations: { method: string; path: string; body: string }[] = [];
 
@@ -51,12 +52,16 @@ test("Букварикс: HTTPS preview становится импортом т
       max_seed_keywords: 10, max_results_per_run: 1000, non_publish_policy: true,
     });
     if (path === `/api/v1/projects/${projectId}/bukvarix-keyword-runs`) {
-      if (request.method() === "POST") return json({
-        id: runId, project_id: projectId, status: "queued", provider_mode: "https_public_free", query_count: 0, result_count: 0,
-        failure_code: null, committed_source_run_id: null, queued_at: "2026-10-04T12:00:00Z", started_at: null, completed_at: null, created_at: "2026-10-04T12:00:00Z", results: [],
-      });
+      if (request.method() === "POST") {
+        createdRun = true;
+        return json({
+          id: runId, project_id: projectId, status: "queued", provider_mode: "https_public_free", query_count: 0, result_count: 0,
+          failure_code: null, committed_source_run_id: null, queued_at: "2026-10-04T12:00:00Z", started_at: null, completed_at: null, created_at: "2026-10-04T12:00:00Z", results: [],
+        });
+      }
+      if (!createdRun) return json([]);
       listRequests += 1;
-      const completed = listRequests >= 3;
+      const completed = listRequests >= 2;
       return json([{ id: runId, project_id: projectId, status: completed ? "completed" : "queued", provider_mode: "https_public_free", query_count: completed ? 1 : 0, result_count: completed ? 1 : 0,
         failure_code: null, committed_source_run_id: null, queued_at: "2026-10-04T12:00:00Z", started_at: null, completed_at: completed ? "2026-10-04T12:01:00Z" : null, created_at: "2026-10-04T12:00:00Z",
         results: completed ? [{ id: resultId, source_project_keyword_id: seedId, phrase: "ремонт окон цены", metrics: [42, 3] }] : [],
@@ -86,7 +91,7 @@ test("Букварикс: HTTPS preview становится импортом т
   await page.getByText("Подтверждаю запуск фиксированного HTTPS public free-mode Букварикса для выбранных seed-фраз.").click();
   await page.getByRole("button", { name: "Получить HTTPS preview" }).click();
   await expect(page.getByText("queued", { exact: true })).toBeVisible();
-  await expect.poll(() => listRequests).toBeGreaterThanOrEqual(3);
+  await expect.poll(() => listRequests).toBeGreaterThanOrEqual(2);
   await expect(page.getByText("ремонт окон цены", { exact: true })).toBeVisible();
 
   await page.getByLabel("Импорт Букварикс: ремонт окон цены").check();
