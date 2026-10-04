@@ -21,16 +21,18 @@ export function PageHeader({
 }
 
 export function Surface({
+  id,
   title,
   children,
   className = "",
 }: {
+  id?: string;
   title?: string;
   children: ReactNode;
   className?: string;
 }) {
   return (
-    <section className={`surface ${className}`.trim()}>
+    <section id={id} className={`surface ${className}`.trim()}>
       {title ? <h2>{title}</h2> : null}
       {children}
     </section>

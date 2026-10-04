@@ -26,6 +26,7 @@ export function ProjectWorkspaceLayout({ projectId, children }: { projectId: str
             {label}
           </NavLink>
         ))}
+        <Link className="btn btn-ghost" to={`/projects/${projectId}#bukvarix`}>Букварикс</Link>
         <Link className="btn btn-ghost" to="/projects">К проектам</Link>
       </nav>
       {children}

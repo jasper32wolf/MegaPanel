@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
 import { api, useAuth } from "../lib/auth";
 import { ConfirmDialog, DataTable, EmptyState, PageHeader, StatusPill, Surface } from "../components/ui";
 import { ProjectWorkspaceLayout } from "./project/ProjectWorkspaceLayout";
@@ -50,6 +50,7 @@ function tone(state: string) {
 
 export function ProjectWorkspacePage() {
   const { projectId = "" } = useParams();
+  const { hash } = useLocation();
   const { token } = useAuth();
   const [project, setProject] = useState<Project | null>(null);
   const [facts, setFacts] = useState<FactRevision[]>([]);
@@ -256,6 +257,11 @@ export function ProjectWorkspacePage() {
     }, 2_500);
     return () => window.clearInterval(interval);
   }, [projectId, token, bukvarixRuns]);
+
+  useEffect(() => {
+    if (hash !== "#bukvarix" || !project) return;
+    document.getElementById("bukvarix")?.scrollIntoView({ block: "start" });
+  }, [hash, project?.id]);
 
   useEffect(() => {
     api<MediaAsset[]>("/api/v1/media", {}, token)
@@ -923,7 +929,7 @@ export function ProjectWorkspacePage() {
         {places.length === 0 && <EmptyState title="Справочник географии пуст" hint="Добавьте город или район в разделе «География»." />}
         <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={saveGeo}>Сохранить географию</button>
       </Surface>
-      <Surface title="3.5. Источник семантики: Букварикс">
+      <Surface id="bukvarix" title="3.5. Источник семантики: Букварикс">
         <p className="muted">{bukvarixStatus?.message || "Проверка статуса Букварикса…"}</p>
         <p className="muted">Автоматический сбор использует только фиксированный HTTPS public free-mode. URL, endpoint, personal API key и параметры запроса в панели не вводятся и не хранятся. Лимит: до {bukvarixStatus?.max_seed_keywords || 10} seed-фраз и {bukvarixStatus?.max_results_per_run || 1000} результатов за запуск.</p>
         <div className="stack">
