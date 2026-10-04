@@ -23,6 +23,7 @@ from app.services.bukvarix_queue import (
     run_bukvarix_keyword_run,
 )
 from app.services.competitor_crawl import run_competitor_crawl
+from app.services.intent_generation import validate_intent_page_proposal
 from app.services.operations import auto_resolve_inactive_incidents
 from app.services.site_build_queue import (
     due_site_build_ids,
@@ -278,6 +279,105 @@ async def architecture_proposal_task(ctx: dict, run_id: str) -> dict:
         return {"status": run.status, "run_id": run_id, "error_code": run.error_code}
 
 
+async def intent_page_proposal_task(ctx: dict, run_id: str) -> dict:
+    """Produce one frozen intent/design proposal; never materialize or publish a page."""
+    async with open_db_session() as session:
+        run = (
+            await session.execute(
+                select(AIRun).where(AIRun.id == uuid.UUID(run_id)).with_for_update()
+            )
+        ).scalar_one_or_none()
+        if run is None:
+            return {"status": "missing", "run_id": run_id}
+        if run.status != "reserved":
+            return {"status": run.status, "run_id": run_id, "duplicate": True}
+        envelope = dict(run.execution_envelope or {})
+        run.status = "running"
+        run.error_code = None
+        await session.commit()
+        estimated_cost = float(run.cost_usd or 0.0)
+        pricing = envelope.get("pricing") or {}
+        max_cost = float(envelope.get("max_cost_usd") or 0.0)
+        try:
+            if envelope.get("tenant_id") != str(run.tenant_id):
+                raise ValueError("tenant_scope_violation")
+            connection = await session.get(
+                AIProviderConnection, uuid.UUID(envelope["provider_connection_id"])
+            )
+            if not connection or not connection.enabled:
+                raise RuntimeError("provider_connection_unavailable")
+            response = await _adapter(
+                connection, decrypt_provider_key(connection.encrypted_api_key)
+            ).generate_structured(
+                StructuredRequest(
+                    model=envelope["model"],
+                    system_prompt=envelope["system_prompt"],
+                    user_prompt=envelope["user_prompt"],
+                    output_schema=envelope["output_schema"],
+                    temperature=float(envelope.get("temperature", 0.2)),
+                    max_tokens=int(envelope["max_output_tokens"]),
+                )
+            )
+            validation = envelope["validation"]
+            proposal = validate_intent_page_proposal(
+                response.data,
+                source_binding=validation["source_binding"],
+                allowed_block_slots=validation["allowed_block_slots"],
+                fact_keys=set(validation["fact_keys"]),
+                semantic_project_keyword_ids=set(validation["semantic_project_keyword_ids"]),
+            )
+            actual_cost = max(estimated_cost, _actual_cost(response.usage, pricing, estimated_cost))
+            run.provider_id = response.provider_id
+            run.model_id = response.model
+            run.request_id = response.request_id
+            run.output = {"proposal": proposal}
+            run.usage = _usage_payload(response.usage)
+            run.cost_usd = actual_cost
+            run.error_code = (
+                "actual_cost_exceeded_limit"
+                if actual_cost > max_cost
+                else "usage_unavailable"
+                if not response.usage.known
+                else None
+            )
+            run.status = "failed" if actual_cost > max_cost else "pending_approval"
+            audit_action = (
+                "ai.intent_page.cost_limit_exceeded"
+                if actual_cost > max_cost
+                else "ai.intent_page.proposal.created"
+            )
+        except ProviderError as exc:
+            run.status = "failed"
+            run.error_code = exc.code
+            run.usage = _usage_payload(exc.usage)
+            run.cost_usd = max(estimated_cost, _actual_cost(exc.usage, pricing, estimated_cost))
+            run.request_id = exc.request_id
+            audit_action = "ai.run.failed"
+        except (KeyError, TypeError, ValueError):
+            run.status = "failed"
+            run.error_code = "invalid_ai_output"
+            response_obj = locals().get("response")
+            usage_obj = response_obj.usage if response_obj else None
+            run.usage = _usage_payload(usage_obj)
+            run.cost_usd = max(estimated_cost, _actual_cost(usage_obj, pricing, estimated_cost))
+            run.request_id = response_obj.request_id if response_obj else None
+            audit_action = "ai.run.failed"
+        except Exception:  # noqa: BLE001
+            run.status = "failed"
+            run.error_code = "provider_execution_failed"
+            run.cost_usd = estimated_cost
+            audit_action = "ai.run.failed"
+        await append_audit(
+            session,
+            action=audit_action,
+            payload={"run_id": run_id, "status": run.status, "error_code": run.error_code},
+            tenant_id=run.tenant_id,
+            actor_id=None,
+        )
+        await session.commit()
+        return {"status": run.status, "run_id": run_id, "error_code": run.error_code}
+
+
 class WorkerSettings:
     functions = [
         healthcheck_task,
@@ -285,6 +385,7 @@ class WorkerSettings:
         webhook_delivery_task,
         webhook_delivery_sweep_task,
         architecture_proposal_task,
+        intent_page_proposal_task,
         bukvarix_keyword_task,
         bukvarix_keyword_sweep_task,
         candidate_build_task,

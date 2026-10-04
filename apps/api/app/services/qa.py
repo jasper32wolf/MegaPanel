@@ -7,6 +7,11 @@ from app.services.dedup import compare_texts
 from site_panel_shared.manifests import PageManifest
 
 
+_HIDDEN_OR_CONDITIONAL_CONTENT = re.compile(
+    r"(?i)(display\s*:\s*none|visibility\s*:\s*hidden|aria-hidden|user-agent|crawler|cloaking)"
+)
+
+
 def _public_schema_text(value: object) -> str:
     if isinstance(value, str):
         return value
@@ -91,6 +96,44 @@ def run_page_qa(*, page_manifest: dict, input_snapshot: dict, existing_texts: li
                     ),
                 }
             )
+    design_snapshot = input_snapshot.get("design") or {}
+    if page.design and page.design.profile_hash != design_snapshot.get("profile_hash"):
+        findings.append(
+            {
+                "verdict": "block",
+                "rule": "design_profile_provenance",
+                "evidence": "Page design profile differs from the frozen draft snapshot",
+            }
+        )
+    if ai_provenance and not page.design:
+        findings.append(
+            {
+                "verdict": "warn",
+                "rule": "design_profile_missing",
+                "evidence": "AI draft has no resolved approved design profile snapshot",
+            }
+        )
+    intent_generation = input_snapshot.get("intent_generation") or {}
+    semantic_targets = (
+        (input_snapshot.get("semantic_target_snapshot") or {}).get("targets") or []
+    )
+    expected_target_ids = {
+        str(item.get("project_keyword_id"))
+        for item in semantic_targets
+        if isinstance(item, dict) and item.get("project_keyword_id")
+    }
+    actual_target_ids = {
+        str(item)
+        for item in intent_generation.get("semantic_target_project_keyword_ids") or []
+    }
+    if expected_target_ids and not expected_target_ids.issubset(actual_target_ids):
+        findings.append(
+            {
+                "verdict": "warn",
+                "rule": "intent_semantic_coverage",
+                "evidence": "AI proposal did not cover every frozen semantic target",
+            }
+        )
     claim_slot_bindings = input_snapshot.get("claim_slot_bindings") or []
     if claim_slot_bindings:
         try:
@@ -138,6 +181,14 @@ def run_page_qa(*, page_manifest: dict, input_snapshot: dict, existing_texts: li
             _public_schema_text(page.schema_org),
         ]
     )
+    if _HIDDEN_OR_CONDITIONAL_CONTENT.search(rendered_text):
+        findings.append(
+            {
+                "verdict": "block",
+                "rule": "visible_content_integrity",
+                "evidence": "Generated page text contains hidden or conditional-content markers",
+            }
+        )
     if re.search(r"\b[^\s@]+@[^\s@]+\.[^\s@]+\b", rendered_text):
         findings.append(
             {

@@ -113,9 +113,10 @@ def instantiate_kit_for_site(
     site_id: uuid.UUID | str,
     *,
     service: str = "Услуги",
+    theme: ThemeProfile | None = None,
 ) -> tuple[list[BlockDef], dict[str, str], dict[str, Any]]:
     kit = load_kit(kit_key)
-    instances, css_vars = instantiate_blocks(kit.blocks, site_id, kit.theme)
+    instances, css_vars = instantiate_blocks(kit.blocks, site_id, theme or kit.theme)
     # Map CSS vars to both --sp-* keys (stored without prefix) and legacy primary-color
     mapped = {
         "primary-color": css_vars.get("sp-primary", "#0f6e5c"),

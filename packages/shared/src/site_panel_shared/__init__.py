@@ -15,6 +15,7 @@ from site_panel_shared.events import (
 )
 from site_panel_shared.manifests import (
     BlockDef,
+    DesignSnapshot,
     GenerationJob,
     GeoEntity,
     PageManifest,
@@ -26,6 +27,7 @@ __all__ = [
     "BuildStatus",
     "BuildFinished",
     "AuditAppended",
+    "DesignSnapshot",
     "GeoEntity",
     "GenerationJob",
     "IndexPromoted",

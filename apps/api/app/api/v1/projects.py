@@ -63,6 +63,7 @@ from app.services.audit import append_audit
 from app.services.block_library import instantiate_kit_for_site
 from app.services.caddy_client import CaddyClient
 from app.services.claim_slots import resolve_claim_slot_bindings
+from app.services.design_profiles import design_snapshot, resolve_design_profile, theme_from_profile
 from app.services.domain_health import domain_probe
 from app.services.generation import create_page_draft
 from app.services.indexnow import new_indexnow_key
@@ -1483,10 +1484,28 @@ async def generate_page_draft(
             .limit(1)
         )
     ).scalar_one_or_none()
+    resolved_design = await resolve_design_profile(
+        db, tenant_id=project.tenant_id, project_id=project.id
+    )
+    profile_snapshot = design_snapshot(resolved_design)
+    if (
+        resolved_design.effective_profile
+        and plan.kit_key not in resolved_design.effective_profile.layout.allowed_kits
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={"blockers": ["PagePlan kit is not allowed by the approved design profile"]},
+        )
     page_manifest, input_snapshot, _candidate_text = create_page_draft(
         project=project,
         plan=plan,
         facts=facts,
+        design=profile_snapshot,
+        theme=(
+            theme_from_profile(resolved_design.effective_profile)
+            if resolved_design.effective_profile
+            else None
+        ),
     )
     content_hash = _draft_manifest_hash(page_manifest)
     draft = PageDraft(
@@ -1888,10 +1907,40 @@ async def apply_page_draft(
         "city_dat": forms.get("dat") or primary.get("name", ""),
     }
     page = PageManifest.model_validate(draft.page_manifest)
+    resolved_design = await resolve_design_profile(
+        db, tenant_id=project.tenant_id, project_id=project.id
+    )
+    current_design = design_snapshot(resolved_design)
+    if page.design and page.design.profile_hash != (current_design or {}).get("profile_hash"):
+        raise HTTPException(
+            status_code=409,
+            detail={"blockers": ["Design profile changed; regenerate this PageDraft"]},
+        )
     if project.site_id:
         site = await _project_site_or_409(db, project)
         manifest = SiteManifest.model_validate(site.manifest)
         pages = [existing for existing in manifest.pages if existing.slug != page.slug]
+        if (
+            manifest.design
+            and page.design
+            and manifest.design.profile_hash != page.design.profile_hash
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail={"blockers": ["Applied site uses another approved design profile"]},
+            )
+        if not manifest.design and page.design:
+            manifest.design = page.design
+            _blocks, manifest.css_vars, _meta = instantiate_kit_for_site(
+                plan.kit_key,
+                site.id,
+                service=page.service,
+                theme=(
+                    theme_from_profile(resolved_design.effective_profile)
+                    if resolved_design.effective_profile
+                    else None
+                ),
+            )
         manifest.pages = [*pages, page]
         protected_contacts = {
             key: value
@@ -1910,6 +1959,11 @@ async def apply_page_draft(
             plan.kit_key,
             site_id,
             service=page.service,
+            theme=(
+                theme_from_profile(resolved_design.effective_profile)
+                if resolved_design.effective_profile
+                else None
+            ),
         )
         manifest = SiteManifest(
             site_id=site_id,
@@ -1917,6 +1971,7 @@ async def apply_page_draft(
             domain=project.domain,
             locale=project.locale,
             css_vars=css_vars,
+            design=page.design,
             pages=[page],
             contacts=contacts,
             legal=dict(fact_values.get("legal") or {}),
@@ -2387,6 +2442,37 @@ def _asset_usage_status(asset: MediaAsset | None, expected_sha256: str) -> str:
     except (HTTPException, ValueError):
         return "unavailable"
     return "verified"
+
+
+async def _manifest_media_compliance_blockers(
+    db: AsyncSession, *, manifest: SiteManifest, tenant_id: UUID
+) -> list[str]:
+    usages = _manifest_asset_usage(manifest=manifest, scope="release", source={})
+    if not usages:
+        return []
+    asset_ids = {UUID(item["asset_id"]) for item in usages}
+    assets = list(
+        (
+            await db.execute(
+                select(MediaAsset).where(
+                    MediaAsset.id.in_(asset_ids),
+                    MediaAsset.tenant_id == tenant_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    by_id = {str(asset.id): asset for asset in assets}
+    blockers = []
+    for usage in usages:
+        status = _asset_usage_status(by_id.get(usage["asset_id"]), usage["expected_sha256"])
+        if status != "verified":
+            blockers.append(
+                f"Media asset {usage['asset_id']} for {usage['slug']} is {status}; "
+                "replace it in a new draft"
+            )
+    return blockers
 
 
 def _asset_usage_build_scope(build: SiteBuild, active_build: SiteBuild | None) -> str:
@@ -3144,7 +3230,15 @@ async def publish_project_build(
     gate_evaluation = evaluate_build_release_gate(build, site)
     legal_review = legal_review_status(build)
     routing_blockers = await _lead_routing_publish_blockers(db, site)
-    blockers = [*gate_evaluation["blockers"], *legal_review["blockers"], *routing_blockers]
+    media_blockers = await _manifest_media_compliance_blockers(
+        db, manifest=manifest, tenant_id=project.tenant_id
+    )
+    blockers = [
+        *gate_evaluation["blockers"],
+        *legal_review["blockers"],
+        *routing_blockers,
+        *media_blockers,
+    ]
     if blockers:
         record_release_transition(action="publish", outcome="blocked")
         raise HTTPException(status_code=409, detail={"blockers": blockers})
@@ -3248,7 +3342,15 @@ async def rollback_project_build(
     gate_evaluation = evaluate_build_release_gate(target, site)
     legal_review = legal_review_status(target)
     routing_blockers = await _lead_routing_publish_blockers(db, site)
-    blockers = [*gate_evaluation["blockers"], *legal_review["blockers"], *routing_blockers]
+    media_blockers = await _manifest_media_compliance_blockers(
+        db, manifest=manifest, tenant_id=project.tenant_id
+    )
+    blockers = [
+        *gate_evaluation["blockers"],
+        *legal_review["blockers"],
+        *routing_blockers,
+        *media_blockers,
+    ]
     if blockers:
         record_release_transition(action="rollback", outcome="blocked")
         raise HTTPException(status_code=409, detail={"blockers": blockers})

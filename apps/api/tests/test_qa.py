@@ -142,6 +142,45 @@ def test_qa_blocks_claim_slot_mutation_against_the_frozen_fact_snapshot():
     assert any(item["rule"] == "claim_slot_contract" for item in altered["findings"])
 
 
+def test_qa_blocks_design_profile_hash_drift_and_hidden_content_markers():
+    page = {
+        **base_page(),
+        "design": {
+            "profile_hash": "a" * 64,
+            "profile_scope": "project",
+            "tokens": {"primary": "#0f6e5c", "radius": "12"},
+        },
+        "unique_core": "crawler-specific copy",
+    }
+    result = run_page_qa(
+        page_manifest=page,
+        input_snapshot={**base_input(), "design": {"profile_hash": "b" * 64}},
+        existing_texts=[],
+    )
+
+    assert result["verdict"] == "block"
+    assert {item["rule"] for item in result["findings"]} >= {
+        "design_profile_provenance",
+        "visible_content_integrity",
+    }
+
+
+def test_qa_warns_when_intent_proposal_omits_a_frozen_semantic_target():
+    result = run_page_qa(
+        page_manifest=base_page(),
+        input_snapshot={
+            **base_input(),
+            "semantic_target_snapshot": {
+                "targets": [{"project_keyword_id": "keyword-one"}],
+            },
+            "intent_generation": {"semantic_target_project_keyword_ids": []},
+        },
+        existing_texts=[],
+    )
+
+    assert any(item["rule"] == "intent_semantic_coverage" for item in result["findings"])
+
+
 def test_qa_blocks_email_in_public_page_fields():
     from app.services.qa import run_page_qa
 

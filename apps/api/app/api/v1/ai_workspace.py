@@ -610,6 +610,7 @@ async def decide_ai_run(
         "architecture.site-map",
         "seo.create-brief",
         "content.block-slot-copy",
+        "content.intent-page-proposal",
         "geo.city-hierarchy",
     }:
         raise HTTPException(

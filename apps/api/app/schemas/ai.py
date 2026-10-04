@@ -127,6 +127,47 @@ class AIDraftTextOut(BaseModel):
     fact_keys: list[str] = Field(default_factory=list, max_length=100)
 
 
+class IntentGenerationRequest(AIDraftGenerationRequest):
+    """Quote/request body for one approved PagePlan intent proposal."""
+
+
+class IntentSectionRationale(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    block_id: str = Field(min_length=1, max_length=128)
+    visitor_question: str = Field(min_length=1, max_length=500)
+    semantic_topics: list[str] = Field(default_factory=list, max_length=12)
+
+
+class IntentArtDirection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    creative_direction: str = Field(min_length=1, max_length=1000)
+    shot_list: list[str] = Field(default_factory=list, max_length=12)
+    suggested_media_roles: list[Literal["hero", "process", "team", "portfolio", "proof"]] = Field(
+        default_factory=list,
+        max_length=5,
+    )
+    alt_requirements: list[str] = Field(default_factory=list, max_length=12)
+
+
+class IntentPageProposalOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    page_plan_id: UUID
+    plan_version: int = Field(ge=1)
+    title: str = Field(min_length=1, max_length=70)
+    h1: str = Field(min_length=1, max_length=255)
+    meta_description: str = Field(min_length=1, max_length=170)
+    unique_core: str = Field(min_length=1, max_length=8000)
+    block_slots: dict[str, dict[str, str | None]] = Field(default_factory=dict, max_length=20)
+    fact_keys: list[str] = Field(default_factory=list, max_length=100)
+    semantic_target_project_keyword_ids: list[UUID] = Field(default_factory=list, max_length=100)
+    section_rationale: list[IntentSectionRationale] = Field(default_factory=list, max_length=20)
+    art_direction: IntentArtDirection
+    warnings: list[str] = Field(default_factory=list, max_length=20)
+
+
 class AIBlockSlotCopyRequest(AIDraftGenerationRequest):
     block_id: str = Field(min_length=1, max_length=128)
 

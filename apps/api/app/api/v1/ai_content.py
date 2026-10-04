@@ -31,6 +31,7 @@ from app.schemas.ai import (
 from app.services.ai_data_policy import public_fact_rows, safe_provider_context
 from app.services.ai_secrets import decrypt_provider_key
 from app.services.audit import append_audit
+from app.services.design_profiles import design_snapshot, resolve_design_profile, theme_from_profile
 from app.services.generation import create_page_draft
 from app.services.managed_prompts import active_prompt
 from fastapi import APIRouter, Depends, HTTPException
@@ -43,6 +44,37 @@ router = APIRouter()
 
 def _hash_json(value: dict[str, Any]) -> str:
     return sha256_hex(json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":")))
+
+
+async def _create_design_bound_draft(
+    db: AsyncSession,
+    *,
+    project: Any,
+    plan: Any,
+    facts: ProjectFactRevision,
+) -> tuple[dict, dict, str]:
+    resolved = await resolve_design_profile(
+        db, tenant_id=project.tenant_id, project_id=project.id
+    )
+    if (
+        resolved.effective_profile
+        and plan.kit_key not in resolved.effective_profile.layout.allowed_kits
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="PagePlan kit is not allowed by the approved design profile",
+        )
+    return create_page_draft(
+        project=project,
+        plan=plan,
+        facts=facts,
+        design=design_snapshot(resolved),
+        theme=(
+            theme_from_profile(resolved.effective_profile)
+            if resolved.effective_profile
+            else None
+        ),
+    )
 
 
 def _validate_page_copy(value: dict[str, Any], fact_keys: set[str]) -> dict[str, Any]:
@@ -162,7 +194,9 @@ async def _prepare_draft_context(
     if observed_at.tzinfo is None or age.days > 30 or age.total_seconds() < -3600:
         raise HTTPException(status_code=409, detail={"code": "model_pricing_stale"})
 
-    manifest, deterministic_snapshot, _ = create_page_draft(project=project, plan=plan, facts=facts)
+    manifest, deterministic_snapshot, _ = await _create_design_bound_draft(
+        db, project=project, plan=plan, facts=facts
+    )
     snapshot = {
         "project": {"name": project.name, "locale": project.locale, "niche": project.niche},
         "approved_page_plan": {
@@ -582,7 +616,9 @@ async def create_draft_from_seo_brief(
         keyword_ids={item["keyword_id"] for item in (plan.keyword_snapshot or {}).get("items", [])},
         fact_keys={row["fact_key"] for row in public_fact_rows(facts.facts or {})},
     )
-    manifest, input_snapshot, _ = create_page_draft(project=project, plan=plan, facts=facts)
+    manifest, input_snapshot, _ = await _create_design_bound_draft(
+        db, project=project, plan=plan, facts=facts
+    )
     manifest = _apply_approved_seo_brief(manifest, brief)
     latest = (
         await db.execute(
@@ -1293,7 +1329,9 @@ async def create_draft_from_block_slot_proposal(
         raise HTTPException(
             status_code=409, detail="Block slot proposal is no longer valid"
         ) from exc
-    manifest, input_snapshot, _ = create_page_draft(project=project, plan=plan, facts=facts)
+    manifest, input_snapshot, _ = await _create_design_bound_draft(
+        db, project=project, plan=plan, facts=facts
+    )
     block_slot_values = dict(manifest.get("block_slot_values") or {})
     block_slot_values[block_id] = output["slots"]
     manifest["block_slot_values"] = block_slot_values

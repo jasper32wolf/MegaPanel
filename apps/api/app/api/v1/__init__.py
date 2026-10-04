@@ -8,9 +8,11 @@ from app.api.v1 import (
     blocks,
     bulk,
     competitors,
+    design_profiles,
     domains,
     geo,
     health,
+    intent_generation,
     keywords,
     lead_routing,
     leads,
@@ -45,10 +47,12 @@ api_router.include_router(lead_routing.router, prefix="/projects", tags=["lead-r
 api_router.include_router(panel.router, prefix="/panel", tags=["panel"])
 api_router.include_router(projects.router, prefix="/projects", tags=["projects"])
 api_router.include_router(project_families.router, prefix="/projects", tags=["project-families"])
+api_router.include_router(design_profiles.router, prefix="/projects", tags=["design-profiles"])
 api_router.include_router(semantic.router, prefix="/projects", tags=["semantic"])
 api_router.include_router(semantic_sources.router, prefix="/projects", tags=["semantic-sources"])
 api_router.include_router(site_structure.router, prefix="/projects", tags=["site-structure"])
 api_router.include_router(ai_content.router, prefix="/projects", tags=["ai-content"])
+api_router.include_router(intent_generation.router, prefix="/projects", tags=["intent-generation"])
 api_router.include_router(system.router, prefix="/system", tags=["system"])
 api_router.include_router(ai_workspace.router, prefix="/ai", tags=["ai-workspace"])
 api_router.include_router(prompts.router, prefix="/ai/prompts", tags=["ai-prompts"])

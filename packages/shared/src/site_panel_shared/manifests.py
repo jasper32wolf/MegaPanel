@@ -41,6 +41,17 @@ class PageMedia(BaseModel):
     alt: str = Field(min_length=1, max_length=255)
 
 
+class DesignSnapshot(BaseModel):
+    """Resolved reviewed visual policy frozen with a page or site artifact."""
+
+    profile_revision_id: UUID | None = None
+    profile_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    profile_scope: str | None = Field(default=None, pattern=r"^(family|project)$")
+    layout_variant: str | None = Field(default=None, max_length=64)
+    tokens: dict[str, str] = Field(default_factory=dict, max_length=32)
+    art_direction: dict[str, Any] = Field(default_factory=dict, max_length=16)
+
+
 class PageManifest(BaseModel):
     slug: str
     title_template: str
@@ -58,6 +69,7 @@ class PageManifest(BaseModel):
     media: list[PageMedia] = Field(default_factory=list, max_length=12)
     block_media: dict[str, PageMedia] = Field(default_factory=dict, max_length=12)
     schema_org: dict[str, Any] = Field(default_factory=dict)
+    design: DesignSnapshot | None = None
     seed: int = 0
 
     @model_validator(mode="after")
@@ -84,6 +96,7 @@ class SiteManifest(BaseModel):
     domain: str
     locale: str = "ru"
     css_vars: dict[str, str] = Field(default_factory=dict)
+    design: DesignSnapshot | None = None
     pages: list[PageManifest] = Field(default_factory=list)
     legal: dict[str, Any] = Field(default_factory=dict)
     contacts: dict[str, Any] = Field(default_factory=dict)

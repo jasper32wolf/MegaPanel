@@ -70,6 +70,11 @@ const ProjectCityProjectsPage = lazy(() =>
     ({ ProjectCityProjectsPage: Page }) => ({ default: Page }),
   ),
 );
+const ProjectDesignPage = lazy(() =>
+  import("./pages/project/design").then(({ ProjectDesignPage: Page }) => ({
+    default: Page,
+  })),
+);
 const ProjectFactsPage = lazy(() =>
   import("./pages/project/facts").then(({ ProjectFactsPage: Page }) => ({
     default: Page,
@@ -169,6 +174,7 @@ export default function App() {
                   {/* Keep the root as the compatibility composed workflow; section links are additive deep links. */}
                   <Route path="/projects/:projectId" element={<ProjectWorkspacePage />} />
                   <Route path="/projects/:projectId/overview" element={<ProjectOverviewPage />} />
+                  <Route path="/projects/:projectId/design" element={<ProjectDesignPage />} />
                   <Route path="/projects/:projectId/facts" element={<ProjectFactsPage />} />
                   <Route path="/projects/:projectId/pages" element={<ProjectPagesPage />} />
                   <Route path="/projects/:projectId/releases" element={<ProjectReleasesPage />} />

@@ -92,15 +92,17 @@ The legacy standalone `apps/worker` package was removed: the only supported work
 2. Добавьте и подтвердите facts бизнеса.
 3. Свяжите импортированные keywords и validated geo places с проектом.
 4. При необходимости поставьте в очередь ограниченный Bukvarix HTTPS public-free preview, просмотрите результаты и явно импортируйте только выбранные фразы с provenance; URL, endpoint и personal API key не вводятся.
-5. Создайте PagePlan и вручную утвердите его.
-6. Получите deterministic PageDraft и QA verdict.
-7. При `warn` внесите audit override с причиной; `block` исправьте и создайте новый candidate.
-8. Примените approved draft в manifest — без build, Caddy или публикации.
-9. Поставьте candidate в очередь: snapshot фиксируется до worker, а completion не публикует сайт и не запускает IndexNow.
-10. В Releases дождитесь ready, посмотрите authenticated private preview и выполните legal review.
-11. Проверьте DNS и явно опубликуйте выбранный build.
-12. При необходимости выполните typed rollback только на ранее опубликованный immutable build.
-13. Записывайте business outcome лида вручную; он не изменяет content или SEO автоматически.
+5. Создайте и утвердите versioned design profile: он задаёт разрешённые kit, tokens, art direction и family→city inheritance, но не меняет существующий release.
+6. Создайте PagePlan и вручную утвердите его.
+7. Получите deterministic или approval-gated intent proposal/PageDraft; AI возвращает только typed visible text и рекомендации по visual art direction, а не HTML/CSS, медиа или публикацию.
+8. Запустите QA и получите verdict.
+9. При `warn` внесите audit override с причиной; `block` исправьте и создайте новый candidate.
+10. Примените approved draft в manifest — без build, Caddy или публикации.
+11. Поставьте candidate в очередь: snapshot фиксируется до worker, а completion не публикует сайт и не запускает IndexNow.
+12. В Releases дождитесь ready, посмотрите authenticated private preview и выполните legal review.
+13. Проверьте DNS и явно опубликуйте выбранный build.
+14. При необходимости выполните typed rollback только на ранее опубликованный immutable build.
+15. Записывайте business outcome лида вручную; он не изменяет content или SEO автоматически.
 
 Подробное фактическое покрытие и непроверенные runtime-гейты: [docs/ХОД-РАБОТ.md](./docs/ХОД-РАБОТ.md).
 

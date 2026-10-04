@@ -6,6 +6,7 @@ from uuid import UUID
 from app.models.project import PagePlan, Project, ProjectFactRevision
 from app.services.block_library import instantiate_kit_for_site
 from app.services.claim_slots import resolve_claim_slot_bindings
+from site_panel_blocks.schema import ThemeProfile
 from site_panel_shared.manifests import PageManifest
 
 GENERATOR_VERSION = "deterministic-v1"
@@ -42,6 +43,8 @@ def create_page_draft(
     project: Project,
     plan: PagePlan,
     facts: ProjectFactRevision,
+    design: dict | None = None,
+    theme: ThemeProfile | None = None,
 ) -> tuple[dict, dict, str]:
     fact_values = facts.facts or {}
     service = _service_from_facts(fact_values)
@@ -51,6 +54,7 @@ def create_page_draft(
         plan.kit_key,
         str(project.id),
         service=service or "Услуги",
+        theme=theme,
     )
     selected_block_ids = (getattr(plan, "block_selection", None) or {}).get("blocks")
     if selected_block_ids is not None:
@@ -105,6 +109,7 @@ def create_page_draft(
         unique_core=claim_unique_core
         or commercial_copy
         or str(fact_values.get("unique_core") or ""),
+        design=design,
         seed=plan.version,
     )
     input_snapshot = {
@@ -126,10 +131,12 @@ def create_page_draft(
             for binding in claim_bindings
         ],
         "commercial_fact_key": commercial_fact_key,
+        "design": design or {},
     }
     generator_meta = {
         "generator_version": GENERATOR_VERSION,
         "kit": kit_meta,
+        "design_profile_hash": (design or {}).get("profile_hash"),
         "title_hint": title,
         "tokens": 0,
         "cost_usd": 0,

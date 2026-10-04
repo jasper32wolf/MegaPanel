@@ -3,6 +3,7 @@ import { Link, NavLink } from "react-router-dom";
 
 const sections = [
   ["overview", "Overview"],
+  ["design", "Дизайн"],
   ["facts", "Facts"],
   ["pages", "Pages"],
   ["releases", "Releases"],

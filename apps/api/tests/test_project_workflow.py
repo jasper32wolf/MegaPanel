@@ -20,6 +20,7 @@ from app.api.v1.projects import (
     _draft_manifest_hash,
     _lead_routing_publish_blockers,
     _manifest_asset_usage,
+    _manifest_media_compliance_blockers,
     _project_site_or_409,
     _public_fact_values,
     _reconcile_site_page_projection,
@@ -54,6 +55,60 @@ from app.services.qa import run_page_qa
 from fastapi import HTTPException
 from pydantic import ValidationError
 from site_panel_shared.manifests import PageManifest, SiteManifest
+
+
+class MediaComplianceDatabase:
+    def __init__(self, assets: list[object]):
+        self.assets = assets
+
+    async def execute(self, _: object) -> object:
+        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: self.assets))
+
+
+@pytest.mark.asyncio
+async def test_media_compliance_blocks_expired_asset_in_an_immutable_manifest():
+    asset_id = uuid4()
+    manifest = SiteManifest.model_validate(
+        {
+            "site_id": uuid4(),
+            "tenant_id": uuid4(),
+            "domain": "example.test",
+            "pages": [
+                {
+                    "slug": "/repair",
+                    "title_template": "Ремонт",
+                    "h1_template": "Ремонт",
+                    "service": "Ремонт",
+                    "media": [
+                        {
+                            "asset_id": asset_id,
+                            "stored_sha256": "a" * 64,
+                            "alt": "Диагностика окна",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    expired = SimpleNamespace(
+        id=asset_id,
+        meta={
+            "provenance": {
+                "kind": "manual_upload",
+                "rights_confirmed": True,
+                "license_expires_at": "2000-01-01",
+            },
+            "hashes": {"stored_sha256": "a" * 64},
+        },
+    )
+
+    blockers = await _manifest_media_compliance_blockers(
+        MediaComplianceDatabase([expired]),
+        manifest=manifest,
+        tenant_id=manifest.tenant_id,
+    )
+
+    assert blockers and "unavailable" in blockers[0]
 
 
 def _private_lead_email_migration():
