@@ -80,10 +80,7 @@ test("Букварикс: HTTPS preview становится импортом т
   });
   await mockAuth(page);
 
-  await page.evaluate((nextPath) => {
-    window.history.pushState({}, "", nextPath);
-    window.dispatchEvent(new PopStateEvent("popstate"));
-  }, `/projects/${projectId}`);
+  await page.goto(`/projects/${projectId}`);
 
   const seed = page.getByLabel("Seed Букварикс: ремонт окон");
   await expect(seed).toBeVisible();
