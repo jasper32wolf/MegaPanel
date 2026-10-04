@@ -224,13 +224,35 @@ test("оператор создаёт и готовит candidate без пуб�
   const structureLink = page.getByRole("link", { name: "Структура", exact: true });
   const structureUrl = await structureLink.getAttribute("href");
   expect(structureUrl).toMatch(/^\/projects\/[0-9a-f-]+\/site-structure$/);
-  const structureCollectionsResponse = page.waitForResponse((response) =>
-    response.request().method() === "GET" &&
-    /\/projects\/[0-9a-f-]+\/semantic-collections$/.test(new URL(response.url()).pathname),
-  );
+  const structureLoadResponses = Promise.all([
+    page.waitForResponse((response) =>
+      response.request().method() === "GET" &&
+      /\/projects\/[0-9a-f-]+\/semantic-collections$/.test(new URL(response.url()).pathname),
+    ),
+    page.waitForResponse((response) =>
+      response.request().method() === "GET" &&
+      /\/projects\/[0-9a-f-]+\/site-structure\/revisions$/.test(new URL(response.url()).pathname),
+    ),
+    page.waitForResponse((response) =>
+      response.request().method() === "GET" && new URL(response.url()).pathname === "/api/v1/blocks/kits",
+    ),
+    page.waitForResponse((response) =>
+      response.request().method() === "GET" &&
+      /\/api\/v1\/ai\/runs$/.test(new URL(response.url()).pathname),
+    ),
+    page.waitForResponse((response) =>
+      response.request().method() === "GET" &&
+      /\/competitors\/projects\/[0-9a-f-]+\/evidence$/.test(new URL(response.url()).pathname),
+    ),
+    page.waitForResponse((response) =>
+      response.request().method() === "GET" &&
+      /\/projects\/[0-9a-f-]+\/city-projects$/.test(new URL(response.url()).pathname),
+    ),
+  ]);
   await page.goto(structureUrl!);
-  const structureCollections = await structureCollectionsResponse;
+  const [structureCollections, ...secondaryStructureResponses] = await structureLoadResponses;
   expect(structureCollections.ok()).toBe(true);
+  expect(secondaryStructureResponses.every((response) => response.ok())).toBe(true);
   const structureCollectionRows = (await structureCollections.json()) as { state: string }[];
   expect(structureCollectionRows.some((collection) => collection.state === "approved")).toBe(true);
   await expect(page).toHaveURL(new RegExp(`${structureUrl}$`));
