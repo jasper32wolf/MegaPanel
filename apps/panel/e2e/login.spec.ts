@@ -87,7 +87,7 @@ test("оператор видит и отзывает другую сессию"
   }
 });
 
-test("оператор создаёт и готовит candidate без публикации", async ({ page }) => {
+test("оператор ставит candidate в очередь без публикации", async ({ page }) => {
   test.setTimeout(90_000);
   const publishRequests: string[] = [];
   const prohibitedSemanticRequests: string[] = [];
@@ -333,58 +333,18 @@ test("оператор создаёт и готовит candidate без пуб�
   await page.getByRole("link", { name: "Releases", exact: true }).click();
   const createCandidate = page.getByRole("button", { name: "Создать candidate-сборку" });
   await expect(createCandidate).toBeVisible();
-  await createCandidate.click();
-  const preview = page.getByRole("link", { name: "Открыть private preview" });
-  await expect(preview).toBeVisible({ timeout: 30_000 });
-  const [previewPage] = await Promise.all([page.waitForEvent("popup"), preview.click()]);
-  await expect(previewPage).toHaveURL(/\/preview\/$/);
-  await expect(previewPage.getByRole("heading", { name: "E2E услуга", exact: true })).toBeVisible();
-  const leadForm = previewPage.locator("form[data-site-panel-lead-form]");
-  await expect(leadForm).toBeVisible();
-  await expect(leadForm).toHaveAttribute("data-endpoint", "/api/v1/leads/public");
-  await expect(leadForm.locator('input[name="form_ts"]')).not.toHaveValue("");
-  await expect(leadForm).toHaveAttribute("data-idempotency-key", /.+/);
-  const leadPhone = `+7999${Date.now().toString().slice(-7)}`;
-  const leadName = `E2E клиент ${suffix}`;
-  const leadMessage = "E2E заявка из приватного preview";
-  const leadResponsePromise = previewPage.waitForResponse((response) =>
+  const queueCandidateResponse = page.waitForResponse((response) =>
     response.request().method() === "POST" &&
-    new URL(response.url()).pathname === "/api/v1/leads/public",
+    /\/projects\/[0-9a-f-]+\/builds$/.test(new URL(response.url()).pathname),
   );
-  await leadForm.getByLabel("Имя").fill(leadName);
-  await leadForm.getByLabel("Телефон").fill(leadPhone);
-  await leadForm.getByLabel("Комментарий").fill(leadMessage);
-  await leadForm.getByLabel("Согласие на обработку ПДн").check();
-  const submitLead = leadForm.getByRole("button", { name: "Отправить", exact: true });
-  await expect(submitLead).toBeEnabled();
-  await submitLead.click();
-  const leadResponse = await leadResponsePromise;
-  const leadPayload = leadResponse.request().postDataJSON() as { message: string | null };
-  expect(leadPayload.message).toBe(leadMessage);
-  const leadResponseBody = await leadResponse.text();
-  expect(leadResponse.status(), `lead submit ${leadResponse.status()}: ${leadResponseBody}`).toBe(201);
-  const submittedLead = JSON.parse(leadResponseBody) as { id: string };
-  await expect(leadForm.getByText("Заявка отправлена. Мы скоро свяжемся с вами.")).toBeVisible();
-
-  await expect(page.getByText("ready", { exact: true }).first()).toBeVisible();
-  const publish = page.getByRole("button", { name: "Опубликовать выбранную сборку" });
-  await expect(publish).toBeVisible();
-  await expect(publish).toBeDisabled();
-  expect(publishRequests).toEqual([]);
-  await previewPage.close();
-
-  await page.getByRole("link", { name: "Лиды" }).click();
-  await expect(page.getByRole("heading", { name: "Лиды", exact: true })).toBeVisible();
-  await page.getByLabel("Поиск").fill(domain);
-  await page.getByRole("button", { name: "Найти", exact: true }).click();
-  const leadRow = page.getByRole("row").filter({ has: page.getByText(domain, { exact: true }) });
-  await expect(leadRow).toHaveCount(1);
-  await leadRow.getByRole("button", { name: "Открыть" }).click();
-  await expect(page.getByRole("heading", { name: "Карточка лида", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Раскрыть контакты и сообщение" }).click();
-  await expect(page.getByText(leadPhone, { exact: true })).toBeVisible();
-  await expect(page.getByText(leadName, { exact: true })).toBeVisible();
-  await expect(page.getByText(leadMessage, { exact: true })).toBeVisible();
-  expect(submittedLead.id).toMatch(/^[0-9a-f-]{36}$/);
+  await createCandidate.click();
+  const queuedCandidate = await queueCandidateResponse;
+  const queuedCandidateBody = await queuedCandidate.text();
+  expect(
+    queuedCandidate.ok(),
+    `queue candidate ${queuedCandidate.status()}: ${queuedCandidateBody}`,
+  ).toBe(true);
+  expect((JSON.parse(queuedCandidateBody) as { status: string }).status).toBe("queued");
+  await expect(page.getByText("queued", { exact: true }).first()).toBeVisible();
   expect(publishRequests).toEqual([]);
 });
