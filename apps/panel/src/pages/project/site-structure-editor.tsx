@@ -93,11 +93,18 @@ export function SiteStructureEditor({ projectId, token, revision, collections, e
 
   useEffect(() => {
     const nextPages = revision?.structure.pages || [defaultPage()];
-    setSemanticCollectionId(revision?.semantic_collection_id || collections[0]?.id || "");
     setEvidenceIds(revision?.evidence_ids || []);
     setPages(nextPages);
     setOutlines(Object.fromEntries(nextPages.map((page) => [page.key, outlineText(page)])));
-  }, [revision?.id, revision?.structure_hash, collections]);
+  }, [revision?.id, revision?.structure_hash]);
+
+  useEffect(() => {
+    setSemanticCollectionId((current) => {
+      if (revision?.semantic_collection_id) return revision.semantic_collection_id;
+      if (current && collections.some((collection) => collection.id === current)) return current;
+      return collections[0]?.id || "";
+    });
+  }, [revision?.semantic_collection_id, collections]);
 
   const activeKits = useMemo(() => new Map(kits.map((kit) => [kit.key, kit])), [kits]);
   const isEditing = Boolean(revision);
