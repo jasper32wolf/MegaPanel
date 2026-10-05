@@ -210,7 +210,7 @@ test("оператор ставит candidate в очередь без публ�
 
   await page.getByRole("button", { name: "Создать draft collection из выбранных ключей и географии" }).click();
   await expect(page.getByText("Semantic collection создана как draft.")).toBeVisible();
-  await page.getByRole("button", { name: "На review", exact: true }).click();
+  await page.getByRole("button", { name: "На проверку", exact: true }).click();
   const approveCollectionResponse = page.waitForResponse((response) =>
     response.request().method() === "POST" &&
     /\/semantic-collections\/[^/]+\/approve$/.test(new URL(response.url()).pathname),
