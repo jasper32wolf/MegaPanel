@@ -28,6 +28,7 @@ from app.api.v1 import (
     site_structure,
     sites,
     system,
+    telemetry,
 )
 from fastapi import APIRouter
 
@@ -59,3 +60,4 @@ api_router.include_router(system.router, prefix="/system", tags=["system"])
 api_router.include_router(ai_workspace.router, prefix="/ai", tags=["ai-workspace"])
 api_router.include_router(prompts.router, prefix="/ai/prompts", tags=["ai-prompts"])
 api_router.include_router(ai_providers.router, prefix="/ai/providers", tags=["ai-providers"])
+api_router.include_router(telemetry.router, prefix="/telemetry", tags=["telemetry"])

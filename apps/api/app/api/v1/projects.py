@@ -80,6 +80,7 @@ from app.services.release_gate import (
 )
 from app.services.site_build_metadata import validate_page_metadata_snapshot
 from app.services.site_build_queue import append_site_build_event
+from app.services.telemetry import telemetry_token
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
 from site_panel_blocks import list_kits
@@ -2778,6 +2779,10 @@ async def _freeze_candidate_build_input(
         "context": {
             "manifest_context": manifest.context or {},
             "phone": str(contacts.get("phone") or ""),
+            "telemetry_token": telemetry_token(
+                site_id=site.id,
+                domain=str(getattr(site, "domain", None) or project.domain or manifest.domain),
+            ),
         },
         "index_states": index_states,
         "source_hashes": source_hashes,
@@ -2879,6 +2884,7 @@ async def run_queued_candidate_build(db: AsyncSession, build_id: UUID) -> dict:
             # The token is never exposed from the frozen snapshot or list API.
             "lead_token": site.lead_token,
             "lead_api_url": "/api/v1/leads/public",
+            "telemetry_token": str(frozen_context.get("telemetry_token") or ""),
         }
         started = time.perf_counter()
         result = await asyncio.to_thread(

@@ -25,6 +25,7 @@ type Coverage = { selected: number; covered: number; uncovered: { keyword_id: st
 type IndexPromotion = { id: string; reason: string; decided_at: string | null };
 type IndexPromotionCandidate = { slug: string; source_hash: string; qa_verdict: string | null; status: "approved" | "eligible" | "stale"; promotion: IndexPromotion | null };
 type IndexSchedule = { id: string; state: "draft" | "review" | "active" | "paused" | "completed" | "cancelled"; reason: string; starts_at: string; interval_hours: number; batch_size: number; approved_at: string | null; paused_at: string | null; completed_at: string | null; items: { id: string; slug: string; source_hash: string; batch_number: number; planned_at: string; state: string; candidate_build_id: string | null; stale_reason: string | null }[] };
+type TelemetrySummary = { site_id: string; days: number; privacy: { consent_required: boolean; ip_stored: boolean; low_sample_threshold: number }; pages: { path: string; page_views: number; consented_sessions: number; low_sample: boolean; traffic_state: "not_enough_data" | "low_traffic" | "observed" }[] };
 type AIProvider = { id: string; label: string; provider_id: string; enabled: boolean };
 type AIDraftQuote = { provider_id: string; model_id: string; estimated_cost_usd: number; max_cost_usd: number; input_snapshot_hash: string; pricing_source: string; pricing_observed_at: string };
 type AIRunBrief = { id: string; action: string; status: string; output: { brief?: Record<string, unknown>; page_draft_id?: string; slot_copy?: BlockSlotCopy }; error_code: string | null; prompt_hash: string; cost_usd: number | null };
@@ -86,6 +87,7 @@ export function ProjectWorkspacePage() {
   const [indexScheduleInterval, setIndexScheduleInterval] = useState("24");
   const [indexScheduleBatchSize, setIndexScheduleBatchSize] = useState("1");
   const [indexScheduleConfirmed, setIndexScheduleConfirmed] = useState(false);
+  const [telemetrySummary, setTelemetrySummary] = useState<TelemetrySummary | null>(null);
   const [aiProviders, setAiProviders] = useState<AIProvider[]>([]);
   const [aiProviderId, setAiProviderId] = useState("");
   const [aiModel, setAiModel] = useState("");
@@ -221,10 +223,26 @@ export function ProjectWorkspacePage() {
     setBukvarixRuns(nextBukvarixRuns);
     setSemanticSourceRuns(nextSourceRuns);
     if (nextProject.site_id) {
-      const routing = await api<{ items: LeadRoutingPolicy[] }>(`/api/v1/projects/${projectId}/lead-routing`, {}, token);
+      const routing = await api<{ items: LeadRoutingPolicy[] }>(
+        `/api/v1/projects/${projectId}/lead-routing`,
+        {},
+        token,
+      );
       setRoutingPolicies(routing.items);
+      try {
+        setTelemetrySummary(
+          await api<TelemetrySummary>(
+            `/api/v1/telemetry/sites/${nextProject.site_id}/summary`,
+            {},
+            token,
+          ),
+        );
+      } catch {
+        setTelemetrySummary(null);
+      }
     } else {
       setRoutingPolicies([]);
+      setTelemetrySummary(null);
     }
   }
 
@@ -1129,7 +1147,11 @@ export function ProjectWorkspacePage() {
         </div> : null}
         {indexSchedules.length > 0 ? <DataTable headers={["Старт", "Партии", "Статус", "Действия"]}>{indexSchedules.map((schedule) => <tr key={schedule.id}><td>{new Date(schedule.starts_at).toLocaleString()}<p className="muted">каждые {schedule.interval_hours} ч.</p></td><td>{schedule.items.map((item) => <p key={item.id}>#{item.batch_number} · {item.slug} · {item.state}{item.stale_reason ? `: ${item.stale_reason}` : ""}</p>)}</td><td><StatusPill tone={tone(schedule.state)}>{schedule.state}</StatusPill></td><td className="row">{schedule.state === "draft" ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void decideIndexSchedule(schedule, "submit-review")}>На проверку</button> : null}{schedule.state === "review" ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void decideIndexSchedule(schedule, "approve")}>Запустить график</button> : null}{schedule.state === "active" ? <><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void decideIndexSchedule(schedule, "pause")}>Остановить</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void decideIndexSchedule(schedule, "cancel")}>Отменить</button></> : null}</td></tr>)}</DataTable> : null}
       </Surface>
-      <Surface title="7. Candidate-сборки, preview и публикация">
+      <Surface title="7. Статистика посещений">
+        <p className="muted">Показываются только first-party события после согласия посетителя на аналитику. IP-адреса, телефон, email и текст заявок в статистику не попадают. Маленькая выборка помечается как недостаточная для выводов.</p>
+        {!project.site_id ? <EmptyState title="Статистика появится после создания сайта" /> : telemetrySummary === null ? <p className="muted">Статистика пока недоступна или на сайте ещё нет согласованных событий.</p> : telemetrySummary.pages.length === 0 ? <EmptyState title="Пока нет согласованных посещений" hint="После публикации сайта статистика появится только у посетителей, которые разрешили аналитику." /> : <DataTable headers={["Страница", "Просмотры", "Согласованные сессии", "Оценка"]}>{telemetrySummary.pages.map((item) => <tr key={item.path}><td>{item.path}</td><td>{item.page_views}</td><td>{item.consented_sessions}</td><td><StatusPill tone={item.traffic_state === "observed" ? "ok" : "warn"}>{item.traffic_state === "not_enough_data" ? "мало данных" : item.traffic_state === "low_traffic" ? "низкая посещаемость" : "посещаемость есть"}</StatusPill></td></tr>)}</DataTable>}
+      </Surface>
+      <Surface title="8. Candidate-сборки, preview и публикация">
         <p className="muted">Candidate создаётся из зафиксированного snapshot в отдельной durable queue. Private preview, legal review, публикация и безопасный rollback доступны только в центре Releases; worker никогда не публикует сайт и не запускает IndexNow.</p>
         <Link className="btn" to={`/projects/${projectId}/releases`}>Открыть центр candidate-сборок</Link>
       </Surface>

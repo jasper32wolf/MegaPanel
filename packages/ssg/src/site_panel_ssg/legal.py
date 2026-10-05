@@ -62,8 +62,10 @@ COOKIE_BANNER_JS = (
     "background:#1c1917;color:#fafaf9;z-index:9999;font:14px sans-serif';"
     'b.innerHTML=\'Мы используем cookie. <button id="sp-ok">Принять необходимые</button> '
     '<button id="sp-all">Принять все</button>\';document.body.appendChild(b);'
-    "function save(a){var c={necessary:true,analytics:!!a,marketing:!!a};"
-    "localStorage.setItem('sp_consent',JSON.stringify(c));window.__spConsent=c;b.remove();}"
+    "function save(a){if(navigator.globalPrivacyControl||navigator.doNotTrack==='1')a=false;"
+    "var c={necessary:true,analytics:!!a,marketing:!!a};"
+    "localStorage.setItem('sp_consent',JSON.stringify(c));window.__spConsent=c;b.remove();"
+    "document.dispatchEvent(new Event('sp:consent'));}"
     "document.getElementById('sp-ok').onclick=function(){save(false)};"
     "document.getElementById('sp-all').onclick=function(){save(true)};})();"
 )

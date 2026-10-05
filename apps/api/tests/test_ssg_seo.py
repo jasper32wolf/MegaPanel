@@ -76,6 +76,29 @@ def test_russian_phone_has_a_readable_display_and_canonical_schema_value(tmp_pat
     assert '"telephone": "+78009001234"' in html
 
 
+def test_ssg_writes_the_consent_gated_telemetry_asset_only_when_configured(tmp_path: Path):
+    site = SiteManifest(
+        site_id=uuid4(),
+        tenant_id=uuid4(),
+        domain="example.test",
+        pages=[
+            PageManifest(
+                slug="/",
+                title_template="Главная",
+                h1_template="Главная",
+                service="Услуги",
+            )
+        ],
+    )
+    SiteBuilder(tmp_path).build(site, {"telemetry_token": "telemetry-token"})
+    current = tmp_path / str(site.site_id) / "current"
+    html = (current / "index.html").read_text(encoding="utf-8")
+
+    assert "site-panel-telemetry.js" in html
+    assert 'data-telemetry-token="telemetry-token"' in html
+    assert (current / "site-panel-telemetry.js").exists()
+
+
 def test_phone_link_uses_e164_while_visible_copy_is_readable(tmp_path: Path):
     site = SiteManifest(
         site_id=uuid4(),

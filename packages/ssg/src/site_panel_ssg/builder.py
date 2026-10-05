@@ -103,6 +103,41 @@ LEAD_FORM_SCRIPT = """(() => {
 """
 
 
+TELEMETRY_SCRIPT = """(() => {
+  const script = document.currentScript;
+  const token = script?.getAttribute("data-telemetry-token");
+  const noTrack = navigator.globalPrivacyControl || navigator.doNotTrack === "1";
+  if (!token || noTrack) return;
+  const key = "sp_telemetry_session";
+  const session = () => {
+    let value = sessionStorage.getItem(key);
+    if (!value) {
+      value = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+      sessionStorage.setItem(key, value);
+    }
+    return value;
+  };
+  const send = (event) => {
+    if (!window.__spConsent?.analytics || !event) return;
+    fetch("/api/v1/telemetry/collect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      keepalive: true,
+      body: JSON.stringify({
+        token,
+        event,
+        path: location.pathname,
+        session_id: session(),
+        consent_analytics: true,
+      }),
+    }).catch(() => undefined);
+  };
+  document.addEventListener("sp:consent", () => send("page_view"));
+  if (window.__spConsent?.analytics) send("page_view");
+})();
+"""
+
+
 def is_thin(html: str) -> bool:
     import re
 
@@ -521,6 +556,14 @@ class SiteBuilder:
                 html = html.replace(
                     "</body>", '  <script src="cookie-banner.js" defer></script>\n</body>'
                 )
+                telemetry = str(ctx.get("telemetry_token") or "")
+                if telemetry:
+                    html = html.replace(
+                        "</body>",
+                        '  <script src="site-panel-telemetry.js" '
+                        f'data-telemetry-token="{escape(telemetry, quote=True)}" defer></script>\n'
+                        "</body>",
+                    )
                 schema = json.dumps(schema_org_jsonld(site, page, ctx), ensure_ascii=False).replace(
                     "</", "<\\/"
                 )
@@ -548,6 +591,10 @@ class SiteBuilder:
                 output.parent.mkdir(parents=True, exist_ok=True)
                 output.write_text(html, encoding="utf-8")
                 (output.parent / "cookie-banner.js").write_text(COOKIE_BANNER_JS, encoding="utf-8")
+                if telemetry:
+                    (output.parent / "site-panel-telemetry.js").write_text(
+                        TELEMETRY_SCRIPT, encoding="utf-8"
+                    )
                 if has_lead_form:
                     (output.parent / "site-panel-leads.js").write_text(
                         LEAD_FORM_SCRIPT, encoding="utf-8"
