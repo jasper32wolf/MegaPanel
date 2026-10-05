@@ -17,6 +17,7 @@ _RESERVED_SLOT_NAMES = {
     "modifier",
     "method",
     "phone",
+    "phone_href",
     "price",
     "lead_token",
     "lead_api_url",

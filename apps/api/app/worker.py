@@ -23,9 +23,11 @@ from app.services.bukvarix_queue import (
     run_bukvarix_keyword_run,
 )
 from app.services.competitor_crawl import run_competitor_crawl
+from app.services.index_schedule import prepare_due_index_schedule_batches
 from app.services.intent_generation import validate_intent_page_proposal
 from app.services.operations import auto_resolve_inactive_incidents
 from app.services.site_build_queue import (
+    available_candidate_build_slots,
     due_site_build_ids,
     enqueue_site_build,
     expire_stale_site_builds,
@@ -133,7 +135,8 @@ async def candidate_build_sweep_task(ctx: dict) -> dict:
     try:
         async with open_db_session() as session:
             recovered = await expire_stale_site_builds(session)
-            build_ids = await due_site_build_ids(session)
+            slots = await available_candidate_build_slots(session)
+            build_ids = await due_site_build_ids(session, limit=slots)
         enqueued = 0
         for build_id in build_ids:
             try:
@@ -147,6 +150,18 @@ async def candidate_build_sweep_task(ctx: dict) -> dict:
         return {"recovered": recovered, "queued": len(build_ids), "enqueued": enqueued}
     except Exception:  # noqa: BLE001
         logger.exception("candidate_build_sweep_failed")
+        return {"status": "failed", "error_code": "worker_sweep_failed"}
+
+
+async def index_schedule_sweep_task(ctx: dict) -> dict:
+    """Prepare at most one due index batch as a private candidate; never publish it."""
+    try:
+        async with open_db_session() as session:
+            prepared = await prepare_due_index_schedule_batches(session)
+        logger.info("index_schedule_sweep", prepared=len(prepared))
+        return {"prepared": prepared}
+    except Exception:  # noqa: BLE001
+        logger.exception("index_schedule_sweep_failed")
         return {"status": "failed", "error_code": "worker_sweep_failed"}
 
 
@@ -390,6 +405,7 @@ class WorkerSettings:
         bukvarix_keyword_sweep_task,
         candidate_build_task,
         candidate_build_sweep_task,
+        index_schedule_sweep_task,
         competitor_crawl_task,
         operational_incident_auto_resolve_task,
     ]
@@ -401,6 +417,7 @@ class WorkerSettings:
         ),
         cron(webhook_delivery_sweep_task, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}),
         cron(bukvarix_keyword_sweep_task, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}),
+        cron(index_schedule_sweep_task, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}),
         cron(candidate_build_sweep_task, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}),
         cron(
             operational_incident_auto_resolve_task,

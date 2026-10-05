@@ -4,6 +4,7 @@ from uuid import uuid4
 import pytest
 from site_panel_shared.manifests import BlockDef, PageManifest, SiteManifest
 from site_panel_ssg import SiteBuilder, is_thin, render_robots_txt, render_sitemap
+from site_panel_ssg.phone import format_phone_display, normalize_phone_e164
 
 
 def test_ssg_writes_seo_artifacts(tmp_path: Path):
@@ -37,6 +38,7 @@ def test_ssg_writes_seo_artifacts(tmp_path: Path):
     current = tmp_path / str(site.site_id) / "current"
     assert (current / "robots.txt").exists()
     assert (current / "sitemap.xml").exists()
+    assert (current / "sitemap" / "index.html").exists()
     assert (current / "index.html").exists()
     html = (current / "index.html").read_text(encoding="utf-8")
     assert "application/ld+json" in html
@@ -45,6 +47,62 @@ def test_ssg_writes_seo_artifacts(tmp_path: Path):
     assert (current / "privacy" / "index.html").exists()
     assert (current / "cookie-banner.js").exists()
     assert '<script src="cookie-banner.js" defer></script>' in html
+
+
+def test_russian_phone_has_a_readable_display_and_canonical_schema_value(tmp_path: Path):
+    assert normalize_phone_e164("8 (800) 900-12-34") == "+78009001234"
+    assert format_phone_display("+7 800 900 12 34") == "8(800)900-12-34"
+    assert format_phone_display("not a phone") == "not a phone"
+
+    site = SiteManifest(
+        site_id=uuid4(),
+        tenant_id=uuid4(),
+        domain="example.test",
+        contacts={"phone": "+7 800 900 12 34"},
+        pages=[
+            PageManifest(
+                slug="/",
+                title_template="Главная",
+                h1_template="Главная",
+                service="Услуги",
+                blocks=[BlockDef(type="hero", hash_class="blk-phone", html="<p>{phone}</p>")],
+            )
+        ],
+    )
+    SiteBuilder(tmp_path).build(site)
+    html = (tmp_path / str(site.site_id) / "current" / "index.html").read_text(encoding="utf-8")
+
+    assert "8(800)900-12-34" in html
+    assert '"telephone": "+78009001234"' in html
+
+
+def test_phone_link_uses_e164_while_visible_copy_is_readable(tmp_path: Path):
+    site = SiteManifest(
+        site_id=uuid4(),
+        tenant_id=uuid4(),
+        domain="example.test",
+        contacts={"phone": "+7 800 900 12 34"},
+        pages=[
+            PageManifest(
+                slug="/",
+                title_template="Главная",
+                h1_template="Главная",
+                service="Услуги",
+                blocks=[
+                    BlockDef(
+                        type="contacts",
+                        hash_class="blk-contacts",
+                        html='<a href="tel:{phone_href}">{phone}</a>',
+                    )
+                ],
+            )
+        ],
+    )
+    SiteBuilder(tmp_path).build(site)
+    html = (tmp_path / str(site.site_id) / "current" / "index.html").read_text(encoding="utf-8")
+
+    assert 'href="tel:+78009001234"' in html
+    assert ">8(800)900-12-34</a>" in html
 
 
 def test_thin_guard():
@@ -59,6 +117,37 @@ def test_robots_and_sitemap():
     sm = render_sitemap("ex.test", ["/", "/a/"])
     assert "ex.test" in sm
     assert "<urlset" in sm
+
+
+def test_html_sitemap_lists_only_index_eligible_pages(tmp_path: Path):
+    site = SiteManifest(
+        site_id=uuid4(),
+        tenant_id=uuid4(),
+        domain="example.test",
+        pages=[
+            PageManifest(
+                slug="/",
+                title_template="Главная",
+                h1_template="Главная",
+                service="Услуги",
+                index_state="indexed",
+            ),
+            PageManifest(
+                slug="/draft",
+                title_template="Черновик",
+                h1_template="Черновик",
+                service="Услуги",
+            ),
+        ],
+    )
+    SiteBuilder(tmp_path).build(site)
+    html = (
+        tmp_path / str(site.site_id) / "current" / "sitemap" / "index.html"
+    ).read_text(encoding="utf-8")
+
+    assert 'href="https://example.test/"' in html
+    assert "https://example.test/draft/" not in html
+    assert '<meta name="robots" content="noindex, follow">' in html
 
 
 def test_ssg_build_keeps_previous_release_for_rollback(tmp_path: Path):

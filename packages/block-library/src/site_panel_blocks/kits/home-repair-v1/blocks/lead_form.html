@@ -14,8 +14,9 @@
   <label>Комментарий <textarea name="message" rows="3"></textarea></label>
   <input class="sp-honeypot" type="text" name="website" value="" tabindex="-1" autocomplete="off" aria-hidden="true">
   <input type="hidden" name="form_ts" value="">
-  <label><input type="checkbox" name="consent" required> Согласие на обработку ПДн</label>
-  <button class="sp-btn" type="submit">Отправить</button>
+  <label><input type="checkbox" name="consent" required> Согласен(на) на обработку имени, телефона и сообщения для обратной связи</label>
+  <p class="sp-muted">Мы используем данные только для ответа на заявку. <a href="/privacy/">Политика обработки данных</a>.</p>
+  <button class="sp-btn" type="submit">Отправить заявку</button>
   <p class="sp-lead-status" aria-live="polite"></p>
-  <p class="sp-muted">Или позвоните: <a href="tel:{phone}">{phone}</a></p>
+  <p class="sp-muted">Или позвоните: <a href="tel:{phone_href}">{phone}</a></p>
 </form>

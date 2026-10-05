@@ -7,6 +7,9 @@ from typing import Any
 
 from site_panel_security import sanitize_html
 from site_panel_shared.manifests import PageManifest, SiteManifest
+from site_panel_shared.phone import normalize_phone_e164
+
+from site_panel_ssg.phone import format_phone_display
 
 _PLACEHOLDER = re.compile(r"\{([a-z0-9_]+)\}", re.IGNORECASE)
 _FORBIDDEN_CSS = re.compile(
@@ -45,6 +48,9 @@ def render_page(
         **(site.contacts or {}),
         **(context or {}),
     }
+    raw_phone = str(ctx.get("phone") or "")
+    ctx["phone"] = format_phone_display(raw_phone)
+    ctx["phone_href"] = normalize_phone_e164(raw_phone) or raw_phone.strip()
     title = escape(fill_slots(page.title_template, ctx))
     h1 = escape(fill_slots(page.h1_template, ctx))
     meta = escape(fill_slots(page.meta_description_template, ctx), quote=True)
@@ -126,6 +132,7 @@ def render_page(
     {h1_html}
     {unique_html}
     {body}
+    <footer><a href="/sitemap/">Карта сайта</a></footer>
   </main>
 </body>
 </html>

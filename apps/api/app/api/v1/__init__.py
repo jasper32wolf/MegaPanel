@@ -12,6 +12,7 @@ from app.api.v1 import (
     domains,
     geo,
     health,
+    index_schedules,
     intent_generation,
     keywords,
     lead_routing,
@@ -53,6 +54,7 @@ api_router.include_router(semantic_sources.router, prefix="/projects", tags=["se
 api_router.include_router(site_structure.router, prefix="/projects", tags=["site-structure"])
 api_router.include_router(ai_content.router, prefix="/projects", tags=["ai-content"])
 api_router.include_router(intent_generation.router, prefix="/projects", tags=["intent-generation"])
+api_router.include_router(index_schedules.router, prefix="/projects", tags=["index-schedules"])
 api_router.include_router(system.router, prefix="/system", tags=["system"])
 api_router.include_router(ai_workspace.router, prefix="/ai", tags=["ai-workspace"])
 api_router.include_router(prompts.router, prefix="/ai/prompts", tags=["ai-prompts"])

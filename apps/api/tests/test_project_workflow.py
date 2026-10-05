@@ -373,7 +373,6 @@ def test_materializing_candidate_does_not_mutate_active_site_page_projection(mon
     monkeypatch.setattr(projects, "_project_site_or_409", AsyncMock(return_value=site))
     monkeypatch.setattr(projects, "SiteBuilder", Builder)
     monkeypatch.setattr(projects, "append_site_build_event", AsyncMock())
-    monkeypatch.setattr(projects, "enqueue_site_build", AsyncMock())
     monkeypatch.setattr(projects, "append_audit", AsyncMock())
     auth = SimpleNamespace(user=SimpleNamespace(id=uuid4()))
     before = {
@@ -515,7 +514,6 @@ def test_materialized_build_snapshots_only_matched_index_promotion_evidence(monk
     monkeypatch.setattr(projects, "_project_site_or_409", AsyncMock(return_value=site))
     monkeypatch.setattr(projects, "SiteBuilder", Builder)
     monkeypatch.setattr(projects, "append_site_build_event", AsyncMock())
-    monkeypatch.setattr(projects, "enqueue_site_build", AsyncMock())
     monkeypatch.setattr(projects, "append_audit", AsyncMock())
 
     asyncio.run(

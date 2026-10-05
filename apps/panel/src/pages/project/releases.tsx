@@ -38,6 +38,8 @@ type Build = {
   failure_code: string | null;
   input_snapshot_hash: string | null;
   snapshot_version: number;
+  queue_priority: number;
+  not_before: string | null;
   created_at: string | null;
   started_at: string | null;
   completed_at: string | null;
@@ -93,6 +95,8 @@ export function ProjectReleasesPage() {
   const [evidenceRef, setEvidenceRef] = useState("");
   const [rejectionReason, setRejectionReason] = useState("");
   const [rejectionGuidance, setRejectionGuidance] = useState("");
+  const [queuePriority, setQueuePriority] = useState("50");
+  const [notBefore, setNotBefore] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -145,8 +149,18 @@ export function ProjectReleasesPage() {
   async function createCandidate() {
     await run(
       "build",
-      () => api(`/api/v1/projects/${projectId}/builds`, { method: "POST" }, token),
-      "Снимок зафиксирован и поставлен в очередь. Публикация и IndexNow не выполняются автоматически.",
+      () => api(
+        `/api/v1/projects/${projectId}/builds`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            queue_priority: Number(queuePriority),
+            not_before: notBefore ? new Date(notBefore).toISOString() : null,
+          }),
+        },
+        token,
+      ),
+      "Снимок зафиксирован. Очередь начнёт сборку в указанное время и не публикует сайт автоматически.",
     );
   }
 
@@ -270,8 +284,12 @@ export function ProjectReleasesPage() {
 
       <Surface title="Новый candidate">
         <p className="muted">
-          Перед постановкой сохраняется immutable snapshot контента, индексации и media hashes. Worker не публикует сайт и не запускает IndexNow.
+          Перед постановкой сохраняется неизменяемый снимок контента, индексации и файлов. Сборка не публикует сайт и не запускает IndexNow.
         </p>
+        <div className="detail-grid">
+          <label className="field">Важность сборки<select value={queuePriority} onChange={(event) => setQueuePriority(event.target.value)} disabled={busy !== null}><option value="80">Срочно</option><option value="50">Обычно</option><option value="20">Можно ночью</option></select><span className="muted">Влияет только на порядок работы очереди. Проверки, preview и публикация остаются отдельными шагами.</span></label>
+          <label className="field">Начать не раньше<input type="datetime-local" value={notBefore} onChange={(event) => setNotBefore(event.target.value)} disabled={busy !== null} /><span className="muted">Необязательно. Время указано для вашего компьютера.</span></label>
+        </div>
         <div className="row">
           <button className="btn btn-ghost" type="button" disabled={busy !== null || !project?.domain} onClick={() => void checkDomain()}>
             {busy === "domain-check" ? "Проверка DNS…" : "Проверить DNS"}
@@ -299,7 +317,8 @@ export function ProjectReleasesPage() {
                   </td>
                   <td>
                     <code>{build.build_hash?.slice(0, 16) || build.input_snapshot_hash?.slice(0, 16) || "—"}</code>
-                    <p className="muted">Попытка: {build.attempt_count}</p>
+                    <p className="muted">Попытка: {build.attempt_count} · важность: {build.queue_priority}</p>
+                    {build.not_before ? <p className="muted">Не раньше: {stamp(build.not_before)}</p> : null}
                   </td>
                   <td>
                     {build.is_active ? <StatusPill tone="ok">активна</StatusPill> : null}

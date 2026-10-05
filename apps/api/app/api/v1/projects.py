@@ -43,6 +43,7 @@ from app.schemas.workflow import (
     BuildLegalReviewIn,
     BuildPublishRequest,
     BuildRollbackRequest,
+    CandidateBuildRequest,
     FactRevisionCreate,
     PageDraftBlockMediaAttachIn,
     PageDraftDecision,
@@ -78,7 +79,7 @@ from app.services.release_gate import (
     store_release_gate,
 )
 from app.services.site_build_metadata import validate_page_metadata_snapshot
-from app.services.site_build_queue import append_site_build_event, enqueue_site_build
+from app.services.site_build_queue import append_site_build_event
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
 from site_panel_blocks import list_kits
@@ -2355,6 +2356,10 @@ async def list_project_builds(
             "failure_code": getattr(build, "failure_code", None),
             "input_snapshot_hash": getattr(build, "input_snapshot_hash", None),
             "snapshot_version": getattr(build, "snapshot_version", 0),
+            "queue_priority": getattr(build, "queue_priority", 50),
+            "not_before": (
+                build.not_before.isoformat() if getattr(build, "not_before", None) else None
+            ),
             "created_at": build.created_at.isoformat() if build.created_at else None,
             "started_at": (
                 build.started_at.isoformat() if getattr(build, "started_at", None) else None
@@ -2986,8 +2991,10 @@ async def materialize_project_build(
     project_id: UUID,
     auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor")),
     db: AsyncSession = Depends(get_db),
+    body: CandidateBuildRequest | None = None,
 ) -> dict:
-    """Freeze and queue a candidate. Building and publication never run in this request."""
+    """Freeze a candidate; the bounded worker scheduler decides when it can build."""
+    request = body or CandidateBuildRequest()
     project = await _project_or_404(db, project_id, auth)
     if not project.site_id:
         raise HTTPException(
@@ -3008,6 +3015,8 @@ async def materialize_project_build(
         manifest_snapshot=snapshot["manifest"],
         page_plan_ids=snapshot["page_plan_ids"],
         requested_by=auth.user.id,
+        queue_priority=request.queue_priority,
+        not_before=request.not_before,
         last_enqueued_at=now,
     )
     db.add(build)
@@ -3020,23 +3029,20 @@ async def materialize_project_build(
             "project_id": str(project.id),
             "build_id": str(build.id),
             "input_snapshot_hash": snapshot_hash,
+            "queue_priority": request.queue_priority,
+            "not_before": request.not_before.isoformat() if request.not_before else None,
         },
         tenant_id=project.tenant_id,
         actor_id=auth.user.id,
     )
     await db.commit()
 
-    try:
-        await enqueue_site_build(build.id)
-    except Exception:  # noqa: BLE001
-        # Redis is transport only. The durable job remains recoverable by the worker sweep.
-        await append_site_build_event(db, build=build, event_type="enqueue_deferred")
-        await db.commit()
-
     return {
         "id": str(build.id),
         "status": build.status,
         "input_snapshot_hash": snapshot_hash,
+        "queue_priority": build.queue_priority,
+        "not_before": build.not_before.isoformat() if build.not_before else None,
         "activated": False,
         "published": False,
     }
@@ -3073,6 +3079,7 @@ async def retry_project_build(
     build.completed_at = None
     build.lease_expires_at = None
     build.last_enqueued_at = datetime.now(UTC)
+    build.not_before = build.last_enqueued_at
     await append_site_build_event(db, build=build, event_type="retry_requested")
     await append_audit(
         db,
@@ -3082,11 +3089,6 @@ async def retry_project_build(
         actor_id=auth.user.id,
     )
     await db.commit()
-    try:
-        await enqueue_site_build(build.id)
-    except Exception:  # noqa: BLE001
-        await append_site_build_event(db, build=build, event_type="enqueue_deferred")
-        await db.commit()
     return {"id": str(build.id), "status": build.status, "retryable": False}
 
 

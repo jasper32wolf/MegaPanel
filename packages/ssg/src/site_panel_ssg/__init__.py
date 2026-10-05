@@ -4,6 +4,7 @@ from site_panel_ssg.builder import (
     BuildAsset,
     SiteBuilder,
     is_thin,
+    render_html_sitemap,
     render_robots_txt,
     render_sitemap,
 )
@@ -14,6 +15,7 @@ __all__ = [
     "BuildAsset",
     "SiteBuilder",
     "is_thin",
+    "render_html_sitemap",
     "render_page",
     "render_robots_txt",
     "render_sitemap",

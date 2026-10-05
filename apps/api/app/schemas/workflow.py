@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
+from site_panel_shared.phone import normalize_phone_e164
 
 ProjectStatus = Literal["draft", "active", "archived"]
 FactState = Literal["draft", "confirmed"]
@@ -44,6 +46,13 @@ class PublicContacts(BaseModel):
     phone: str | None = Field(default=None, min_length=5, max_length=64)
     address: str | None = Field(default=None, max_length=500)
     work_hours: str | None = Field(default=None, max_length=500)
+
+    @field_validator("phone")
+    @classmethod
+    def normalize_unambiguous_russian_phone(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return normalize_phone_e164(value) or value.strip()
 
 
 class LegalProfile(BaseModel):
@@ -346,6 +355,60 @@ class PageIndexPromotionIn(BaseModel):
     @classmethod
     def normalize_slug(cls, value: str) -> str:
         return normalize_page_plan_slug(value)
+
+
+class CandidateBuildRequest(BaseModel):
+    """Scheduling metadata only; a queued build is never a publication request."""
+
+    queue_priority: int = Field(default=50, ge=0, le=100)
+    not_before: datetime | None = None
+
+    @field_validator("not_before")
+    @classmethod
+    def require_bounded_aware_schedule(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("Build schedule must include a timezone")
+        value = value.astimezone(UTC)
+        if value > datetime.now(UTC) + timedelta(days=90):
+            raise ValueError("Build schedule cannot be more than 90 days ahead")
+        return value
+
+
+class IndexPromotionScheduleCreate(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    slugs: list[str] = Field(min_length=1, max_length=100)
+    reason: str = Field(min_length=10, max_length=2000)
+    starts_at: datetime
+    interval_hours: int = Field(default=24, ge=1, le=720)
+    batch_size: int = Field(default=1, ge=1, le=20)
+
+    @field_validator("slugs")
+    @classmethod
+    def normalize_unique_slugs(cls, values: list[str]) -> list[str]:
+        normalized = [normalize_page_plan_slug(value) for value in values]
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("Index schedule contains duplicate pages")
+        return normalized
+
+    @field_validator("starts_at")
+    @classmethod
+    def require_schedule_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("Index schedule must include a timezone")
+        value = value.astimezone(UTC)
+        if value > datetime.now(UTC) + timedelta(days=365):
+            raise ValueError("Index schedule cannot be more than one year ahead")
+        return value
+
+
+class IndexPromotionScheduleDecision(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    confirmed: bool
+    reason: str | None = Field(default=None, max_length=2000)
 
 
 class BuildPublishRequest(BaseModel):

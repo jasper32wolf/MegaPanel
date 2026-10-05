@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -11,7 +12,7 @@ from uuid import uuid4
 import pytest
 from app.api.v1 import projects
 from app.api.v1.projects import retry_project_build
-from app.schemas.workflow import BuildRollbackRequest
+from app.schemas.workflow import BuildRollbackRequest, CandidateBuildRequest
 from app.services import site_build_queue
 from app.worker import WorkerSettings, candidate_build_task
 from pydantic import ValidationError
@@ -24,6 +25,26 @@ def _migration():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_candidate_build_schedule_requires_a_timezone_and_bounded_priority():
+    future = datetime.now(UTC) + timedelta(minutes=15)
+    request = CandidateBuildRequest(queue_priority=80, not_before=future)
+
+    assert request.queue_priority == 80
+    assert request.not_before == future
+    with pytest.raises(ValidationError):
+        CandidateBuildRequest(not_before=future.replace(tzinfo=None))
+    with pytest.raises(ValidationError):
+        CandidateBuildRequest(queue_priority=101)
+
+
+def test_candidate_queue_uses_due_priority_and_a_single_vps_slot():
+    source = Path(site_build_queue.__file__).read_text(encoding="utf-8")
+
+    assert "SiteBuild.queue_priority.desc(), SiteBuild.created_at.asc()" in source
+    assert "SiteBuild.not_before.is_(None)" in source
+    assert "max_concurrency: int = 1" in source
 
 
 class EventDatabase:
@@ -175,12 +196,10 @@ def test_retry_requeues_only_failed_build_with_supported_frozen_snapshot(monkeyp
             self.committed = True
 
     db = Database()
-    enqueue = AsyncMock()
     monkeypatch.setattr(projects, "_project_or_404", AsyncMock(return_value=project))
     monkeypatch.setattr(projects, "_project_site_or_409", AsyncMock(return_value=site))
     monkeypatch.setattr(projects, "append_site_build_event", AsyncMock())
     monkeypatch.setattr(projects, "append_audit", AsyncMock())
-    monkeypatch.setattr(projects, "enqueue_site_build", enqueue)
 
     response = asyncio.run(
         retry_project_build(
@@ -194,7 +213,7 @@ def test_retry_requeues_only_failed_build_with_supported_frozen_snapshot(monkeyp
     assert response == {"id": str(build_id), "status": "queued", "retryable": False}
     assert build.status == "queued"
     assert build.input_snapshot == {"version": 1}
-    enqueue.assert_awaited_once_with(build_id)
+    assert build.not_before is not None
     assert db.committed is True
 
 

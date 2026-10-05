@@ -17,6 +17,7 @@ from site_panel_shared.enums import IndexState
 from site_panel_shared.manifests import PageManifest, SiteManifest
 
 from site_panel_ssg.legal import COOKIE_BANNER_JS, write_legal_pack
+from site_panel_ssg.phone import format_phone_display, normalize_phone_e164
 from site_panel_ssg.templates import content_hash, fill_slots, page_url, render_page
 
 THIN_CONTENT_MIN_CHARS = 350
@@ -112,12 +113,13 @@ def is_thin(html: str) -> bool:
 
 def schema_org_jsonld(site: SiteManifest, page: PageManifest, context: dict[str, Any]) -> dict:
     phone = context.get("phone") or (site.contacts or {}).get("phone", "")
+    schema_phone = normalize_phone_e164(str(phone)) or format_phone_display(str(phone))
     graph: list[dict[str, Any]] = [
         {
             "@type": "LocalBusiness",
             "name": fill_slots(page.h1_template, context) or site.domain,
             "url": page_url(site.domain, "/"),
-            "telephone": phone,
+            "telephone": schema_phone,
             "address": {"@type": "PostalAddress", "addressLocality": context.get("city_nom", "")},
         },
         {
@@ -221,6 +223,47 @@ def render_sitemap(domain: str, urls: list[str]) -> str:
         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
         f"{body}\n</urlset>\n"
     )
+
+
+def render_html_sitemap(
+    site: SiteManifest,
+    pages: list[PageManifest],
+    context: dict[str, Any],
+    index_states: dict[str, str],
+) -> str:
+    """Render a visible, server-owned map of only index-eligible page artifacts."""
+    links = []
+    for page in pages:
+        state = index_states.get(
+            page.slug,
+            page.index_state.value if hasattr(page.index_state, "value") else str(page.index_state),
+        )
+        if state != IndexState.INDEXED.value:
+            continue
+        title = escape(fill_slots(page.h1_template, context) or page.service)
+        href = escape(page_url(site.domain, page.slug), quote=True)
+        links.append(f'      <li><a href="{href}">{title}</a></li>')
+    body = "\n".join(links) or "      <li>Страницы для индексации пока не разрешены.</li>"
+    canonical = escape(page_url(site.domain, "/sitemap"), quote=True)
+    return f"""<!DOCTYPE html>
+<html lang="{escape(site.locale, quote=True)}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Карта сайта</title>
+  <link rel="canonical" href="{canonical}">
+  <meta name="robots" content="noindex, follow">
+</head>
+<body>
+  <main>
+    <h1>Карта сайта</h1>
+    <ul>
+{body}
+    </ul>
+  </main>
+</body>
+</html>
+"""
 
 
 def _validate_release_artifacts(staging: Path, site: SiteManifest, page_meta: list[dict]) -> None:
@@ -530,6 +573,19 @@ class SiteBuilder:
             (staging / "sitemap.xml").write_text(
                 render_sitemap(site.domain, indexed_urls), encoding="utf-8"
             )
+            html_sitemap = staging / "sitemap" / "index.html"
+            html_sitemap.parent.mkdir(parents=True, exist_ok=True)
+            html_sitemap.write_text(
+                render_html_sitemap(
+                    site,
+                    site.pages,
+                    ctx,
+                    {item["slug"]: item["index_state"] for item in page_meta},
+                ),
+                encoding="utf-8",
+            )
+            if compress:
+                write_precompressed(html_sitemap)
             _validate_release_artifacts(staging, site, page_meta)
             write_legal_pack(staging, site.legal or {})
             assets_hash = hashlib.sha256(

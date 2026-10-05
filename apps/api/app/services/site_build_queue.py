@@ -10,7 +10,7 @@ from app.core.config import get_settings
 from app.models import SiteBuild, SiteBuildEvent
 from arq import create_pool
 from arq.connections import RedisSettings
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 _EVENT_TYPES = {
@@ -86,14 +86,30 @@ async def append_site_build_event(
     return event
 
 
-async def due_site_build_ids(db: AsyncSession, *, limit: int = 20) -> list[UUID]:
-    """Return durable queued work for transport recovery; terminal failures stay manual."""
+async def available_candidate_build_slots(
+    db: AsyncSession, *, max_concurrency: int = 1
+) -> int:
+    """Bound local candidate work so one VPS is never flooded by builds."""
+    running = (
+        await db.execute(
+            select(func.count(SiteBuild.id)).where(SiteBuild.status == "running")
+        )
+    ).scalar_one()
+    return max(0, max_concurrency - int(running))
+
+
+async def due_site_build_ids(db: AsyncSession, *, limit: int = 1) -> list[UUID]:
+    """Return due frozen work in operator order; terminal failures stay manual."""
+    now = datetime.now(UTC)
     return list(
         (
             await db.execute(
                 select(SiteBuild.id)
-                .where(SiteBuild.status == "queued")
-                .order_by(SiteBuild.created_at.asc())
+                .where(
+                    SiteBuild.status == "queued",
+                    or_(SiteBuild.not_before.is_(None), SiteBuild.not_before <= now),
+                )
+                .order_by(SiteBuild.queue_priority.desc(), SiteBuild.created_at.asc())
                 .limit(limit)
             )
         )
@@ -134,6 +150,7 @@ async def expire_stale_site_builds(db: AsyncSession) -> int:
 
 __all__ = [
     "append_site_build_event",
+    "available_candidate_build_slots",
     "due_site_build_ids",
     "enqueue_site_build",
     "expire_stale_site_builds",

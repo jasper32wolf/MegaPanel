@@ -24,6 +24,7 @@ type Draft = { id: string; page_plan_id: string; revision: number; state: string
 type Coverage = { selected: number; covered: number; uncovered: { keyword_id: string; phrase: string }[]; plans: number };
 type IndexPromotion = { id: string; reason: string; decided_at: string | null };
 type IndexPromotionCandidate = { slug: string; source_hash: string; qa_verdict: string | null; status: "approved" | "eligible" | "stale"; promotion: IndexPromotion | null };
+type IndexSchedule = { id: string; state: "draft" | "review" | "active" | "paused" | "completed" | "cancelled"; reason: string; starts_at: string; interval_hours: number; batch_size: number; approved_at: string | null; paused_at: string | null; completed_at: string | null; items: { id: string; slug: string; source_hash: string; batch_number: number; planned_at: string; state: string; candidate_build_id: string | null; stale_reason: string | null }[] };
 type AIProvider = { id: string; label: string; provider_id: string; enabled: boolean };
 type AIDraftQuote = { provider_id: string; model_id: string; estimated_cost_usd: number; max_cost_usd: number; input_snapshot_hash: string; pricing_source: string; pricing_observed_at: string };
 type AIRunBrief = { id: string; action: string; status: string; output: { brief?: Record<string, unknown>; page_draft_id?: string; slot_copy?: BlockSlotCopy }; error_code: string | null; prompt_hash: string; cost_usd: number | null };
@@ -78,6 +79,13 @@ export function ProjectWorkspacePage() {
   const [semanticCollectionSourceRunIds, setSemanticCollectionSourceRunIds] = useState<string[]>([]);
   const [semanticName, setSemanticName] = useState("Основная семантика");
   const [indexPromotions, setIndexPromotions] = useState<IndexPromotionCandidate[]>([]);
+  const [indexSchedules, setIndexSchedules] = useState<IndexSchedule[]>([]);
+  const [scheduledIndexSlugs, setScheduledIndexSlugs] = useState<string[]>([]);
+  const [indexScheduleReason, setIndexScheduleReason] = useState("Постепенно открыть проверенные страницы для индексации.");
+  const [indexScheduleStartsAt, setIndexScheduleStartsAt] = useState("");
+  const [indexScheduleInterval, setIndexScheduleInterval] = useState("24");
+  const [indexScheduleBatchSize, setIndexScheduleBatchSize] = useState("1");
+  const [indexScheduleConfirmed, setIndexScheduleConfirmed] = useState(false);
   const [aiProviders, setAiProviders] = useState<AIProvider[]>([]);
   const [aiProviderId, setAiProviderId] = useState("");
   const [aiModel, setAiModel] = useState("");
@@ -165,7 +173,7 @@ export function ProjectWorkspacePage() {
   );
 
   async function load() {
-    const [nextProject, nextFacts, nextKeywords, nextProjectKeywords, nextPlaces, nextProjectGeo, nextPlans, nextDrafts, nextCoverage, nextAssetUsage, nextIndexPromotions, nextSeoRuns, nextSlotRuns, nextCollections, nextSignals, nextStructureRevisions, nextBukvarixStatus, nextBukvarixRuns, nextSourceRuns] = await Promise.all([
+    const [nextProject, nextFacts, nextKeywords, nextProjectKeywords, nextPlaces, nextProjectGeo, nextPlans, nextDrafts, nextCoverage, nextAssetUsage, nextIndexPromotions, nextIndexSchedules, nextSeoRuns, nextSlotRuns, nextCollections, nextSignals, nextStructureRevisions, nextBukvarixStatus, nextBukvarixRuns, nextSourceRuns] = await Promise.all([
       api<Project>(`/api/v1/projects/${projectId}`, {}, token),
       api<FactRevision[]>(`/api/v1/projects/${projectId}/facts`, {}, token),
       api<{ items: Keyword[] }>("/api/v1/keywords?limit=100", {}, token),
@@ -177,6 +185,7 @@ export function ProjectWorkspacePage() {
       api<Coverage>(`/api/v1/projects/${projectId}/coverage`, {}, token),
       api<AssetUsage[]>(`/api/v1/projects/${projectId}/asset-usage`, {}, token),
       api<IndexPromotionCandidate[]>(`/api/v1/projects/${projectId}/index-promotions`, {}, token),
+      api<IndexSchedule[]>(`/api/v1/projects/${projectId}/index-schedules`, {}, token),
       api<AIRunBrief[]>(`/api/v1/projects/${projectId}/seo-briefs`, {}, token),
       api<AIRunBrief[]>(`/api/v1/projects/${projectId}/block-slot-proposals`, {}, token),
       api<SemanticCollection[]>(`/api/v1/projects/${projectId}/semantic-collections`, {}, token),
@@ -200,6 +209,7 @@ export function ProjectWorkspacePage() {
     setCoverage(nextCoverage);
     setAssetUsage(nextAssetUsage);
     setIndexPromotions(nextIndexPromotions);
+    setIndexSchedules(nextIndexSchedules);
     setSeoRuns(nextSeoRuns);
     setSeoRun((current) => nextSeoRuns.find((item) => item.id === current?.id) || nextSeoRuns[0] || null);
     setSlotRuns(nextSlotRuns);
@@ -808,6 +818,51 @@ export function ProjectWorkspacePage() {
     });
   }
 
+  function toggleScheduledIndexSlug(slug: string) {
+    setScheduledIndexSlugs((current) => current.includes(slug) ? current.filter((item) => item !== slug) : [...current, slug]);
+  }
+
+  async function createIndexSchedule() {
+    if (!scheduledIndexSlugs.length || !indexScheduleStartsAt || !indexScheduleConfirmed) return;
+    await run(
+      "index-schedule-create",
+      () => api(
+        `/api/v1/projects/${projectId}/index-schedules`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            slugs: scheduledIndexSlugs,
+            reason: indexScheduleReason.trim(),
+            starts_at: new Date(indexScheduleStartsAt).toISOString(),
+            interval_hours: Number(indexScheduleInterval),
+            batch_size: Number(indexScheduleBatchSize),
+          }),
+        },
+        token,
+      ),
+      "Создан черновик графика. Он не меняет индексацию, не собирает и не публикует сайт.",
+    );
+    setScheduledIndexSlugs([]);
+    setIndexScheduleConfirmed(false);
+  }
+
+  async function decideIndexSchedule(schedule: IndexSchedule, action: "submit-review" | "approve" | "pause" | "cancel") {
+    const path = action === "submit-review"
+      ? `/api/v1/projects/${projectId}/index-schedules/${schedule.id}/submit-review`
+      : `/api/v1/projects/${projectId}/index-schedules/${schedule.id}/${action}`;
+    await run(
+      `index-schedule:${action}:${schedule.id}`,
+      () => api(path, { method: "POST", body: JSON.stringify({ confirmed: true }) }, token),
+      action === "approve"
+        ? "График запущен. В срок он подготовит только candidate-сборку; preview и публикация останутся ручными."
+        : action === "submit-review"
+          ? "График отправлен на проверку."
+          : action === "pause"
+            ? "График остановлен. Уже готовые candidate-сборки не меняются."
+            : "График отменён. Уже готовые candidate-сборки не меняются.",
+    );
+  }
+
   async function createRoutingPolicy() {
     const destinations = [] as { target_key: string; channel: "email" | "webhook"; required: boolean; recipient?: string; webhook_url?: string; webhook_secret?: string }[];
     if (routingEmail.trim()) {
@@ -1057,8 +1112,22 @@ export function ProjectWorkspacePage() {
         {drafts.length === 0 ? <EmptyState title="Черновиков пока нет" hint="Одобрите план страницы, затем создайте детерминированный черновик." /> : <DataTable headers={["План", "Версия", "Статус", "QA", "Действия"]}>{drafts.map((draft) => <tr key={draft.id}><td>{plans.find((plan) => plan.id === draft.page_plan_id)?.slug || draft.page_plan_id}</td><td>{draft.revision}</td><td><StatusPill tone={tone(draft.state)}>{draft.state}</StatusPill>{draft.failure_message && <p className="error" role="alert">{draft.failure_message}</p>}</td><td><StatusPill tone={tone(draft.last_qa_verdict || "draft")}>{draft.last_qa_verdict || "не запускалась"}</StatusPill>{draft.qa_runs.at(-1)?.findings.map((finding) => <p className="muted" key={finding.rule}>{finding.rule}: {finding.evidence}</p>)}</td><td className="row">{draft.state === "draft" && <><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => qa(draft)}>Проверить</button>{draft.last_qa_verdict && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => submitDraft(draft)}>На ручную проверку</button>}</>}{draft.state === "review" && draft.last_qa_verdict !== "block" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => apply(draft)}>Применить</button>}</td></tr>)}</DataTable>}
       </Surface>
       <Surface title="6. Индексация страниц">
-        <p className="muted">Новые и изменённые страницы остаются noindex, пока оператор не подтвердит индексацию для текущего passing QA. Решение не меняет публичный сайт: оно требует следующую candidate-сборку, preview и отдельную публикацию.</p>
-        {!project.site_id ? <EmptyState title="Сначала примените черновик" hint="После применения страницы будут доступны для QA и явного решения об индексации." /> : indexPromotions.length === 0 ? <EmptyState title="В текущем манифесте нет страниц" /> : <DataTable headers={["Путь", "QA", "Статус", "Действие"]}>{indexPromotions.map((item) => <tr key={item.slug}><td>{item.slug}</td><td><StatusPill tone={tone(item.qa_verdict || "stale")}>{item.qa_verdict || "требуется QA"}</StatusPill></td><td><StatusPill tone={item.status === "approved" ? "ok" : item.status === "eligible" ? "accent" : "warn"}>{item.status === "approved" ? "разрешена" : item.status === "eligible" ? "можно подтвердить" : "устарело"}</StatusPill>{item.promotion?.decided_at && <p className="muted">решение: {new Date(item.promotion.decided_at).toLocaleString()}</p>}</td><td>{item.status === "eligible" ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => promoteForIndex(item)}>Разрешить индексацию</button> : <span className="muted">{item.status === "approved" ? "Создайте candidate для применения" : "Повторно примените и проверьте текущий черновик"}</span>}</td></tr>)}</DataTable>}
+        <p className="muted">Новые и изменённые страницы остаются скрытыми от поисковой индексации, пока не пройдут проверку качества. Разрешение не публикует сайт: сначала создаётся candidate-сборка, затем private preview, legal review и отдельная публикация.</p>
+        {!project.site_id ? <EmptyState title="Сначала примените черновик" hint="После применения страницы будут доступны для проверки и решения об индексации." /> : indexPromotions.length === 0 ? <EmptyState title="В текущем сайте нет страниц" /> : <DataTable headers={["Путь", "Проверка", "Статус", "Действие"]}>{indexPromotions.map((item) => <tr key={item.slug}><td>{item.slug}</td><td><StatusPill tone={tone(item.qa_verdict || "stale")}>{item.qa_verdict || "нужна проверка"}</StatusPill></td><td><StatusPill tone={item.status === "approved" ? "ok" : item.status === "eligible" ? "accent" : "warn"}>{item.status === "approved" ? "разрешена" : item.status === "eligible" ? "можно запланировать" : "устарело"}</StatusPill>{item.promotion?.decided_at && <p className="muted">решение: {new Date(item.promotion.decided_at).toLocaleString()}</p>}</td><td>{item.status === "eligible" ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => promoteForIndex(item)}>Разрешить сейчас</button> : <span className="muted">{item.status === "approved" ? "Создайте candidate для применения" : "Повторно примените и проверьте черновик"}</span>}</td></tr>)}</DataTable>}
+        {project.site_id && indexPromotions.some((item) => item.status === "eligible") ? <div className="stack">
+          <strong>Постепенное разрешение индексации</strong>
+          <p className="muted">Выберите несколько проверенных страниц. В срок создаётся только private candidate-сборка одной небольшой партии. Она не публикуется автоматически и не отправляет IndexNow.</p>
+          <DataTable headers={["", "Страница", "Проверка"]}>{indexPromotions.filter((item) => item.status === "eligible").map((item) => <tr key={`schedule-${item.slug}`}><td><input aria-label={`Запланировать индексацию ${item.slug}`} type="checkbox" checked={scheduledIndexSlugs.includes(item.slug)} disabled={busy !== null} onChange={() => toggleScheduledIndexSlug(item.slug)} /></td><td>{item.slug}</td><td>{item.qa_verdict || "—"}</td></tr>)}</DataTable>
+          <div className="detail-grid">
+            <label className="field">Начать не раньше<input type="datetime-local" value={indexScheduleStartsAt} onChange={(event) => setIndexScheduleStartsAt(event.target.value)} disabled={busy !== null} required /><span className="muted">Время вашего компьютера.</span></label>
+            <label className="field">Страниц в партии<input type="number" min="1" max="20" value={indexScheduleBatchSize} onChange={(event) => setIndexScheduleBatchSize(event.target.value)} disabled={busy !== null} /><span className="muted">Обычно достаточно 1–3.</span></label>
+            <label className="field">Пауза между партиями, часов<input type="number" min="1" max="720" value={indexScheduleInterval} onChange={(event) => setIndexScheduleInterval(event.target.value)} disabled={busy !== null} /><span className="muted">Следующая партия ждёт публикации предыдущей.</span></label>
+          </div>
+          <label className="field">Почему открываем страницы постепенно<textarea value={indexScheduleReason} onChange={(event) => setIndexScheduleReason(event.target.value)} maxLength={2000} disabled={busy !== null} /></label>
+          <label className="field"><span><input type="checkbox" checked={indexScheduleConfirmed} onChange={(event) => setIndexScheduleConfirmed(event.target.checked)} disabled={busy !== null} /> Подтверждаю: график не гарантирует результат в поиске, не публикует сайт самостоятельно и требует отдельного preview и публикации для каждой партии.</span></label>
+          <button className="btn btn-ghost" type="button" disabled={busy !== null || !scheduledIndexSlugs.length || !indexScheduleStartsAt || !indexScheduleConfirmed || indexScheduleReason.trim().length < 10} onClick={() => void createIndexSchedule()}>Создать черновик графика</button>
+        </div> : null}
+        {indexSchedules.length > 0 ? <DataTable headers={["Старт", "Партии", "Статус", "Действия"]}>{indexSchedules.map((schedule) => <tr key={schedule.id}><td>{new Date(schedule.starts_at).toLocaleString()}<p className="muted">каждые {schedule.interval_hours} ч.</p></td><td>{schedule.items.map((item) => <p key={item.id}>#{item.batch_number} · {item.slug} · {item.state}{item.stale_reason ? `: ${item.stale_reason}` : ""}</p>)}</td><td><StatusPill tone={tone(schedule.state)}>{schedule.state}</StatusPill></td><td className="row">{schedule.state === "draft" ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void decideIndexSchedule(schedule, "submit-review")}>На проверку</button> : null}{schedule.state === "review" ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void decideIndexSchedule(schedule, "approve")}>Запустить график</button> : null}{schedule.state === "active" ? <><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void decideIndexSchedule(schedule, "pause")}>Остановить</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void decideIndexSchedule(schedule, "cancel")}>Отменить</button></> : null}</td></tr>)}</DataTable> : null}
       </Surface>
       <Surface title="7. Candidate-сборки, preview и публикация">
         <p className="muted">Candidate создаётся из зафиксированного snapshot в отдельной durable queue. Private preview, legal review, публикация и безопасный rollback доступны только в центре Releases; worker никогда не публикует сайт и не запускает IndexNow.</p>
