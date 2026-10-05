@@ -36,6 +36,21 @@ def test_ci_publishes_a_cyclonedx_sbom_artifact():
     )
 
 
+def test_ci_cancels_superseded_branch_runs_and_caches_dependencies():
+    source = CI_PATH.read_text(encoding="utf-8")
+    workflow = yaml.safe_load(source)
+
+    assert "workflow_dispatch:" in source
+    assert "group: ci-${{ github.workflow }}-${{ github.ref }}" in source
+    assert "cancel-in-progress: true" in source
+    python_setup = workflow["jobs"]["python"]["steps"][1]["with"]
+    panel_setup = workflow["jobs"]["panel"]["steps"][1]["with"]
+    assert python_setup["cache"] == "pip"
+    assert "apps/api/pyproject.toml" in python_setup["cache-dependency-path"]
+    assert panel_setup["cache"] == "npm"
+    assert panel_setup["cache-dependency-path"] == "apps/panel/package-lock.json"
+
+
 def test_production_compose_uploads_bounded_evidence_marker():
     workflow = yaml.safe_load(CI_PATH.read_text(encoding="utf-8"))
     steps = workflow["jobs"]["production-compose-smoke"]["steps"]
@@ -186,17 +201,23 @@ def test_worker_image_uses_the_api_owned_delivery_registry():
     assert 'CMD ["arq", "app.worker.WorkerSettings"]' in dockerfile
 
 
-def test_ci_runs_worker_production_image_liveness_smoke():
+def test_ci_runs_worker_production_image_liveness_smoke_from_cached_buildx_image():
     workflow = yaml.safe_load(CI_PATH.read_text(encoding="utf-8"))
     steps = workflow["jobs"]["integration-services"]["steps"]
+    cached_build = next(
+        step for step in steps if step.get("name") == "Build cached worker production image"
+    )
     command = next(
         step["run"]
         for step in steps
         if step.get("name") == "Worker production image liveness smoke"
     )
 
-    assert "docker build" in command
-    assert "infra/docker/Dockerfile.worker" in command
+    assert cached_build["uses"] == "docker/build-push-action@v6"
+    assert cached_build["with"]["file"] == "infra/docker/Dockerfile.worker"
+    assert cached_build["with"]["load"] is True
+    assert "type=gha,scope=worker" in cached_build["with"]["cache-from"]
+    assert "docker build" not in command
     assert "docker run --detach --rm" in command
     assert "--network host" in command
     assert "arq --check app.worker.WorkerSettings" in command
@@ -257,19 +278,38 @@ def test_ci_runs_authenticated_production_compose_smoke_through_caddy():
 
     assert job["runs-on"] == "ubuntu-latest"
     assert job["timeout-minutes"] == 20
+    assert job["if"] == (
+        "github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'"
+    )
     assert any(step.get("uses") == "actions/setup-node@v4" for step in job["steps"])
-    browser_setup = next(
+    browser_cache = next(
+        step for step in job["steps"] if step.get("name") == "Restore Playwright Chromium"
+    )
+    browser_dependencies = next(
         step["run"]
         for step in job["steps"]
-        if step.get("name") == "Install Chromium for Caddy browser smoke"
+        if step.get("name") == "Install Chromium system dependencies"
     )
-    assert "npm ci" in browser_setup
-    assert "npx playwright install --with-deps chromium" in browser_setup
+    cached_api = next(
+        step for step in job["steps"] if step.get("name") == "Build cached production images"
+    )
+    cached_panel = next(
+        step for step in job["steps"] if step.get("name") == "Build cached panel image"
+    )
+    assert browser_cache["uses"] == "actions/cache@v4"
+    assert browser_cache["with"]["path"] == "~/.cache/ms-playwright"
+    assert "npm ci" in browser_dependencies
+    assert "npx playwright install-deps chromium" in browser_dependencies
+    assert cached_api["uses"] == "docker/build-push-action@v6"
+    assert cached_api["with"]["tags"] == "site-panel-api:local"
+    assert cached_panel["with"]["tags"] == "site-panel-panel:local"
+    assert cached_panel["with"]["load"] is True
     assert "APP_ENV=production" in command
     assert "PANEL_DOMAIN=localhost" in command
     assert "API_DOMAIN=api.localhost" in command
     assert "docker compose -f infra/docker/docker-compose.production.yml" in command
-    assert "up --build --detach" in command
+    assert "up --no-build --detach" in command
+    assert "up --build --detach" not in command
     assert "https://localhost/" in command
     assert '<div id="root"></div>' in command
     assert "CaddyClient().upsert_site_vhost(" in command
@@ -328,3 +368,5 @@ def test_production_compose_builds_one_api_image_for_migrate_api_and_worker():
     assert "build" not in services["migrate"]
     assert "build" not in services["worker"]
     assert services["worker"]["command"] == ["arq", "app.worker.WorkerSettings"]
+    assert services["panel"]["image"] == "site-panel-panel:local"
+    assert "build" in services["panel"]

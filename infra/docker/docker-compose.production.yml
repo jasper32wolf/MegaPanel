@@ -169,6 +169,7 @@ services:
     networks: [internal]
 
   panel:
+    image: site-panel-panel:local
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.panel

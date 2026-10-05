@@ -3,6 +3,13 @@ name: ci
 on:
   push:
   pull_request:
+  workflow_dispatch:
+
+# A newer commit supersedes older CI for the same branch. This frees scarce
+# GitHub-hosted runners instead of letting obsolete work delay the latest push.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   python:
@@ -12,6 +19,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            apps/api/pyproject.toml
+            packages/*/pyproject.toml
       - name: Install
         run: |
           pip install -e packages/shared -e packages/security -e packages/ssg -e packages/block-library
@@ -99,6 +110,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            apps/api/pyproject.toml
+            packages/*/pyproject.toml
       - name: Install
         run: |
           pip install -e packages/shared -e packages/security -e packages/ssg -e packages/block-library
@@ -153,6 +168,17 @@ jobs:
         run: |
           cd apps/api
           pytest tests/test_webhook_delivery.py tests/test_postgres_rls.py tests/test_ai_budget_reservation.py tests/test_leads_ab.py -q -k 'not legacy_data_upgrade_from_0019_to_current_head'
+      - name: Configure Docker Buildx cache
+        uses: docker/setup-buildx-action@v3
+      - name: Build cached worker production image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/docker/Dockerfile.worker
+          tags: site-panel-worker-ci:${{ github.sha }}
+          load: true
+          cache-from: type=gha,scope=worker
+          cache-to: type=gha,mode=max,scope=worker
       - name: Worker production image liveness smoke
         run: |
           set -euo pipefail
@@ -162,7 +188,6 @@ jobs:
             docker rm --force "$container" 2>/dev/null || true
           }
           trap cleanup EXIT
-          docker build --tag "$image" --file infra/docker/Dockerfile.worker .
           docker run --detach --rm --name "$container" --network host \
             --env DATABASE_URL="$DATABASE_URL" \
             --env REDIS_URL="$REDIS_URL" \
@@ -197,6 +222,9 @@ jobs:
 
 
   production-compose-smoke:
+    # Full Docker/Caddy/browser proof is intentionally reserved for main and
+    # explicit manual runs; fast unit/integration gates still run on every push.
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -204,11 +232,44 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Install Chromium for Caddy browser smoke
+          cache: npm
+          cache-dependency-path: apps/panel/package-lock.json
+      - name: Restore Playwright Chromium
+        id: compose-playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('apps/panel/package-lock.json') }}
+      - name: Install Chromium system dependencies
         run: |
           cd apps/panel
           npm ci
-          npx playwright install --with-deps chromium
+          npx playwright install-deps chromium
+      - name: Install cached Chromium revision
+        if: steps.compose-playwright-cache.outputs.cache-hit != 'true'
+        run: |
+          cd apps/panel
+          npx playwright install chromium
+      - name: Configure Docker Buildx cache
+        uses: docker/setup-buildx-action@v3
+      - name: Build cached production images
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/docker/Dockerfile.api
+          tags: site-panel-api:local
+          load: true
+          cache-from: type=gha,scope=production-api
+          cache-to: type=gha,mode=max,scope=production-api
+      - name: Build cached panel image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/docker/Dockerfile.panel
+          tags: site-panel-panel:local
+          load: true
+          cache-from: type=gha,scope=production-panel
+          cache-to: type=gha,mode=max,scope=production-panel
       - name: Start isolated production Compose stack
         run: |
           set -euo pipefail
@@ -242,7 +303,7 @@ jobs:
           CADDY_EMAIL=ci-operator@example.test
           EOF
           compose_build_log="$RUNNER_TEMP/site-panel-compose-build.log"
-          if ! "${compose[@]}" up --build --detach >"$compose_build_log" 2>&1; then
+          if ! "${compose[@]}" up --no-build --detach >"$compose_build_log" 2>&1; then
             echo "Compose build/start failed; last 200 build lines follow" >&2
             tail -n 200 "$compose_build_log" >&2 || true
             exit 1
@@ -451,6 +512,9 @@ jobs:
 
 
   panel-e2e:
+    # Browser journey is expensive and runs before deploy on main; branches keep
+    # the fast panel build while manual dispatch can request the full journey.
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -496,9 +560,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            apps/api/pyproject.toml
+            packages/*/pyproject.toml
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/panel/package-lock.json
       - name: Install API and panel dependencies
         run: |
           pip install -e packages/shared -e packages/security -e packages/ssg -e packages/block-library
@@ -511,10 +581,21 @@ jobs:
           alembic upgrade head
           cd ../..
           printf '%s\n' "$E2E_OPERATOR_PASSWORD" | python scripts/bootstrap_operator.py --email "$E2E_OPERATOR_EMAIL" --password-stdin
-      - name: Install Chromium
+      - name: Restore Playwright Chromium
+        id: panel-playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('apps/panel/package-lock.json') }}
+      - name: Install Chromium system dependencies
         run: |
           cd apps/panel
-          npx playwright install --with-deps chromium
+          npx playwright install-deps chromium
+      - name: Install cached Chromium revision
+        if: steps.panel-playwright-cache.outputs.cache-hit != 'true'
+        run: |
+          cd apps/panel
+          npx playwright install chromium
       - name: Authenticated panel smoke
         run: |
           set -euo pipefail
@@ -658,5 +739,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/panel/package-lock.json
       - run: npm ci
       - run: npm run build
