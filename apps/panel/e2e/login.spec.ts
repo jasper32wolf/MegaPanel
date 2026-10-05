@@ -330,7 +330,7 @@ test("оператор ставит candidate в очередь без публ�
     page.getByRole("heading", { name: "4.5. Использование media в snapshots", exact: true }),
   ).toBeVisible();
 
-  await page.getByRole("link", { name: "Releases", exact: true }).click();
+  await page.getByRole("link", { name: "Сборки и публикация", exact: true }).click();
   const createCandidate = page.getByRole("button", { name: "Создать candidate-сборку" });
   await expect(createCandidate).toBeVisible();
   const queueCandidateResponse = page.waitForResponse((response) =>
