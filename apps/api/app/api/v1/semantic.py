@@ -540,3 +540,64 @@ async def semantic_signals(
             "basis": "approved collection and persisted PagePlan semantic target snapshots",
         },
     }
+
+
+@router.get("/{project_id}/semantic-impact")
+async def semantic_impact(
+    project_id: UUID,
+    collection_id: UUID,
+    auth: AuthContext = Depends(_READ),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Explain what an approved semantic extension could change without mutating a site."""
+    signals = await semantic_signals(
+        project_id=project_id,
+        collection_id=collection_id,
+        auth=auth,
+        db=db,
+    )
+    recommendations = []
+    for target in signals["coverage"]:
+        status = target["status"]
+        if status == "uncovered":
+            action = "new_page"
+        elif status == "planned":
+            action = "review_existing_plan"
+        elif status == "covered":
+            action = "no_change"
+        else:
+            action = "bind_geography"
+        recommendations.append(
+            {
+                "action": action,
+                "collection_keyword_id": target["collection_keyword_id"],
+                "geo_binding_id": target["geo_binding_id"],
+                "plans": target["plans"],
+            }
+        )
+    for collision in signals["collisions"]:
+        recommendations.append(
+            {
+                "action": "resolve_collision",
+                "target": collision["target"],
+                "plans": collision["plans"],
+            }
+        )
+    for plan in signals["unmapped_plans"]:
+        recommendations.append({"action": "needs_mapping", "plan": plan})
+    return {
+        "collection": signals["collections"][0],
+        "totals": signals["totals"],
+        "recommendations": recommendations,
+        "next_steps": [
+            "Выберите только нужные рекомендации.",
+            "Новая страница проходит обычный путь: план, черновик, QA, проверка и применение.",
+            "Обновление текста и candidate-сборка не запускаются автоматически.",
+        ],
+        "policy": {
+            "read_only": True,
+            "automatic_draft": False,
+            "automatic_build": False,
+            "automatic_publish": False,
+        },
+    }

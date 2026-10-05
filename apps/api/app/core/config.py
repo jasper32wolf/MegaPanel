@@ -51,6 +51,14 @@ class Settings(BaseSettings):
     smtp_use_ssl: bool = False
     smtp_starttls: bool = True
 
+    # Optional server-owned CAPTCHA integration. Site/secret keys remain in the VPS environment.
+    captcha_provider: Literal[
+        "disabled", "cloudflare_turnstile", "hcaptcha", "google_recaptcha"
+    ] = "disabled"
+    captcha_mode: Literal["disabled", "always"] = "disabled"
+    captcha_site_key: str = ""
+    captcha_secret: str = ""
+
     access_token_ttl_minutes: int = 15
     refresh_token_ttl_days: int = 14
 
@@ -76,6 +84,10 @@ class Settings(BaseSettings):
     def smtp_configured(self) -> bool:
         return bool(self.smtp_host and self.smtp_from_email)
 
+    @property
+    def captcha_enabled(self) -> bool:
+        return self.captcha_mode == "always" and self.captcha_provider != "disabled"
+
     @model_validator(mode="after")
     def validate_production_settings(self) -> Settings:
         if self.worker_heartbeat_stale_after_seconds < self.worker_heartbeat_interval_seconds * 2:
@@ -92,6 +104,12 @@ class Settings(BaseSettings):
                 raise ValueError("SMTP_FROM_EMAIL must be a valid email address")
             if self.smtp_use_ssl and self.smtp_starttls:
                 raise ValueError("SMTP_USE_SSL and SMTP_STARTTLS cannot both be enabled")
+        if self.captcha_mode == "disabled" and self.captcha_provider != "disabled":
+            raise ValueError("CAPTCHA_PROVIDER requires CAPTCHA_MODE=always")
+        if self.captcha_enabled and not (self.captcha_site_key and self.captcha_secret):
+            raise ValueError(
+                "CAPTCHA_SITE_KEY and CAPTCHA_SECRET are required when CAPTCHA is enabled"
+            )
         if self.app_env.lower() != "production":
             return self
 

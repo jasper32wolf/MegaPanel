@@ -74,6 +74,10 @@ LEAD_FORM_SCRIPT = """(() => {
           message: data.get("message") || null,
           page_slug: window.location.pathname,
           website: data.get("website") || null,
+          captcha_token: (
+            data.get("cf-turnstile-response") || data.get("h-captcha-response") ||
+            data.get("g-recaptcha-response") || null
+          ),
           form_ts: Number(data.get("form_ts")),
           idempotency_key: form.dataset.idempotencyKey,
           utm,
@@ -134,6 +138,63 @@ TELEMETRY_SCRIPT = """(() => {
   };
   document.addEventListener("sp:consent", () => send("page_view"));
   if (window.__spConsent?.analytics) send("page_view");
+})();
+"""
+
+
+CAPTCHA_FORM_SCRIPT = """(() => {
+  const script = document.currentScript;
+  const provider = script?.getAttribute("data-captcha-provider");
+  const siteKey = script?.getAttribute("data-captcha-site-key");
+  if (!provider || !siteKey) return;
+  const sources = {
+    cloudflare_turnstile: "https://challenges.cloudflare.com/turnstile/v0/api.js",
+    hcaptcha: "https://js.hcaptcha.com/1/api.js",
+    google_recaptcha: "https://www.google.com/recaptcha/api.js",
+  };
+  const classes = {
+    cloudflare_turnstile: "cf-turnstile",
+    hcaptcha: "h-captcha",
+    google_recaptcha: "g-recaptcha",
+  };
+  if (!sources[provider] || !classes[provider]) return;
+  let loaded = false;
+  const load = () => {
+    if (loaded) return;
+    loaded = true;
+    const external = document.createElement("script");
+    external.src = sources[provider];
+    external.async = true;
+    external.defer = true;
+    document.head.appendChild(external);
+  };
+  document.querySelectorAll("form[data-site-panel-lead-form]").forEach((form) => {
+    const challenge = document.createElement("div");
+    challenge.className = classes[provider];
+    challenge.dataset.sitekey = siteKey;
+    challenge.setAttribute("aria-label", "Проверка, что заявку отправляет человек");
+    const note = document.createElement("p");
+    note.className = "sp-muted";
+    note.textContent = "Проверка защищает форму от ботов и может передать технические данные " +
+      "выбранному сервису CAPTCHA после вашего согласия.";
+    const button = form.querySelector('button[type="submit"]');
+    form.insertBefore(challenge, button);
+    form.insertBefore(note, button);
+    const consent = form.elements.namedItem("consent");
+    consent?.addEventListener("change", () => { if (consent.checked) load(); });
+    form.addEventListener("submit", (event) => {
+      const status = form.querySelector(".sp-lead-status");
+      const response = form.querySelector(
+        '[name="cf-turnstile-response"],[name="h-captcha-response"],[name="g-recaptcha-response"]'
+      );
+      if (!consent?.checked || !loaded || !response?.value) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (consent?.checked) load();
+        if (status) status.textContent = "Подтвердите защитную проверку перед отправкой.";
+      }
+    }, true);
+  });
 })();
 """
 
@@ -564,6 +625,23 @@ class SiteBuilder:
                         f'data-telemetry-token="{escape(telemetry, quote=True)}" defer></script>\n'
                         "</body>",
                     )
+                captcha = dict(ctx.get("captcha") or {})
+                captcha_provider = str(captcha.get("provider") or "")
+                captcha_site_key = str(captcha.get("site_key") or "")
+                captcha_enabled = has_lead_form and captcha_provider in {
+                    "cloudflare_turnstile",
+                    "hcaptcha",
+                    "google_recaptcha",
+                } and bool(captcha_site_key)
+                if captcha_enabled:
+                    html = html.replace(
+                        "</body>",
+                        '  <script src="site-panel-captcha.js" '
+                        f'data-captcha-provider="{escape(captcha_provider, quote=True)}" '
+                        f'data-captcha-site-key="{escape(captcha_site_key, quote=True)}" '
+                        "defer></script>\n"
+                        "</body>",
+                    )
                 schema = json.dumps(schema_org_jsonld(site, page, ctx), ensure_ascii=False).replace(
                     "</", "<\\/"
                 )
@@ -594,6 +672,10 @@ class SiteBuilder:
                 if telemetry:
                     (output.parent / "site-panel-telemetry.js").write_text(
                         TELEMETRY_SCRIPT, encoding="utf-8"
+                    )
+                if captcha_enabled:
+                    (output.parent / "site-panel-captcha.js").write_text(
+                        CAPTCHA_FORM_SCRIPT, encoding="utf-8"
                     )
                 if has_lead_form:
                     (output.parent / "site-panel-leads.js").write_text(

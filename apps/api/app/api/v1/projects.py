@@ -63,6 +63,7 @@ from app.schemas.workflow import (
 from app.services.audit import append_audit
 from app.services.block_library import instantiate_kit_for_site
 from app.services.caddy_client import CaddyClient
+from app.services.captcha import captcha_public_config
 from app.services.claim_slots import resolve_claim_slot_bindings
 from app.services.design_profiles import design_snapshot, resolve_design_profile, theme_from_profile
 from app.services.domain_health import domain_probe
@@ -2783,6 +2784,7 @@ async def _freeze_candidate_build_input(
                 site_id=site.id,
                 domain=str(getattr(site, "domain", None) or project.domain or manifest.domain),
             ),
+            "captcha": captcha_public_config(),
         },
         "index_states": index_states,
         "source_hashes": source_hashes,
@@ -2885,6 +2887,7 @@ async def run_queued_candidate_build(db: AsyncSession, build_id: UUID) -> dict:
             "lead_token": site.lead_token,
             "lead_api_url": "/api/v1/leads/public",
             "telemetry_token": str(frozen_context.get("telemetry_token") or ""),
+            "captcha": dict(frozen_context.get("captcha") or {}),
         }
         started = time.perf_counter()
         result = await asyncio.to_thread(

@@ -11,6 +11,7 @@ type Keyword = { id: string; phrase: string; meta: Record<string, string> };
 type ProjectKeyword = { id: string; keyword_id: string; phrase: string; cluster: string | null; intent: string | null; priority: number | null };
 type SemanticCollection = { id: string; name: string; state: string; version: number; source_refs: { evidence?: unknown[]; manual_source_run_ids?: string[] }; members: { id: string; project_keyword_id: string; keyword_id: string; cluster: string | null; intent: string | null; geo_bindings: { id: string; project_geo_place_id: string; scope: string }[] }[] };
 type SemanticSignals = { totals: { members: number; bindings: number; covered: number; planned: number; uncovered: number; unbound: number }; cannibalization: { plans: { slug: string }[]; reason: string }[]; unmapped_plans: { slug: string; state: string }[] };
+type SemanticImpact = { collection: { id: string; name: string; version: number }; totals: SemanticSignals["totals"]; recommendations: { action: "new_page" | "review_existing_plan" | "no_change" | "bind_geography" | "resolve_collision" | "needs_mapping" }[]; next_steps: string[]; policy: { read_only: boolean; automatic_draft: boolean; automatic_build: boolean; automatic_publish: boolean } };
 type GeoPlace = { id: string; name: string; kind: string; is_validated?: boolean };
 type ProjectGeo = { id: string; geo_id: string; name: string; kind: string; validated: boolean; role: "primary" | "service_area" | "reference"; position: number };
 type ClaimSlotBinding = { block_id: string; slot: string; claim_index: number };
@@ -64,6 +65,7 @@ export function ProjectWorkspacePage() {
   const [coverage, setCoverage] = useState<Coverage | null>(null);
   const [semanticCollections, setSemanticCollections] = useState<SemanticCollection[]>([]);
   const [semanticSignals, setSemanticSignals] = useState<SemanticSignals | null>(null);
+  const [semanticImpact, setSemanticImpact] = useState<SemanticImpact | null>(null);
   const [structureRevisions, setStructureRevisions] = useState<StructureRevision[]>([]);
   const [bukvarixStatus, setBukvarixStatus] = useState<BukvarixStatus | null>(null);
   const [bukvarixRuns, setBukvarixRuns] = useState<BukvarixKeywordRun[]>([]);
@@ -497,6 +499,24 @@ export function ProjectWorkspacePage() {
       "Semantic collection создана как draft. Отправьте её на review и одобрение.",
     );
     setSemanticCollectionSourceRunIds([]);
+  }
+
+  async function loadSemanticImpact(collection: SemanticCollection) {
+    setBusy(`semantic-impact:${collection.id}`);
+    setError(null);
+    try {
+      setSemanticImpact(
+        await api<SemanticImpact>(
+          `/api/v1/projects/${projectId}/semantic-impact?collection_id=${collection.id}`,
+          {},
+          token,
+        ),
+      );
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Не удалось оценить влияние семантики");
+    } finally {
+      setBusy(null);
+    }
   }
 
   function nextProjectKeywordIds() {
@@ -1049,7 +1069,8 @@ export function ProjectWorkspacePage() {
         {semanticSignals && <div className="detail-grid"><div><strong>{semanticSignals.totals.covered}</strong><span className="muted"> covered targets</span></div><div><strong>{semanticSignals.totals.planned}</strong><span className="muted"> planned targets</span></div><div><strong>{semanticSignals.totals.uncovered}</strong><span className="muted"> uncovered targets</span></div><div><strong>{semanticSignals.totals.unbound}</strong><span className="muted"> unbound keywords</span></div><div><strong>{semanticSignals.cannibalization.length}</strong><span className="muted"> collision warnings</span></div></div>}
         <p className="muted">Сигналы семантического покрытия — только advisory: они не блокируют candidate build, публикацию или другие этапы.</p>
         <Link className="btn btn-ghost" to={`/projects/${projectId}/semantic-coverage`}>Открыть обзор semantic coverage</Link>
-        {semanticCollections.length > 0 ? <DataTable headers={["Коллекция", "Состав", "Статус", "Действия"]}>{semanticCollections.map((collection) => <tr key={collection.id}><td>{collection.name}</td><td>{collection.members.length} keywords{collection.source_refs.manual_source_run_ids?.length ? <><br /><span className="muted">manual sources: {collection.source_refs.manual_source_run_ids.map((id) => semanticSourceRuns.find((run) => run.id === id)?.source_label || id.slice(0, 8)).join(", ")}</span></> : null}</td><td><StatusPill tone={tone(collection.state)}>{collection.state}</StatusPill></td><td className="row">{collection.state === "draft" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void run(`semantic-submit:${collection.id}`, () => api(`/api/v1/projects/${projectId}/semantic-collections/${collection.id}/submit-review`, { method: "POST" }, token), "Коллекция отправлена на review.")}>На review</button>}{collection.state === "review" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void run(`semantic-approve:${collection.id}`, () => api(`/api/v1/projects/${projectId}/semantic-collections/${collection.id}/approve`, { method: "POST", body: JSON.stringify({}) }, token), "Коллекция одобрена.")}>Одобрить</button>}</td></tr>)}</DataTable> : <EmptyState title="Коллекций пока нет" hint="Создайте draft из сохранённых project keyword и geo selections." />}
+        {semanticCollections.length > 0 ? <DataTable headers={["Коллекция", "Состав", "Статус", "Действия"]}>{semanticCollections.map((collection) => <tr key={collection.id}><td>{collection.name}</td><td>{collection.members.length} фраз{collection.source_refs.manual_source_run_ids?.length ? <><br /><span className="muted">источники: {collection.source_refs.manual_source_run_ids.map((id) => semanticSourceRuns.find((run) => run.id === id)?.source_label || id.slice(0, 8)).join(", ")}</span></> : null}</td><td><StatusPill tone={tone(collection.state)}>{collection.state}</StatusPill></td><td className="row">{collection.state === "draft" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void run(`semantic-submit:${collection.id}`, () => api(`/api/v1/projects/${projectId}/semantic-collections/${collection.id}/submit-review`, { method: "POST" }, token), "Коллекция отправлена на проверку.")}>На проверку</button>}{collection.state === "review" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void run(`semantic-approve:${collection.id}`, () => api(`/api/v1/projects/${projectId}/semantic-collections/${collection.id}/approve`, { method: "POST", body: JSON.stringify({}) }, token), "Коллекция одобрена.")}>Одобрить</button>}{collection.state === "approved" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void loadSemanticImpact(collection)}>Проверить влияние</button>}</td></tr>)}</DataTable> : <EmptyState title="Коллекций пока нет" hint="Создайте черновик из выбранных ключевых фраз и географии." />}
+        {semanticImpact ? <div className="surface"><strong>Влияние: {semanticImpact.collection.name}</strong><p className="muted">Это только подсказки. Ничего не создаётся, не пересобирается и не публикуется автоматически.</p><DataTable headers={["Рекомендация", "Количество"]}>{["new_page", "review_existing_plan", "bind_geography", "resolve_collision", "needs_mapping", "no_change"].map((action) => <tr key={action}><td>{action === "new_page" ? "Новая страница" : action === "review_existing_plan" ? "Проверить существующий план" : action === "bind_geography" ? "Связать с географией" : action === "resolve_collision" ? "Устранить пересечение" : action === "needs_mapping" ? "Добавить связь с семантикой" : "Изменения не нужны"}</td><td>{semanticImpact.recommendations.filter((item) => item.action === action).length}</td></tr>)}</DataTable><ul>{semanticImpact.next_steps.map((step) => <li key={step}>{step}</li>)}</ul></div> : null}
         {semanticSignals?.cannibalization.map((collision, index) => <p className="muted" key={`${collision.reason}-${index}`}>Предупреждение: {collision.reason} — {collision.plans.map((plan) => plan.slug).join(", ")}</p>)}
         {semanticSignals?.unmapped_plans.length ? <p className="muted">Legacy PagePlan без explicit semantic target: {semanticSignals.unmapped_plans.map((plan) => plan.slug).join(", ")}. Они не считаются покрытием.</p> : null}
       </Surface>

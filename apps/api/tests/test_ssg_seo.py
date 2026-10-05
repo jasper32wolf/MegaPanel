@@ -99,6 +99,45 @@ def test_ssg_writes_the_consent_gated_telemetry_asset_only_when_configured(tmp_p
     assert (current / "site-panel-telemetry.js").exists()
 
 
+def test_ssg_writes_captcha_asset_only_for_a_form_and_reviewed_public_config(tmp_path: Path):
+    site = SiteManifest(
+        site_id=uuid4(),
+        tenant_id=uuid4(),
+        domain="example.test",
+        pages=[
+            PageManifest(
+                slug="/",
+                title_template="Главная",
+                h1_template="Главная",
+                service="Услуги",
+                blocks=[
+                    BlockDef(
+                        type="lead_form",
+                        hash_class="blk-form",
+                        html="<form data-site-panel-lead-form><button>Отправить</button></form>",
+                    )
+                ],
+            )
+        ],
+    )
+    SiteBuilder(tmp_path).build(
+        site,
+        {
+            "captcha": {
+                "provider": "cloudflare_turnstile",
+                "site_key": "public-site-key",
+            }
+        },
+    )
+    current = tmp_path / str(site.site_id) / "current"
+    html = (current / "index.html").read_text(encoding="utf-8")
+
+    assert "site-panel-captcha.js" in html
+    assert 'data-captcha-provider="cloudflare_turnstile"' in html
+    assert "public-site-key" in html
+    assert (current / "site-panel-captcha.js").exists()
+
+
 def test_phone_link_uses_e164_while_visible_copy_is_readable(tmp_path: Path):
     site = SiteManifest(
         site_id=uuid4(),

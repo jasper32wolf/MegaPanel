@@ -20,6 +20,7 @@ from app.models.leads import (
 from app.models.project import LeadOutcome
 from app.schemas.workflow import LeadOutcomeIn
 from app.services.audit import append_audit
+from app.services.captcha import verify_captcha
 from app.services.leads import (
     check_honeypot,
     check_time_lock,
@@ -53,6 +54,7 @@ class PublicLeadIn(BaseModel):
     message: str | None = None
     page_slug: str | None = None
     website: str | None = None
+    captcha_token: str | None = Field(default=None, max_length=4096)
     form_ts: float = Field(allow_inf_nan=False)
     idempotency_key: str = Field(min_length=16, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
     utm: dict = Field(default_factory=dict)
@@ -180,6 +182,9 @@ async def create_public_lead(
     ).scalar_one_or_none()
     if not site:
         raise HTTPException(status_code=404, detail="Site not found")
+    captcha = await verify_captcha(body.captcha_token, remote_ip=ip)
+    if not captcha.allowed:
+        raise HTTPException(status_code=400, detail="Anti-bot verification was not completed")
 
     enc = get_encryptor()
     blind = get_blind()

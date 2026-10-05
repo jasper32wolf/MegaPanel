@@ -83,6 +83,44 @@ def test_semantic_target_rejects_duplicate_collection_members():
         )
 
 
+@pytest.mark.asyncio
+async def test_semantic_impact_is_read_only_and_never_schedules_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    collection_id = uuid4()
+    project_id = uuid4()
+    signals = {
+        "collections": [{"id": str(collection_id), "name": "Новые запросы", "version": 1}],
+        "totals": {"covered": 0, "planned": 0, "uncovered": 1, "unbound": 0},
+        "coverage": [
+            {
+                "collection_keyword_id": str(uuid4()),
+                "geo_binding_id": str(uuid4()),
+                "status": "uncovered",
+                "plans": [],
+            }
+        ],
+        "collisions": [],
+        "unmapped_plans": [],
+    }
+    monkeypatch.setattr(semantic, "semantic_signals", AsyncMock(return_value=signals))
+
+    result = await semantic.semantic_impact(
+        project_id=project_id,
+        collection_id=collection_id,
+        auth=SimpleNamespace(),
+        db=SimpleNamespace(),
+    )
+
+    assert result["recommendations"][0]["action"] == "new_page"
+    assert result["policy"] == {
+        "read_only": True,
+        "automatic_draft": False,
+        "automatic_build": False,
+        "automatic_publish": False,
+    }
+
+
 class SemanticSignalsDatabase:
     def __init__(self, collections: list[object], plans: list[object]):
         self.rows = [collections, plans]
