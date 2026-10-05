@@ -2,16 +2,16 @@ import type { ReactNode } from "react";
 import { Link, NavLink } from "react-router-dom";
 
 const sections = [
-  ["overview", "Overview"],
+  ["overview", "Обзор"],
   ["design", "Дизайн"],
-  ["facts", "Facts"],
-  ["pages", "Pages"],
-  ["releases", "Releases"],
-  ["routing", "Routing"],
+  ["facts", "Данные бизнеса"],
+  ["pages", "Страницы"],
+  ["releases", "Сборки и публикация"],
+  ["routing", "Получение заявок"],
   ["site-structure", "Структура"],
-  ["semantic-coverage", "Coverage"],
+  ["semantic-coverage", "Покрытие запросов"],
   ["city-projects", "Города"],
-  ["activity", "Activity"],
+  ["activity", "История действий"],
 ] as const;
 
 export function ProjectWorkspaceLayout({ projectId, children }: { projectId: string; children: ReactNode }) {

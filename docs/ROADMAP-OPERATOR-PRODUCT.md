@@ -97,6 +97,10 @@
 - В UI должны быть видны причина, версия, затронутые страницы и следующее действие.
 - Автоматическая публикация и IndexNow/drip не являются целью этого этапа.
 
+**Следующий срез (partial, 2026-10-05).** Добавлены reviewed hash-bound графики постепенного разрешения индексации: они создают только одну immutable candidate-сборку due-партии, ожидают явной публикации предыдущей партии и останавливаются при изменении контента/QA. Candidate scheduling получил priority и `not_before`, а worker ограничен одной одновременно выполняемой candidate-сборкой. Это не включает автоматическую публикацию, не отправляет IndexNow и не является гарантией поведения поисковых систем. Полный PostgreSQL/Redis/browser runtime proof ещё обязателен.
+
+Также добавлены видимая HTML-карта сайта, единый безопасный формат отображения российского телефона и более ясное disclosure у lead-формы. CAPTCHA, активная analytics/consent telemetry, search adapters, author/EEAT profiles, automated assistant и exit-offer остаются последующими отдельными срезами.
+
 ### 6. Петля исходов лидов
 
 **Базовый контур реализован.** Append-only LeadOutcome, reason/note/history и aggregate analysis отделены от inbox/delivery state. Результат лида не меняет content или SEO автоматически.
