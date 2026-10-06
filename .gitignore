@@ -43,10 +43,31 @@ debug-*.log
 Thumbs.db
 .DS_Store
 
-# Local agent settings (may contain credentials)
-.claude/settings.json
-.claude/settings.local.json
-.claude/worktrees/
+# Local editor and AI agent state (may contain credentials)
+.claude/
+.cursor/
+.kilo/
+.kilocode/
+.roo/
+.agents/
+.agent/
+.codex/
+.gemini/
+.opencode/
+.windsurf/
+.continue/
+.aider/
+.trae/
+.fleet/
+.zed/
+skills-lock.json
+.mcp.json
+.cursorrules
+.cursorignore
+.cursorindexingignore
+.rooignore
+.aider*
+.envrc
 
 # Runtime
 /data/

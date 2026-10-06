@@ -23,6 +23,8 @@ jobs:
           cache-dependency-path: |
             apps/api/pyproject.toml
             packages/*/pyproject.toml
+      - name: Reject tracked local agent files
+        run: python scripts/check_repo_hygiene.py
       - name: Install
         run: |
           pip install -e packages/shared -e packages/security -e packages/ssg -e packages/block-library
@@ -34,7 +36,7 @@ jobs:
       - name: Ruff
         run: |
           pip install ruff
-          ruff check packages apps/api
+          ruff check packages apps/api scripts/check_repo_hygiene.py
       - name: Tests
         run: pytest apps/api/tests -q
       - name: Trivy FS scan
@@ -114,6 +116,8 @@ jobs:
           cache-dependency-path: |
             apps/api/pyproject.toml
             packages/*/pyproject.toml
+      - name: Reject tracked local agent files
+        run: python scripts/check_repo_hygiene.py
       - name: Install
         run: |
           pip install -e packages/shared -e packages/security -e packages/ssg -e packages/block-library
