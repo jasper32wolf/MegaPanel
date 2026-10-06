@@ -461,6 +461,26 @@ def test_legacy_data_upgrade_from_0019_to_current_head() -> None:
                             "config": json.dumps(crawl_config),
                         },
                     )
+                    for path, payload in (
+                        ("/" + "a" * 511, {"session": "a" * 64}),
+                        ("/" + "a" * 512, {"session": "a" * 64}),
+                        ("/private/?phone=123", {"session": "a" * 64}),
+                        ("/", {"email": "legacy@example.test"}),
+                    ):
+                        await connection.execute(
+                            text(
+                                "INSERT INTO analytics_events "
+                                "(tenant_id, site_id, event, path, payload) "
+                                "VALUES (:tenant, :site, 'page_view', :path, "
+                                "CAST(:payload AS jsonb))"
+                            ),
+                            {
+                                "tenant": tenant_id,
+                                "site": safe_id,
+                                "path": path,
+                                "payload": json.dumps(payload),
+                            },
+                        )
             finally:
                 await isolated_engine.dispose()
 
@@ -512,6 +532,21 @@ def test_legacy_data_upgrade_from_0019_to_current_head() -> None:
                         {"id": invalid_build_id},
                     )
                     assert invalid_status.one() == ("failed", "snapshot_invalid")
+                    telemetry_rows = (
+                        await connection.execute(
+                            text(
+                                "SELECT path, source FROM analytics_events "
+                                "WHERE tenant_id = :tenant ORDER BY id"
+                            ),
+                            {"tenant": tenant_id},
+                        )
+                    ).all()
+                    assert telemetry_rows == [
+                        ("/" + "a" * 511, "first_party"),
+                        ("/" + "a" * 512, "legacy"),
+                        ("/private/?phone=123", "legacy"),
+                        ("/", "legacy"),
+                    ]
                     version_column_length = await connection.scalar(
                         text(
                             "SELECT character_maximum_length FROM information_schema.columns "

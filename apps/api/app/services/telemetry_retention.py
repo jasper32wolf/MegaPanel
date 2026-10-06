@@ -37,7 +37,10 @@ def _valid_first_party():
         )
         .exists(),
         AnalyticsEvent.event.in_(sorted(_ALLOWED_EVENTS)),
-        AnalyticsEvent.path.op("~")(r"^/[^?#]{0,511}$"),
+        func.left(AnalyticsEvent.path, 1) == "/",
+        func.char_length(AnalyticsEvent.path) <= 512,
+        func.strpos(AnalyticsEvent.path, "?") == 0,
+        func.strpos(AnalyticsEvent.path, "#") == 0,
     )
 
 

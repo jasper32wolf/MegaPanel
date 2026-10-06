@@ -33,7 +33,8 @@ def upgrade() -> None:
           AND e.event IN ('page_view', 'form_open', 'form_submit_result',
                           'cta_click', 'assistant_open', 'assistant_submit',
                           'exit_offer_shown', 'exit_offer_accepted')
-          AND e.path ~ '^/[^?#]{0,511}$'
+          AND left(e.path, 1) = '/' AND char_length(e.path) <= 512
+          AND strpos(e.path, '?') = 0 AND strpos(e.path, '#') = 0
           AND jsonb_typeof(e.payload) = 'object'
           AND e.payload - 'session' = '{}'::jsonb
           AND e.payload->>'session' ~ '^[0-9a-f]{64}$'

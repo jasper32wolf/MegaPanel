@@ -8,14 +8,17 @@ from uuid import uuid4
 
 import pytest
 from app.api.v1 import telemetry as telemetry_api
+from app.models.leads import AnalyticsEvent
 from app.services.telemetry import (
     normalize_telemetry_path,
     session_digest,
     telemetry_token,
     verify_telemetry_token,
 )
-from app.services.telemetry_retention import page_view_summary, rollup_and_purge
+from app.services.telemetry_retention import _valid_first_party, page_view_summary, rollup_and_purge
 from fastapi import HTTPException
+from sqlalchemy import select
+from sqlalchemy.dialects import postgresql
 from starlette.requests import Request
 
 
@@ -35,6 +38,18 @@ def test_telemetry_rejects_query_urls_and_never_keeps_raw_session_identity():
     assert normalize_telemetry_path("/repair/#contact") is None
     assert session_digest("session-identifier-123") != "session-identifier-123"
     assert session_digest("short") is None
+    assert normalize_telemetry_path("/" + "a" * 511) == "/" + "a" * 511
+    assert normalize_telemetry_path("/" + "a" * 512) is None
+
+
+def test_rollup_filters_paths_without_unsupported_postgres_regex_repetition():
+    statement = select(AnalyticsEvent.id).where(*_valid_first_party())
+    sql = str(statement.compile(dialect=postgresql.dialect()))
+
+    assert "left(analytics_events.path" in sql
+    assert "char_length(analytics_events.path)" in sql
+    assert "strpos(analytics_events.path" in sql
+    assert "{0,511}" not in sql
 
 
 def test_secure_telemetry_route_and_ssg_script_are_consent_gated():

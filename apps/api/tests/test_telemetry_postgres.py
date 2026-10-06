@@ -81,6 +81,25 @@ def test_rollup_retention_withdrawal_and_utc_boundaries():
                 db.add(
                     _event(tenant_id, site_id, day=yesterday, session=sessions[0], path="/small/")
                 )
+                for index in range(5):
+                    db.add(
+                        _event(
+                            tenant_id, site_id, day=yesterday,
+                            session=f"boundary-session-{index:04d}", path="/" + "a" * 511,
+                        )
+                    )
+                db.add(
+                    _event(
+                        tenant_id, site_id, day=yesterday,
+                        session="invalid-length-session", path="/" + "a" * 512,
+                    )
+                )
+                db.add(
+                    _event(
+                        tenant_id, site_id, day=yesterday,
+                        session="invalid-query-session", path="/private/?phone=123",
+                    )
+                )
                 db.add(
                     AnalyticsEvent(
                         tenant_id=tenant_id,
@@ -108,6 +127,9 @@ def test_rollup_retention_withdrawal_and_utc_boundaries():
                 assert by_path["/recent/"]["page_views"] == 6
                 assert by_path["/today/"]["page_views"] == 5
                 assert by_path["/repeat/"]["consented_session_days"] == 10
+                assert by_path["/" + "a" * 511]["page_views"] == 5
+                assert "/" + "a" * 512 not in by_path
+                assert "/private/?phone=123" not in by_path
                 assert by_path["/small/"]["page_views"] is None
                 assert by_path["/small/"]["consented_session_days"] is None
                 assert "/legacy/" not in by_path
