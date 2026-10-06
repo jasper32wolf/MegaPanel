@@ -148,6 +148,19 @@ def _legal_publish_blockers(manifest: SiteManifest) -> list[str]:
     return [message for key, message in required.items() if not str(legal.get(key) or "").strip()]
 
 
+def _telemetry_retention_blockers(build: SiteBuild) -> list[str]:
+    frozen = (getattr(build, "input_snapshot", None) or {}).get("context") or {}
+    policy = frozen.get("telemetry_retention")
+    if policy is None:  # Existing candidates predate the frozen retention contract.
+        return []
+    if not isinstance(policy, dict) or policy != {
+        "raw_days": settings.telemetry_raw_retention_days,
+        "aggregate_days": settings.telemetry_aggregate_retention_days,
+    }:
+        return ["Telemetry retention changed; rebuild the candidate and repeat legal review"]
+    return []
+
+
 def _record_release_event(db: AsyncSession, *, tenant_id: UUID, outcome: str) -> None:
     record_operational_event(
         db,
@@ -2999,6 +3012,10 @@ async def _freeze_candidate_build_input(
                 site_id=site.id,
                 domain=str(getattr(site, "domain", None) or project.domain or manifest.domain),
             ),
+            "telemetry_retention": {
+                "raw_days": settings.telemetry_raw_retention_days,
+                "aggregate_days": settings.telemetry_aggregate_retention_days,
+            },
             "captcha": captcha_public_config(),
         },
         "index_states": index_states,
@@ -3120,6 +3137,10 @@ async def run_queued_candidate_build(
             "lead_token": site.lead_token,
             "lead_api_url": "/api/v1/leads/public",
             "telemetry_token": str(frozen_context.get("telemetry_token") or ""),
+            "telemetry_retention": dict(
+                frozen_context.get("telemetry_retention")
+                or {"raw_days": 30, "aggregate_days": 365}
+            ),
             "captcha": dict(frozen_context.get("captcha") or {}),
         }
         started = time.perf_counter()
@@ -3501,6 +3522,7 @@ async def publish_project_build(
         *legal_review["blockers"],
         *routing_blockers,
         *media_blockers,
+        *_telemetry_retention_blockers(build),
     ]
     if blockers:
         record_release_transition(action="publish", outcome="blocked")
@@ -3613,6 +3635,7 @@ async def rollback_project_build(
         *legal_review["blockers"],
         *routing_blockers,
         *media_blockers,
+        *_telemetry_retention_blockers(target),
     ]
     if blockers:
         record_release_transition(action="rollback", outcome="blocked")

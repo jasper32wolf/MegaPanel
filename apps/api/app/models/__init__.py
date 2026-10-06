@@ -248,7 +248,9 @@ from app.models.blocks import (  # noqa: E402
 from app.models.design_profile import DesignProfileAssignment, DesignProfileRevision  # noqa: E402
 from app.models.github_workflow_delivery import GitHubWorkflowRunDelivery  # noqa: E402
 from app.models.leads import (  # noqa: E402
+    AnalyticsDailyAggregate,
     AnalyticsEvent,
+    AnalyticsRevokedSession,
     Consent,
     Lead,
     LeadDeliveryAggregate,
@@ -319,7 +321,9 @@ __all__ = [
     "AIRun",
     "AIProviderConnection",
     "AlertIncident",
+    "AnalyticsDailyAggregate",
     "AnalyticsEvent",
+    "AnalyticsRevokedSession",
     "ApiKey",
     "AuthSession",
     "AuditLog",

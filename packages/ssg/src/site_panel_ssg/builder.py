@@ -108,21 +108,68 @@ LEAD_FORM_SCRIPT = """(() => {
 
 
 TELEMETRY_SCRIPT = """(() => {
-  const script = document.currentScript;
-  const token = script?.getAttribute("data-telemetry-token");
+  const token = document.currentScript?.getAttribute("data-telemetry-token");
+  if (!token) return;
   const noTrack = navigator.globalPrivacyControl || navigator.doNotTrack === "1";
-  if (!token || noTrack) return;
   const key = "sp_telemetry_session";
+  const pendingKey = "sp_telemetry_revoke_pending";
+  const read = (name) => {
+    try { return sessionStorage.getItem(name); } catch { return null; }
+  };
+  const remove = (name) => {
+    try { sessionStorage.removeItem(name); } catch { /* Storage blocked. */ }
+  };
+  const pending = () => {
+    try {
+      const values = JSON.parse(read(pendingKey) || "[]");
+      return Array.isArray(values) ? values.filter((v) => typeof v === "string") : [];
+    } catch { return []; }
+  };
+  const savePending = (values) => {
+    try {
+      if (values.length) sessionStorage.setItem(pendingKey, JSON.stringify(values));
+      else remove(pendingKey);
+    } catch { /* Storage blocked. */ }
+  };
+  let revoking = false;
+  const retryRevocation = () => {
+    const value = pending()[0];
+    if (!value || revoking) return;
+    revoking = true;
+    fetch("/api/v1/telemetry/revoke", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      keepalive: true,
+      body: JSON.stringify({ token, session_id: value }),
+    }).then((response) => {
+      if (response.ok) savePending(pending().filter((item) => item !== value));
+      return response.ok;
+    }).catch(() => false).then((success) => {
+      revoking = false;
+      if (success) retryRevocation();
+    });
+  };
+  const withdraw = () => {
+    const value = read(key);
+    if (value && !pending().includes(value)) savePending([...pending(), value]);
+    remove(key);
+    sent = false;
+    retryRevocation();
+  };
   const session = () => {
-    let value = sessionStorage.getItem(key);
-    if (!value) {
-      value = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
-      sessionStorage.setItem(key, value);
+    let value = read(key);
+    if (!value && window.crypto?.randomUUID) {
+      value = window.crypto.randomUUID();
+      try { sessionStorage.setItem(key, value); } catch { return null; }
     }
     return value;
   };
+  let sent = false;
   const send = (event) => {
-    if (!window.__spConsent?.analytics || !event) return;
+    if (noTrack || !window.__spConsent?.analytics || !event || sent) return;
+    const sessionId = session();
+    if (!sessionId) return;
+    sent = true;
     fetch("/api/v1/telemetry/collect", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -131,13 +178,18 @@ TELEMETRY_SCRIPT = """(() => {
         token,
         event,
         path: location.pathname,
-        session_id: session(),
+        session_id: sessionId,
         consent_analytics: true,
       }),
     }).catch(() => undefined);
   };
-  document.addEventListener("sp:consent", () => send("page_view"));
-  if (window.__spConsent?.analytics) send("page_view");
+  document.addEventListener("sp:consent", () => {
+    if (!window.__spConsent?.analytics || noTrack) withdraw();
+    else send("page_view");
+  });
+  retryRevocation();
+  if (!window.__spConsent?.analytics || noTrack) withdraw();
+  else send("page_view");
 })();
 """
 
@@ -371,6 +423,13 @@ def render_html_sitemap(
         links.append(f'      <li><a href="{href}">{title}</a></li>')
     body = "\n".join(links) or "      <li>Страницы для индексации пока не разрешены.</li>"
     canonical = escape(page_url(site.domain, "/sitemap"), quote=True)
+    telemetry_token = str(context.get("telemetry_token") or "")
+    telemetry_script = (
+        '<script src="/site-panel-telemetry.js" '
+        f'data-telemetry-token="{escape(telemetry_token, quote=True)}" defer></script>'
+        if telemetry_token
+        else ""
+    )
     return f"""<!DOCTYPE html>
 <html lang="{escape(site.locale, quote=True)}">
 <head>
@@ -387,6 +446,8 @@ def render_html_sitemap(
 {body}
     </ul>
   </main>
+  <script src="/cookie-banner.js" defer></script>
+  {telemetry_script}
 </body>
 </html>
 """
@@ -429,6 +490,20 @@ def write_precompressed(path: Path) -> None:
 
 def _exists(path: Path) -> bool:
     return path.exists() or path.is_symlink()
+
+
+def _artifact_tree_hash(directory: Path) -> str:
+    digest = hashlib.sha256()
+    for artifact in sorted(
+        directory.rglob("*"), key=lambda item: item.relative_to(directory).as_posix()
+    ):
+        if not artifact.is_file() or artifact.suffix == ".gz":
+            continue
+        digest.update(artifact.relative_to(directory).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        with artifact.open("rb") as source:
+            digest.update(hashlib.file_digest(source, "sha256").digest())
+    return digest.hexdigest()
 
 
 class SiteBuilder:
@@ -754,7 +829,20 @@ class SiteBuilder:
             if compress:
                 write_precompressed(html_sitemap)
             _validate_release_artifacts(staging, site, page_meta)
-            write_legal_pack(staging, site.legal or {})
+            telemetry_token = str(ctx.get("telemetry_token") or "")
+            retention = dict(ctx.get("telemetry_retention") or {})
+            write_legal_pack(
+                staging,
+                site.legal or {},
+                telemetry_token=telemetry_token,
+                raw_days=int(retention.get("raw_days", 30)),
+                aggregate_days=int(retention.get("aggregate_days", 365)),
+            )
+            if telemetry_token:
+                (staging / "site-panel-telemetry.js").write_text(
+                    TELEMETRY_SCRIPT, encoding="utf-8"
+                )
+            hashes.append(_artifact_tree_hash(staging))
             assets_hash = hashlib.sha256(
                 json.dumps(
                     assets_meta, ensure_ascii=False, sort_keys=True, separators=(",", ":")

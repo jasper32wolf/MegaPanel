@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     health_readiness_timeout_seconds: float = Field(default=2.0, gt=0, le=10)
     worker_heartbeat_interval_seconds: Literal[10, 12, 15, 20, 30, 60] = 30
     worker_heartbeat_stale_after_seconds: int = Field(default=90, ge=30, le=900)
+    telemetry_raw_retention_days: int = Field(default=30, ge=7, le=90)
+    telemetry_aggregate_retention_days: int = Field(default=365, ge=90, le=730)
 
     sentry_dsn: str = ""
     log_level: str = "INFO"
@@ -94,6 +96,8 @@ class Settings(BaseSettings):
             raise ValueError(
                 "WORKER_HEARTBEAT_STALE_AFTER_SECONDS must cover two heartbeat intervals"
             )
+        if self.telemetry_aggregate_retention_days < self.telemetry_raw_retention_days:
+            raise ValueError("Aggregate telemetry retention must cover raw telemetry retention")
         smtp_values = (self.smtp_host, self.smtp_username, self.smtp_password, self.smtp_from_email)
         if any(smtp_values):
             if not self.smtp_configured:

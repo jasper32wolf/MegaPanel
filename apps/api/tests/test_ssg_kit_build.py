@@ -54,20 +54,20 @@ def test_ssg_kit_build_contains_core_blocks(tmp_path: Path):
         contacts={"phone": "+7000"},
         legal={"org": "Test"},
     )
-    result = SiteBuilder(tmp_path).build(
-        site,
-        {
-            "city_prep": "Москве",
-            "city_nom": "Москва",
-            "city_gen": "Москвы",
-            "phone": "+7000",
-            "service": "Ремонт",
-            "modifier": "Срочный",
-            "price": "990",
-            "lead_token": "t" * 32,
-            "lead_api_url": "/api/v1/leads/public",
-        },
-    )
+    context = {
+        "city_prep": "Москве",
+        "city_nom": "Москва",
+        "city_gen": "Москвы",
+        "phone": "+7000",
+        "service": "Ремонт",
+        "modifier": "Срочный",
+        "price": "990",
+        "lead_token": "t" * 32,
+        "lead_api_url": "/api/v1/leads/public",
+        "telemetry_token": "site-scoped-test-token",
+        "telemetry_retention": {"raw_days": 30, "aggregate_days": 365},
+    }
+    result = SiteBuilder(tmp_path).build(site, context)
     assert result["build_hash"]
     html = (tmp_path / str(site_id) / "current" / "index.html").read_text(encoding="utf-8")
     assert 'data-block="hero"' in html
@@ -85,7 +85,13 @@ def test_ssg_kit_build_contains_core_blocks(tmp_path: Path):
     assert 'src="cookie-banner.js"' in html
     root = tmp_path / str(site_id) / "current"
     nested = root / "district"
-    assert (root / "cookie-policy" / "index.html").exists()
+    cookies_html = (root / "cookie-policy" / "index.html").read_text(encoding="utf-8")
+    assert 'src="/site-panel-telemetry.js"' in cookies_html
+    assert 'data-telemetry-token="site-scoped-test-token"' in cookies_html
+    assert (root / "site-panel-telemetry.js").exists()
+    sitemap_html = (root / "sitemap" / "index.html").read_text(encoding="utf-8")
+    assert 'src="/cookie-banner.js"' in sitemap_html
+    assert 'src="/site-panel-telemetry.js"' in sitemap_html
     assert (root / "site-panel-leads.js").exists()
     assert (root / "cookie-banner.js").exists()
     nested_html = (nested / "index.html").read_text(encoding="utf-8")
@@ -98,6 +104,29 @@ def test_ssg_kit_build_contains_core_blocks(tmp_path: Path):
     assert "const minFormAge = 2500;" in lead_script
     assert "button.disabled = true;" in lead_script
     assert "prepareForm(form);" in lead_script
+
+    repeated = SiteBuilder(tmp_path).build(site, context, activate=False)
+    assert repeated["build_hash"] == result["build_hash"]
+
+    changed_site = site.model_copy(deep=True)
+    changed_site.legal["privacy_email"] = "privacy@example.test"
+    changed = SiteBuilder(tmp_path).build(changed_site, context, activate=False)
+    assert changed["build_hash"] != result["build_hash"]
+    changed_root = Path(changed["release_path"])
+    assert (changed_root / "index.html").read_text(encoding="utf-8") == html
+    assert "privacy@example.test" in (
+        changed_root / "privacy" / "index.html"
+    ).read_text(encoding="utf-8")
+
+    policy_context = {
+        **context,
+        "telemetry_retention": {"raw_days": 45, "aggregate_days": 180},
+    }
+    policy_build = SiteBuilder(tmp_path).build(site, policy_context, activate=False)
+    assert policy_build["build_hash"] != result["build_hash"]
+    policy_privacy = Path(policy_build["release_path"]) / "privacy" / "index.html"
+    assert "45 завершённых" in policy_privacy.read_text(encoding="utf-8")
+    assert "180 дней" in policy_privacy.read_text(encoding="utf-8")
 
 
 def test_candidate_build_copies_hashed_local_media_for_root_and_nested_pages(tmp_path: Path):

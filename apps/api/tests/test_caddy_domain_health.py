@@ -22,6 +22,18 @@ def test_caddy_site_vhost_proxies_lead_form_same_origin():
     assert route["terminal"] is True
 
 
+def test_caddy_site_vhost_proxies_only_public_telemetry_posts():
+    client = CaddyClient(base_url="http://127.0.0.1:9")
+    route = client._telemetry_proxy_route()
+
+    assert route["match"] == [{
+        "path": ["/api/v1/telemetry/collect", "/api/v1/telemetry/revoke"],
+        "method": ["POST"],
+    }]
+    assert route["handle"][0]["upstreams"] == [{"dial": "api:8000"}]
+    assert route["terminal"] is True
+
+
 def test_caddy_site_vhost_is_inserted_before_the_static_fallback():
     client = CaddyClient(base_url="http://127.0.0.1:9")
     calls = []
@@ -37,6 +49,12 @@ def test_caddy_site_vhost_is_inserted_before_the_static_fallback():
     assert calls[0][:2] == ("PUT", "/id/site-example.test")
     assert calls[1][:2] == ("POST", "/config/apps/http/servers/srv0/routes/0")
     assert calls[1][2] == calls[0][2]
+    routes = calls[1][2]["handle"][0]["routes"]
+    assert [route["match"][0]["path"] for route in routes] == [
+        ["/api/v1/leads/public"],
+        ["/api/v1/telemetry/collect", "/api/v1/telemetry/revoke"],
+    ]
+    assert calls[1][2]["handle"][-1]["handler"] == "file_server"
 
 
 def test_caddy_site_vhost_has_the_minimum_client_security_headers():

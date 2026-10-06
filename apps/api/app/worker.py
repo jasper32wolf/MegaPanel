@@ -34,6 +34,7 @@ from app.services.scheduler import (
     recover_expired_scheduler_leases,
 )
 from app.services.site_build_queue import expire_stale_site_builds
+from app.services.telemetry_retention import rollup_and_purge
 from app.services.webhook_delivery import due_delivery_ids, process_delivery, recover_expired_leases
 from app.services.worker_heartbeat import record_worker_heartbeat
 
@@ -209,6 +210,18 @@ async def candidate_build_sweep_task(ctx: dict) -> dict:
     except Exception:  # noqa: BLE001
         logger.exception("candidate_build_sweep_failed")
         return {"status": "failed", "error_code": "worker_sweep_failed"}
+
+
+async def telemetry_retention_task(ctx: dict) -> dict:
+    """Commit daily counts and raw-event deletion together; no external delivery."""
+    try:
+        async with open_db_session() as session:
+            result = await rollup_and_purge(session)
+        logger.info("telemetry_retention_completed", **result)
+        return result
+    except Exception:  # noqa: BLE001
+        logger.exception("telemetry_retention_failed")
+        return {"status": "failed", "error_code": "telemetry_retention_failed"}
 
 
 async def index_schedule_sweep_task(ctx: dict) -> dict:
@@ -476,6 +489,7 @@ class WorkerSettings:
         scheduler_execute_task,
         candidate_build_task,
         candidate_build_sweep_task,
+        telemetry_retention_task,
         index_schedule_sweep_task,
         competitor_crawl_task,
         operational_incident_auto_resolve_task,
@@ -490,6 +504,7 @@ class WorkerSettings:
         cron(bukvarix_keyword_sweep_task, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}),
         cron(index_schedule_sweep_task, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}),
         cron(candidate_build_sweep_task, minute=set(range(60)), run_at_startup=True),
+        cron(telemetry_retention_task, hour=3, minute=17, run_at_startup=True),
         cron(
             operational_incident_auto_resolve_task,
             minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55},

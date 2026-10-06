@@ -61,6 +61,18 @@ class CaddyClient:
             "terminal": True,
         }
 
+    def _telemetry_proxy_route(self) -> dict:
+        return {
+            "match": [
+                {
+                    "path": ["/api/v1/telemetry/collect", "/api/v1/telemetry/revoke"],
+                    "method": ["POST"],
+                }
+            ],
+            "handle": [{"handler": "reverse_proxy", "upstreams": [{"dial": "api:8000"}]}],
+            "terminal": True,
+        }
+
     async def upsert_site_vhost(
         self,
         hostname: str,
@@ -74,7 +86,10 @@ class CaddyClient:
         Path-scoped noindex via subroute matchers (TZ 7.1).
         """
         handlers: list[dict[str, Any]] = [
-            {"handler": "subroute", "routes": [self._lead_form_proxy_route()]},
+            {
+                "handler": "subroute",
+                "routes": [self._lead_form_proxy_route(), self._telemetry_proxy_route()],
+            },
             {
                 "handler": "headers",
                 "response": {

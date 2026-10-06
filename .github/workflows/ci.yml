@@ -167,7 +167,7 @@ jobs:
       - name: Worker delivery, RLS, budget and lead idempotency integration
         run: |
           cd apps/api
-          pytest tests/test_webhook_delivery.py tests/test_postgres_rls.py tests/test_scheduler_postgres.py tests/test_ai_budget_reservation.py tests/test_leads_ab.py -q -k 'not legacy_data_upgrade_from_0019_to_current_head'
+          pytest tests/test_webhook_delivery.py tests/test_postgres_rls.py tests/test_scheduler_postgres.py tests/test_telemetry_postgres.py tests/test_ai_budget_reservation.py tests/test_leads_ab.py -q -k 'not legacy_data_upgrade_from_0019_to_current_head'
       - name: Configure Docker Buildx cache
         uses: docker/setup-buildx-action@v3
       - name: Build cached worker production image
