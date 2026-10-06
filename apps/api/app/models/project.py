@@ -252,6 +252,12 @@ class PageDraft(Base):
     page_plan_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("page_plans.id", ondelete="CASCADE"), index=True
     )
+    author_profile_revision_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("author_profile_revisions.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
     project_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), index=True
     )

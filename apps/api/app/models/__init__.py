@@ -235,6 +235,7 @@ from app.models.ai import (  # noqa: E402
     PromptEvaluationRun,
 )
 from app.models.ai_provider import AIProviderConnection, AIRun  # noqa: E402
+from app.models.author_profile import AuthorProfileRevision  # noqa: E402
 from app.models.blocks import (  # noqa: E402
     BlockKit,
     BlockKitItem,
@@ -316,6 +317,7 @@ __all__ = [
     "ApiKey",
     "AuthSession",
     "AuditLog",
+    "AuthorProfileRevision",
     "BlockKit",
     "BlockKitItem",
     "BuildReleaseGate",

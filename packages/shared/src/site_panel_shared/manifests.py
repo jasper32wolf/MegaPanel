@@ -52,6 +52,20 @@ class DesignSnapshot(BaseModel):
     art_direction: dict[str, Any] = Field(default_factory=dict, max_length=16)
 
 
+class AuthorProfileSnapshot(BaseModel):
+    """Reviewed author facts frozen in the page artifact that displays them."""
+
+    revision_id: UUID
+    profile_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    slug: str = Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+    name: str = Field(min_length=2, max_length=255)
+    role: str = Field(min_length=2, max_length=255)
+    biography: str = Field(min_length=40, max_length=4_000)
+    expertise: list[str] = Field(min_length=1, max_length=12)
+    evidence: list[str] = Field(min_length=1, max_length=12)
+    portrait: PageMedia
+
+
 class PageManifest(BaseModel):
     slug: str
     title_template: str
@@ -70,6 +84,7 @@ class PageManifest(BaseModel):
     block_media: dict[str, PageMedia] = Field(default_factory=dict, max_length=12)
     schema_org: dict[str, Any] = Field(default_factory=dict)
     design: DesignSnapshot | None = None
+    author: AuthorProfileSnapshot | None = None
     seed: int = 0
 
     @model_validator(mode="after")
@@ -81,10 +96,12 @@ class PageManifest(BaseModel):
         if unknown_block_ids:
             raise ValueError("Block media must target a page block")
         asset_ids = [item.asset_id for item in [*self.media, *self.block_media.values()]]
+        if self.author:
+            asset_ids.append(self.author.portrait.asset_id)
         if len(asset_ids) != len(set(asset_ids)):
             raise ValueError("Page media assets must be unique")
-        if len(asset_ids) > 12:
-            raise ValueError("A page can contain at most 12 media assets")
+        if len(asset_ids) > 13:
+            raise ValueError("A page can contain at most 12 media assets and one author portrait")
         return self
 
 

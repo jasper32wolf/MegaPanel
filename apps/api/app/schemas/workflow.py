@@ -320,6 +320,12 @@ class PageDraftBlockMediaAttachIn(PageDraftMediaAttachIn):
     block_id: str = Field(min_length=1, max_length=128)
 
 
+class PageDraftAuthorAttachIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    author_profile_revision_id: UUID
+
+
 class QaOverrideIn(BaseModel):
     reason: Literal["operator_review", "known_exception", "approved_legal_copy"]
     justification: str = Field(min_length=10, max_length=2000)

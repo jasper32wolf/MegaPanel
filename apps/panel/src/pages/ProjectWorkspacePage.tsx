@@ -21,7 +21,8 @@ type BukvarixStatus = { enabled: true; status: "https_public_free"; message: str
 type BukvarixKeywordResult = { id: string; source_project_keyword_id: string; phrase: string; metrics: number[] };
 type BukvarixKeywordRun = { id: string; project_id: string; status: "queued" | "running" | "completed" | "failed"; provider_mode: "https_public_free"; query_count: number; result_count: number; failure_code: string | null; committed_source_run_id: string | null; queued_at: string | null; started_at: string | null; completed_at: string | null; created_at: string | null; results: BukvarixKeywordResult[] };
 type SemanticSourceRun = { id: string; project_id: string; provider: "bukvarix"; acquisition: "manual_export" | "https_public_free"; mode: "domain" | "compare" | "multi_domain"; source_label: string; observed_at: string; notes: string | null; selected_keyword_count: number; created_at: string | null };
-type Draft = { id: string; page_plan_id: string; revision: number; state: string; content_hash: string | null; last_qa_verdict: string | null; qa_runs: { verdict: string; findings: { verdict: string; rule: string; evidence: string }[] }[]; page_manifest: { blocks?: { type?: unknown }[] } & Record<string, unknown>; failure_message: string | null };
+type Draft = { id: string; page_plan_id: string; author_profile_revision_id: string | null; revision: number; state: string; content_hash: string | null; last_qa_verdict: string | null; qa_runs: { verdict: string; findings: { verdict: string; rule: string; evidence: string }[] }[]; page_manifest: { blocks?: { type?: unknown }[] } & Record<string, unknown>; failure_message: string | null };
+type AuthorProfile = { id: string; supersedes_id: string | null; profile_hash: string; version: number; state: "draft" | "review" | "approved" | "rejected"; profile: { slug: string; name: string; role: string; biography: string; expertise: string[]; evidence: string[]; portrait_asset_id: string }; decision_reason: string | null };
 type Coverage = { selected: number; covered: number; uncovered: { keyword_id: string; phrase: string }[]; plans: number };
 type IndexPromotion = { id: string; reason: string; decided_at: string | null };
 type IndexPromotionCandidate = { slug: string; source_hash: string; qa_verdict: string | null; status: "approved" | "eligible" | "stale"; promotion: IndexPromotion | null };
@@ -119,6 +120,16 @@ export function ProjectWorkspacePage() {
   const [mediaBlockId, setMediaBlockId] = useState("");
   const [mediaAssetId, setMediaAssetId] = useState("");
   const [mediaAlt, setMediaAlt] = useState("");
+  const [authorProfiles, setAuthorProfiles] = useState<AuthorProfile[]>([]);
+  const [authorDraftId, setAuthorDraftId] = useState("");
+  const [authorRevisionId, setAuthorRevisionId] = useState("");
+  const [authorSlug, setAuthorSlug] = useState("");
+  const [authorName, setAuthorName] = useState("");
+  const [authorRole, setAuthorRole] = useState("");
+  const [authorBiography, setAuthorBiography] = useState("");
+  const [authorExpertise, setAuthorExpertise] = useState("");
+  const [authorEvidence, setAuthorEvidence] = useState("");
+  const [authorPortraitAssetId, setAuthorPortraitAssetId] = useState("");
   const [organization, setOrganization] = useState("");
   const [service, setService] = useState("");
   const [phone, setPhone] = useState("");
@@ -177,7 +188,7 @@ export function ProjectWorkspacePage() {
   );
 
   async function load() {
-    const [nextProject, nextFacts, nextKeywords, nextProjectKeywords, nextPlaces, nextProjectGeo, nextPlans, nextDrafts, nextCoverage, nextAssetUsage, nextIndexPromotions, nextIndexSchedules, nextSeoRuns, nextSlotRuns, nextCollections, nextSignals, nextStructureRevisions, nextBukvarixStatus, nextBukvarixRuns, nextSourceRuns] = await Promise.all([
+    const [nextProject, nextFacts, nextKeywords, nextProjectKeywords, nextPlaces, nextProjectGeo, nextPlans, nextDrafts, nextCoverage, nextAssetUsage, nextIndexPromotions, nextIndexSchedules, nextSeoRuns, nextSlotRuns, nextCollections, nextSignals, nextStructureRevisions, nextBukvarixStatus, nextBukvarixRuns, nextSourceRuns, nextAuthors] = await Promise.all([
       api<Project>(`/api/v1/projects/${projectId}`, {}, token),
       api<FactRevision[]>(`/api/v1/projects/${projectId}/facts`, {}, token),
       api<{ items: Keyword[] }>("/api/v1/keywords?limit=100", {}, token),
@@ -198,6 +209,7 @@ export function ProjectWorkspacePage() {
       api<BukvarixStatus>(`/api/v1/projects/${projectId}/semantic-sources/bukvarix/status`, {}, token),
       api<BukvarixKeywordRun[]>(`/api/v1/projects/${projectId}/bukvarix-keyword-runs`, {}, token),
       api<SemanticSourceRun[]>(`/api/v1/projects/${projectId}/semantic-source-runs`, {}, token),
+      api<AuthorProfile[]>(`/api/v1/projects/${projectId}/authors`, {}, token),
     ]);
     setProject(nextProject);
     setFacts(nextFacts);
@@ -224,6 +236,7 @@ export function ProjectWorkspacePage() {
     setBukvarixStatus(nextBukvarixStatus);
     setBukvarixRuns(nextBukvarixRuns);
     setSemanticSourceRuns(nextSourceRuns);
+    setAuthorProfiles(nextAuthors);
     if (nextProject.site_id) {
       const routing = await api<{ items: LeadRoutingPolicy[] }>(
         `/api/v1/projects/${projectId}/lead-routing`,
@@ -812,6 +825,63 @@ export function ProjectWorkspacePage() {
     setMediaAlt("");
   }
 
+  function authorLines(value: string) {
+    return value.split("\n").map((item) => item.trim()).filter(Boolean);
+  }
+
+  async function createAuthorProfile() {
+    if (!authorPortraitAssetId || !authorSlug.trim() || !authorName.trim() || !authorRole.trim()) return;
+    await run(
+      "author-create",
+      () => api(
+        `/api/v1/projects/${projectId}/authors`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            profile: {
+              slug: authorSlug.trim(),
+              name: authorName.trim(),
+              role: authorRole.trim(),
+              biography: authorBiography.trim(),
+              expertise: authorLines(authorExpertise),
+              evidence: authorLines(authorEvidence),
+              portrait_asset_id: authorPortraitAssetId,
+            },
+          }),
+        },
+        token,
+      ),
+      "Создана черновая ревизия автора. Её нужно отдельно отправить на проверку и одобрить.",
+    );
+  }
+
+  async function decideAuthorProfile(profile: AuthorProfile, action: "submit-review" | "approve") {
+    await run(
+      `author-${action}:${profile.id}`,
+      () => api(
+        `/api/v1/projects/${projectId}/authors/${profile.id}/${action}`,
+        { method: "POST", body: action === "approve" ? JSON.stringify({}) : undefined },
+        token,
+      ),
+      action === "approve"
+        ? "Ревизия автора одобрена. Её можно привязать к новому или ещё не проверенному черновику."
+        : "Ревизия автора отправлена на ручную проверку.",
+    );
+  }
+
+  async function attachDraftAuthor() {
+    if (!authorDraftId || !authorRevisionId) return;
+    await run(
+      `draft-author:${authorDraftId}`,
+      () => api(
+        `/api/v1/projects/${projectId}/page-drafts/${authorDraftId}/author`,
+        { method: "POST", body: JSON.stringify({ author_profile_revision_id: authorRevisionId }) },
+        token,
+      ),
+      "Подтверждённый автор и его портрет зафиксированы в черновике. QA и ручную проверку нужно выполнить заново.",
+    );
+  }
+
   async function qa(draft: Draft) {
     await run(`qa:${draft.id}`, () => api(`/api/v1/projects/${projectId}/page-drafts/${draft.id}/qa`, { method: "POST" }, token), "Проверка качества завершена.");
   }
@@ -1143,7 +1213,28 @@ export function ProjectWorkspacePage() {
           <button className="btn btn-ghost" type="button" disabled={busy !== null || !mediaDraftId || !mediaAssetId || !mediaAlt.trim()} onClick={() => void attachDraftMedia()}>{busy?.startsWith("draft-media:") ? "Прикрепление…" : "Прикрепить к draft"}</button>
         </div>
       </Surface>
-      <Surface title="4.5. Использование media в snapshots">
+      <Surface title="4.5. Проверенный автор страницы">
+        <p className="muted">Укажите только проверяемые сведения о реальном авторе. ИИ не создаёт автора, квалификации, опыт или портрет. Портрет берётся только из уже проверенной медиатеки; после привязки он, данные автора и их SHA-256 войдут в immutable candidate.</p>
+        <div className="detail-grid">
+          <label className="field">Публичный адрес автора<input value={authorSlug} onChange={(event) => setAuthorSlug(event.target.value)} maxLength={160} placeholder="ivan-petrov" /><span className="muted">Латинские строчные буквы, цифры и дефисы.</span></label>
+          <label className="field">Имя автора<input value={authorName} onChange={(event) => setAuthorName(event.target.value)} maxLength={255} placeholder="Иван Петров" /></label>
+          <label className="field">Роль<input value={authorRole} onChange={(event) => setAuthorRole(event.target.value)} maxLength={255} placeholder="Руководитель сервисной службы" /></label>
+          <label className="field">Портрет из медиатеки<select value={authorPortraitAssetId} onChange={(event) => setAuthorPortraitAssetId(event.target.value)}><option value="">Выберите проверенный файл</option>{mediaAssets.filter((asset) => asset.availability === "eligible").map((asset) => <option key={asset.id} value={asset.id}>{asset.author || "Без автора"} · {asset.license || "rights declared"} · {asset.hashes.stored_sha256?.slice(0, 12)}</option>)}</select></label>
+        </div>
+        <label className="field">Краткая биография<textarea value={authorBiography} onChange={(event) => setAuthorBiography(event.target.value)} minLength={40} maxLength={4000} placeholder="Только факты, которые оператор может проверить перед публикацией." /></label>
+        <div className="detail-grid">
+          <label className="field">Экспертиза<textarea value={authorExpertise} onChange={(event) => setAuthorExpertise(event.target.value)} placeholder={"Один проверяемый пункт на строку\nДиагностика оборудования"} /></label>
+          <label className="field">Основания для публикации<textarea value={authorEvidence} onChange={(event) => setAuthorEvidence(event.target.value)} placeholder={"Один источник на строку\nВнутренний приказ о назначении"} /></label>
+        </div>
+        <button className="btn btn-ghost" type="button" disabled={busy !== null || !authorPortraitAssetId || !authorSlug.trim() || !authorName.trim() || !authorRole.trim() || authorBiography.trim().length < 40 || !authorLines(authorExpertise).length || !authorLines(authorEvidence).length} onClick={() => void createAuthorProfile()}>{busy === "author-create" ? "Сохранение…" : "Создать черновик автора"}</button>
+        {authorProfiles.length > 0 ? <DataTable headers={["Автор", "Версия", "Статус", "Действия"]}>{authorProfiles.map((profile) => <tr key={profile.id}><td><strong>{profile.profile.name}</strong><p className="muted">{profile.profile.role} · {profile.profile.slug}</p>{profile.decision_reason && <p className="error">{profile.decision_reason}</p>}</td><td>{profile.version}<p className="muted">{profile.profile_hash.slice(0, 12)}</p></td><td><StatusPill tone={tone(profile.state)}>{profile.state === "review" ? "на проверке" : profile.state === "approved" ? "одобрен" : profile.state === "rejected" ? "отклонён" : "черновик"}</StatusPill></td><td className="row">{profile.state === "draft" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void decideAuthorProfile(profile, "submit-review")}>На проверку</button>}{profile.state === "review" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void decideAuthorProfile(profile, "approve")}>Одобрить</button>}</td></tr>)}</DataTable> : <EmptyState title="Профилей автора пока нет" hint="Создайте ревизию только из проверенных фактов и портрета." />}
+        <div className="stack">
+          <label className="field">Черновик страницы<select value={authorDraftId} onChange={(event) => setAuthorDraftId(event.target.value)}><option value="">Выберите черновик</option>{drafts.filter((draft) => draft.state === "draft").map((draft) => <option key={draft.id} value={draft.id}>{plans.find((plan) => plan.id === draft.page_plan_id)?.slug || draft.id} · rev {draft.revision}</option>)}</select></label>
+          <label className="field">Одобренная ревизия автора<select value={authorRevisionId} onChange={(event) => setAuthorRevisionId(event.target.value)}><option value="">Выберите автора</option>{authorProfiles.filter((profile) => profile.state === "approved").map((profile) => <option key={profile.id} value={profile.id}>{profile.profile.name} · rev {profile.version}</option>)}</select></label>
+          <button className="btn btn-ghost" type="button" disabled={busy !== null || !authorDraftId || !authorRevisionId} onClick={() => void attachDraftAuthor()}>{busy?.startsWith("draft-author:") ? "Привязка…" : "Привязать автора к черновику"}</button>
+        </div>
+      </Surface>
+      <Surface title="4.6. Использование media в snapshots">
         <p className="muted">Это derived projection из draft и immutable snapshots всех ready, текущих и исторических release builds. Current status проверяет живую запись, rights, expiry, hash и локальный файл; недоступность не удаляет историческое использование и не переписывает release.</p>
         {assetUsage.length === 0 ? <EmptyState title="В draft и build snapshots нет прикреплённых media" hint="Использование появится после прикрепления файла к draft." /> : <DataTable headers={["Scope", "Страница", "Размещение", "Ассет", "Current status"]}>{assetUsage.map((usage) => <tr key={`${usage.scope}-${usage.source.draft_id || usage.source.build_id}-${usage.slug}-${usage.placement}-${usage.asset_id}`}><td><StatusPill tone={usage.scope === "published" ? "ok" : usage.scope === "candidate" ? "warn" : "accent"}>{usage.scope}</StatusPill></td><td>{usage.slug}</td><td>{usage.placement}</td><td>{usage.asset_id.slice(0, 8)} · {usage.expected_sha256.slice(0, 12)}</td><td><StatusPill tone={usage.current_status === "verified" ? "ok" : "danger"}>{usage.current_status}</StatusPill></td></tr>)}</DataTable>}
       </Surface>

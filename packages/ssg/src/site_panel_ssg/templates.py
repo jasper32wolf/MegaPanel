@@ -71,6 +71,10 @@ def render_page(
         " main{max-width:960px;margin:0 auto;padding:1rem;}"
         " .sp-block-media{margin:1rem 0}"
         " .sp-block-media img{display:block;max-width:100%;height:auto}"
+        " .sp-author{display:grid;grid-template-columns:minmax(0,1fr);gap:1rem;"
+        "margin:2rem 0;padding:1rem;border:1px solid #d7dbe2;border-radius:.75rem;}"
+        " .sp-author__portrait{width:112px;height:112px;object-fit:cover;border-radius:50%;}"
+        " .sp-author__meta{margin:0;color:#444}"
     )
 
     has_hero = any(block.type == "hero" for block in blocks)
@@ -116,6 +120,28 @@ def render_page(
     body = "\n".join([*body_parts, media_html] if media_html else body_parts)
     h1_html = "" if has_hero else f"<h1>{h1}</h1>"
     unique_html = "" if has_hero or not unique else f'<p class="unique-core">{unique}</p>'
+    author_html = ""
+    if page.author:
+        author = page.author
+        portrait_url = (media_urls or {}).get(str(author.portrait.asset_id))
+        portrait_html = (
+            f'<img class="sp-author__portrait" src="{escape(portrait_url, quote=True)}" '
+            f'alt="{escape(author.portrait.alt, quote=True)}" loading="lazy" decoding="async">'
+            if portrait_url
+            else ""
+        )
+        expertise = "".join(f"<li>{escape(item)}</li>" for item in author.expertise)
+        evidence = "".join(f"<li>{escape(item)}</li>" for item in author.evidence)
+        author_html = f'''<section class="sp-author" id="author-{escape(author.slug, quote=True)}">
+      {portrait_html}
+      <div>
+        <h2>Автор материала: {escape(author.name)}</h2>
+        <p class="sp-author__meta">{escape(author.role)}</p>
+        <p>{escape(author.biography)}</p>
+        <h3>Экспертиза</h3><ul>{expertise}</ul>
+        <h3>Основания для публикации</h3><ul>{evidence}</ul>
+      </div>
+    </section>'''
 
     return f"""<!DOCTYPE html>
 <html lang="{escape(site.locale, quote=True)}">
@@ -132,6 +158,7 @@ def render_page(
     {h1_html}
     {unique_html}
     {body}
+    {author_html}
     <footer><a href="/sitemap/">Карта сайта</a></footer>
   </main>
 </body>

@@ -207,7 +207,12 @@ def is_thin(html: str) -> bool:
     return len(text) < THIN_CONTENT_MIN_CHARS
 
 
-def schema_org_jsonld(site: SiteManifest, page: PageManifest, context: dict[str, Any]) -> dict:
+def schema_org_jsonld(
+    site: SiteManifest,
+    page: PageManifest,
+    context: dict[str, Any],
+    media_urls: dict[str, str] | None = None,
+) -> dict:
     phone = context.get("phone") or (site.contacts or {}).get("phone", "")
     schema_phone = normalize_phone_e164(str(phone)) or format_phone_display(str(phone))
     graph: list[dict[str, Any]] = [
@@ -241,6 +246,31 @@ def schema_org_jsonld(site: SiteManifest, page: PageManifest, context: dict[str,
             ],
         },
     ]
+    if page.author:
+        author = page.author
+        author_id = f"{page_url(site.domain, page.slug)}#author-{author.slug}"
+        person: dict[str, Any] = {
+            "@id": author_id,
+            "@type": "Person",
+            "name": author.name,
+            "jobTitle": author.role,
+            "description": author.biography,
+            "knowsAbout": author.expertise,
+        }
+        portrait_url = (media_urls or {}).get(str(author.portrait.asset_id))
+        if portrait_url:
+            person["image"] = portrait_url
+        graph.extend(
+            [
+                person,
+                {
+                    "@type": "WebPage",
+                    "url": page_url(site.domain, page.slug),
+                    "name": fill_slots(page.h1_template, context),
+                    "author": {"@id": author_id},
+                },
+            ]
+        )
     faq = _extract_faq(page, context)
     if faq:
         graph.append(
@@ -597,7 +627,10 @@ class SiteBuilder:
             referenced_asset_ids = {
                 str(attachment.asset_id)
                 for page in site.pages
-                for attachment in [*page.media, *page.block_media.values()]
+                for attachment in (
+                    [*page.media, *page.block_media.values()]
+                    + ([page.author.portrait] if page.author else [])
+                )
             }
             if referenced_asset_ids != set(asset_urls):
                 raise ValueError("Static media assets do not match the manifest")
@@ -642,9 +675,14 @@ class SiteBuilder:
                         "defer></script>\n"
                         "</body>",
                     )
-                schema = json.dumps(schema_org_jsonld(site, page, ctx), ensure_ascii=False).replace(
-                    "</", "<\\/"
-                )
+                schema_media_urls = {
+                    asset_id: f"https://{site.domain.strip().strip('/')}/{path}"
+                    for asset_id, path in asset_urls.items()
+                }
+                schema = json.dumps(
+                    schema_org_jsonld(site, page, ctx, schema_media_urls),
+                    ensure_ascii=False,
+                ).replace("</", "<\\/")
                 html = html.replace(
                     "</head>", f'  <script type="application/ld+json">{schema}</script>\n</head>'
                 )

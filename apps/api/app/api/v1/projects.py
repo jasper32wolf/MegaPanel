@@ -17,6 +17,7 @@ from app.core.security import sha256_hex
 from app.db.session import get_db
 from app.models import (
     AuditLog,
+    AuthorProfileRevision,
     BuildReleaseGate,
     GeoPlace,
     Keyword,
@@ -38,6 +39,7 @@ from app.models import (
     SitePage,
     SiteStructureRevision,
 )
+from app.schemas.author import AuthorProfileIn, author_profile_hash
 from app.schemas.workflow import (
     PROTECTED_CONTACT_FIELDS,
     BuildLegalReviewIn,
@@ -45,6 +47,7 @@ from app.schemas.workflow import (
     BuildRollbackRequest,
     CandidateBuildRequest,
     FactRevisionCreate,
+    PageDraftAuthorAttachIn,
     PageDraftBlockMediaAttachIn,
     PageDraftDecision,
     PageDraftMediaAttachIn,
@@ -1403,6 +1406,77 @@ def _verified_media_hash(asset: MediaAsset) -> str:
     return stored_sha256
 
 
+async def _approved_author_snapshot_or_409(
+    db: AsyncSession,
+    *,
+    project: Project,
+    revision_id: UUID,
+) -> dict:
+    revision = (
+        await db.execute(
+            select(AuthorProfileRevision).where(
+                AuthorProfileRevision.id == revision_id,
+                AuthorProfileRevision.tenant_id == project.tenant_id,
+                AuthorProfileRevision.project_id == project.id,
+                AuthorProfileRevision.state == "approved",
+            )
+        )
+    ).scalar_one_or_none()
+    if not revision:
+        raise HTTPException(
+            status_code=409,
+            detail="Approved author profile revision is unavailable",
+        )
+    profile = AuthorProfileIn(
+        slug=revision.slug,
+        name=revision.name,
+        role=revision.role,
+        biography=revision.biography,
+        expertise=list(revision.expertise or []),
+        evidence=list(revision.evidence or []),
+        portrait_asset_id=revision.portrait_asset_id,
+    )
+    if author_profile_hash(profile) != revision.profile_hash:
+        raise HTTPException(status_code=409, detail="Author profile integrity check failed")
+    asset = (
+        await db.execute(
+            select(MediaAsset).where(
+                MediaAsset.id == revision.portrait_asset_id,
+                MediaAsset.tenant_id == project.tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if not asset:
+        raise HTTPException(status_code=409, detail="Author portrait is unavailable")
+    try:
+        _asset_path(asset)
+        stored_sha256 = _verified_media_hash(asset)
+        await ensure_media_review_allows_use(
+            db,
+            tenant_id=project.tenant_id,
+            asset_id=asset.id,
+            stored_sha256=stored_sha256,
+        )
+    except (HTTPException, ValueError) as exc:
+        detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+        raise HTTPException(status_code=409, detail=f"Author portrait blocker: {detail}") from exc
+    return {
+        "revision_id": revision.id,
+        "profile_hash": revision.profile_hash,
+        "slug": profile.slug,
+        "name": profile.name,
+        "role": profile.role,
+        "biography": profile.biography,
+        "expertise": profile.expertise,
+        "evidence": profile.evidence,
+        "portrait": {
+            "asset_id": asset.id,
+            "stored_sha256": stored_sha256,
+            "alt": f"Портрет {profile.name}",
+        },
+    }
+
+
 def _draft_manifest_hash(manifest: dict) -> str:
     page = PageManifest.model_validate(manifest)
     return sha256_hex(
@@ -1430,6 +1504,11 @@ def _serialize_draft(draft: PageDraft) -> dict:
     return {
         "id": str(draft.id),
         "page_plan_id": str(draft.page_plan_id),
+        "author_profile_revision_id": (
+            str(author_revision_id)
+            if (author_revision_id := getattr(draft, "author_profile_revision_id", None))
+            else None
+        ),
         "revision": draft.revision,
         "state": draft.state,
         "content_hash": draft.content_hash,
@@ -1608,6 +1687,64 @@ async def attach_draft_media(
             "page_draft_id": str(draft.id),
             "asset_id": str(asset.id),
             "stored_sha256": stored_sha256,
+        },
+        tenant_id=project.tenant_id,
+        actor_id=auth.user.id,
+    )
+    await db.commit()
+    return _serialize_draft(draft)
+
+
+@router.post("/{project_id}/page-drafts/{draft_id}/author")
+async def attach_draft_author(
+    project_id: UUID,
+    draft_id: UUID,
+    body: PageDraftAuthorAttachIn,
+    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    project = await _project_or_404(db, project_id, auth)
+    draft = (
+        await db.execute(
+            select(PageDraft)
+            .where(PageDraft.id == draft_id, PageDraft.project_id == project.id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if not draft:
+        raise HTTPException(status_code=404, detail="Page draft not found")
+    if draft.state != "draft":
+        raise HTTPException(
+            status_code=409,
+            detail="Attach an author before submitting the draft for review",
+        )
+    author = await _approved_author_snapshot_or_409(
+        db,
+        project=project,
+        revision_id=body.author_profile_revision_id,
+    )
+    try:
+        page = PageManifest.model_validate(draft.page_manifest or {})
+        manifest = PageManifest.model_validate(
+            {**page.model_dump(mode="json"), "author": author}
+        ).model_dump(mode="json")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    draft.author_profile_revision_id = body.author_profile_revision_id
+    draft.page_manifest = manifest
+    draft.content_hash = _draft_manifest_hash(manifest)
+    draft.qa_runs = []
+    draft.last_qa_verdict = None
+    draft.qa_override = {}
+    await append_audit(
+        db,
+        action="page_draft.author.attach",
+        payload={
+            "project_id": str(project.id),
+            "page_draft_id": str(draft.id),
+            "author_profile_revision_id": str(body.author_profile_revision_id),
+            "author_profile_hash": author["profile_hash"],
+            "portrait_asset_id": str(author["portrait"]["asset_id"]),
         },
         tenant_id=project.tenant_id,
         actor_id=auth.user.id,
@@ -1910,6 +2047,32 @@ async def apply_page_draft(
         "city_dat": forms.get("dat") or primary.get("name", ""),
     }
     page = PageManifest.model_validate(draft.page_manifest)
+    if page.author:
+        if draft.author_profile_revision_id != page.author.revision_id:
+            raise HTTPException(
+                status_code=409,
+                detail={"blockers": ["Author binding does not match the page artifact"]},
+            )
+        current_author = await _approved_author_snapshot_or_409(
+            db,
+            project=project,
+            revision_id=page.author.revision_id,
+        )
+        expected_author = PageManifest.model_validate(
+            {**page.model_dump(mode="json"), "author": current_author}
+        ).author
+        if expected_author != page.author:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "blockers": ["Author profile or portrait changed; attach it in a new draft"]
+                },
+            )
+    elif draft.author_profile_revision_id:
+        raise HTTPException(
+            status_code=409,
+            detail={"blockers": ["Author binding is missing from the page artifact"]},
+        )
     resolved_design = await resolve_design_profile(
         db, tenant_id=project.tenant_id, project_id=project.id
     )
@@ -2436,6 +2599,20 @@ def _manifest_asset_usage(
                     "alt": attachment.alt,
                 }
             )
+        if page.author:
+            usages.append(
+                {
+                    "scope": scope,
+                    "source": source,
+                    "slug": page.slug,
+                    "placement": "author_portrait",
+                    "asset_id": str(page.author.portrait.asset_id),
+                    "expected_sha256": page.author.portrait.stored_sha256,
+                    "alt": page.author.portrait.alt,
+                    "author_profile_revision_id": str(page.author.revision_id),
+                    "author_profile_hash": page.author.profile_hash,
+                }
+            )
     return usages
 
 
@@ -2611,7 +2788,10 @@ async def _build_assets_for_manifest(
 ) -> list[BuildAsset]:
     expected_hashes: dict[UUID, str] = {}
     for page in manifest.pages:
-        for attachment in [*page.media, *page.block_media.values()]:
+        attachments = [*page.media, *page.block_media.values()]
+        if page.author:
+            attachments.append(page.author.portrait)
+        for attachment in attachments:
             existing = expected_hashes.setdefault(attachment.asset_id, attachment.stored_sha256)
             if existing != attachment.stored_sha256:
                 raise HTTPException(
@@ -2746,11 +2926,44 @@ async def _candidate_index_states(
     return index_states, source_hashes, promoted_at, matched_promotions
 
 
+async def _manifest_author_compliance_blockers(
+    db: AsyncSession, *, manifest: SiteManifest, project: Project
+) -> list[str]:
+    blockers = []
+    for page in manifest.pages:
+        if not page.author:
+            continue
+        try:
+            snapshot = await _approved_author_snapshot_or_409(
+                db,
+                project=project,
+                revision_id=page.author.revision_id,
+            )
+            expected = PageManifest.model_validate(
+                {**page.model_dump(mode="json"), "author": snapshot}
+            ).author
+            if expected != page.author:
+                blockers.append(
+                    f"Author profile for {page.slug} no longer matches its approved revision"
+                )
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, str) else "Author profile is unavailable"
+            blockers.append(f"Author profile for {page.slug}: {detail}")
+    return blockers
+
+
 async def _freeze_candidate_build_input(
     db: AsyncSession, *, project: Project, site: Site
 ) -> tuple[dict, str]:
     """Capture every mutable content decision before the durable job is queued."""
     manifest = SiteManifest.model_validate(site.manifest)
+    author_blockers = await _manifest_author_compliance_blockers(
+        db,
+        manifest=manifest,
+        project=project,
+    )
+    if author_blockers:
+        raise HTTPException(status_code=409, detail={"blockers": author_blockers})
     rows = list(
         (await db.execute(select(SitePage).where(SitePage.site_id == site.id))).scalars().all()
     )

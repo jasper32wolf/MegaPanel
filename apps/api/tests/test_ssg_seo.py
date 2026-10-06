@@ -1,9 +1,11 @@
+import hashlib
+import json
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
 from site_panel_shared.manifests import BlockDef, PageManifest, SiteManifest
-from site_panel_ssg import SiteBuilder, is_thin, render_robots_txt, render_sitemap
+from site_panel_ssg import BuildAsset, SiteBuilder, is_thin, render_robots_txt, render_sitemap
 from site_panel_ssg.phone import format_phone_display, normalize_phone_e164
 
 
@@ -74,6 +76,77 @@ def test_russian_phone_has_a_readable_display_and_canonical_schema_value(tmp_pat
 
     assert "8(800)900-12-34" in html
     assert '"telephone": "+78009001234"' in html
+
+
+def test_ssg_renders_frozen_verified_author_and_person_schema(tmp_path: Path):
+    portrait_data = b"reviewed portrait bytes"
+    portrait_path = tmp_path / "portrait.webp"
+    portrait_path.write_bytes(portrait_data)
+    portrait_id = uuid4()
+    site = SiteManifest(
+        site_id=uuid4(),
+        tenant_id=uuid4(),
+        domain="example.test",
+        pages=[
+            PageManifest(
+                slug="repair",
+                title_template="Ремонт",
+                h1_template="Ремонт техники",
+                service="Ремонт",
+                blocks=[
+                    BlockDef(
+                        type="hero",
+                        hash_class="blk-author",
+                        html="<p>" + "текст " * 80 + "</p>",
+                    )
+                ],
+                author={
+                    "revision_id": uuid4(),
+                    "profile_hash": "a" * 64,
+                    "slug": "ivan-petrov",
+                    "name": "Иван Петров",
+                    "role": "Руководитель сервисной службы",
+                    "biography": (
+                        "Иван проверяет качество сервисных работ и отвечает "
+                        "за их организацию."
+                    ),
+                    "expertise": ["Диагностика оборудования"],
+                    "evidence": ["Внутренний приказ о назначении"],
+                    "portrait": {
+                        "asset_id": portrait_id,
+                        "stored_sha256": hashlib.sha256(portrait_data).hexdigest(),
+                        "alt": "Портрет Ивана Петрова",
+                    },
+                },
+            )
+        ],
+    )
+
+    SiteBuilder(tmp_path).build(
+        site,
+        assets=[
+            BuildAsset(
+                asset_id=portrait_id,
+                source_path=portrait_path,
+                stored_sha256=hashlib.sha256(portrait_data).hexdigest(),
+                content_type="image/webp",
+            )
+        ],
+    )
+    html = (tmp_path / str(site.site_id) / "current" / "repair" / "index.html").read_text(
+        encoding="utf-8"
+    )
+    assets = json.loads(
+        (tmp_path / str(site.site_id) / "current" / "assets_meta.json").read_text(encoding="utf-8")
+    )
+
+    assert "Автор материала: Иван Петров" in html
+    assert "Руководитель сервисной службы" in html
+    assert "Портрет Ивана Петрова" in html
+    assert '"@type": "Person"' in html
+    assert '"@type": "WebPage"' in html
+    assert '"author": {"@id": "https://example.test/repair/#author-ivan-petrov"}' in html
+    assert assets[0]["asset_id"] == str(portrait_id)
 
 
 def test_ssg_writes_the_consent_gated_telemetry_asset_only_when_configured(tmp_path: Path):

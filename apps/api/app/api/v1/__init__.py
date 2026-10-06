@@ -5,6 +5,7 @@ from app.api.v1 import (
     ai_providers,
     ai_workspace,
     auth,
+    authors,
     blocks,
     bulk,
     competitors,
@@ -50,6 +51,7 @@ api_router.include_router(panel.router, prefix="/panel", tags=["panel"])
 api_router.include_router(projects.router, prefix="/projects", tags=["projects"])
 api_router.include_router(project_families.router, prefix="/projects", tags=["project-families"])
 api_router.include_router(design_profiles.router, prefix="/projects", tags=["design-profiles"])
+api_router.include_router(authors.router, prefix="/projects", tags=["authors"])
 api_router.include_router(semantic.router, prefix="/projects", tags=["semantic"])
 api_router.include_router(semantic_sources.router, prefix="/projects", tags=["semantic-sources"])
 api_router.include_router(site_structure.router, prefix="/projects", tags=["site-structure"])
