@@ -13,6 +13,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 from app.api.v1.projects import _serialize_draft, _serialize_plan
 from app.core.config import get_settings
+from app.core.security import sha256_hex
 from app.db.rls import set_tenant_rls
 from app.db.session import engine as app_engine
 from app.db.session import open_db_session
@@ -364,6 +365,105 @@ def test_legacy_data_upgrade_from_0019_to_current_head() -> None:
             finally:
                 await isolated_engine.dispose()
 
+            await asyncio.to_thread(upgrade, "0057_schedule_competitor_crawls")
+            project_id, build_id, invalid_build_id, bukvarix_id, crawl_id = (
+                uuid4() for _ in range(5)
+            )
+            frozen = {"version": 1, "source": "migration-proof"}
+            seed = [{"project_keyword_id": str(uuid4()), "phrase": "ремонт"}]
+            crawl_config = {"max_pages": 5, "max_depth": 1}
+            isolated_engine = create_async_engine(upgrade_url)
+            try:
+                async with isolated_engine.begin() as connection:
+                    await connection.execute(
+                        text("SELECT set_config('app.bypass_rls', 'on', true)")
+                    )
+                    await connection.execute(
+                        text(
+                            "INSERT INTO projects (id, tenant_id, name, slug) "
+                            "VALUES (:id, :tenant, 'Scheduler migration proof', :slug)"
+                        ),
+                        {
+                            "id": project_id,
+                            "tenant": tenant_id,
+                            "slug": f"scheduler-{project_id.hex}",
+                        },
+                    )
+                    await connection.execute(
+                        text(
+                            "INSERT INTO site_builds "
+                            "(id, tenant_id, site_id, project_id, status, snapshot_version, "
+                            "input_snapshot, input_snapshot_hash) "
+                            "VALUES (:id, :tenant, :site, :project, 'queued', 1, "
+                            "CAST(:snapshot AS jsonb), :hash)"
+                        ),
+                        {
+                            "id": build_id,
+                            "tenant": tenant_id,
+                            "site": safe_id,
+                            "project": project_id,
+                            "snapshot": json.dumps(frozen, ensure_ascii=False),
+                            "hash": sha256_hex(
+                                json.dumps(
+                                    frozen,
+                                    ensure_ascii=False,
+                                    sort_keys=True,
+                                    separators=(",", ":"),
+                                )
+                            ),
+                        },
+                    )
+                    await connection.execute(
+                        text(
+                            "INSERT INTO site_builds "
+                            "(id, tenant_id, site_id, project_id, status, snapshot_version) "
+                            "VALUES (:id, :tenant, :site, :project, 'queued', 0)"
+                        ),
+                        {
+                            "id": invalid_build_id,
+                            "tenant": tenant_id,
+                            "site": safe_id,
+                            "project": project_id,
+                        },
+                    )
+                    await connection.execute(
+                        text(
+                            "INSERT INTO project_bukvarix_keyword_runs "
+                            "(id, tenant_id, project_id, status, "
+                            "seed_snapshot, seed_snapshot_hash) "
+                            "VALUES (:id, :tenant, :project, 'queued', CAST(:seed AS jsonb), :hash)"
+                        ),
+                        {
+                            "id": bukvarix_id,
+                            "tenant": tenant_id,
+                            "project": project_id,
+                            "seed": json.dumps(seed, ensure_ascii=False),
+                            "hash": sha256_hex(
+                                json.dumps(
+                                    seed, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                                )
+                            ),
+                        },
+                    )
+                    await connection.execute(
+                        text(
+                            "INSERT INTO competitor_crawl_runs "
+                            "(id, tenant_id, project_id, root_url, origin, status, configuration) "
+                            "VALUES (:id, :tenant, :project, :root, :origin, 'queued', "
+                            "CAST(:config AS jsonb))"
+                        ),
+                        {
+                            "id": crawl_id,
+                            "tenant": tenant_id,
+                            "project": project_id,
+                            "root": "https://example.test/",
+                            "origin": "https://example.test",
+                            "config": json.dumps(crawl_config),
+                        },
+                    )
+            finally:
+                await isolated_engine.dispose()
+
             await asyncio.to_thread(upgrade, "head")
             isolated_engine = create_async_engine(upgrade_url)
             try:
@@ -372,6 +472,46 @@ def test_legacy_data_upgrade_from_0019_to_current_head() -> None:
                         text("SELECT version_num FROM alembic_version")
                     )
                     assert revision == head_revision
+                    await connection.execute(
+                        text("SELECT set_config('app.bypass_rls', 'on', true)")
+                    )
+                    queued = (
+                        await connection.execute(
+                            text(
+                                "SELECT id, work_type, source_id FROM scheduler_jobs "
+                                "WHERE source_id IN (:build, :bukvarix, :crawl)"
+                            ),
+                            {"build": build_id, "bukvarix": bukvarix_id, "crawl": crawl_id},
+                        )
+                    ).all()
+                    assert {(row.work_type, row.source_id) for row in queued} == {
+                        ("site_build", build_id),
+                        ("bukvarix_keyword", bukvarix_id),
+                        ("competitor_crawl", crawl_id),
+                    }
+                    backfill_events = (
+                        (
+                            await connection.execute(
+                                text(
+                                    "SELECT safe_code FROM scheduler_attempts "
+                                    "WHERE scheduler_job_id IN (:first, :second, :third)"
+                                ),
+                                {
+                                    "first": queued[0].id,
+                                    "second": queued[1].id,
+                                    "third": queued[2].id,
+                                },
+                            )
+                        )
+                        .scalars()
+                        .all()
+                    )
+                    assert backfill_events == ["migration_backfill"] * 3
+                    invalid_status = await connection.execute(
+                        text("SELECT status, failure_code FROM site_builds WHERE id = :id"),
+                        {"id": invalid_build_id},
+                    )
+                    assert invalid_status.one() == ("failed", "snapshot_invalid")
                     version_column_length = await connection.scalar(
                         text(
                             "SELECT character_maximum_length FROM information_schema.columns "

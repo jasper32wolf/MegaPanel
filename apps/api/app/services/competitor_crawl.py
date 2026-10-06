@@ -6,13 +6,14 @@ import re
 import xml.etree.ElementTree as element_tree
 from collections import deque
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import urljoin, urlsplit, urlunsplit
 from uuid import UUID
 
-from app.models import CompetitorCrawlPage, CompetitorCrawlRun
+from app.models import CompetitorCrawlPage, CompetitorCrawlRun, SchedulerJob
+from app.services.audit import append_audit
 from site_panel_security import SSRFBlockedError, SSRFGuard
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -279,6 +280,45 @@ def crawler_guard() -> SSRFGuard:
     )
 
 
+async def recover_legacy_competitor_crawls(db: AsyncSession) -> int:
+    """Surface orphaned pre-scheduler crawls without replaying partial page writes."""
+    cutoff = datetime.now(UTC) - timedelta(minutes=10)
+    managed = select(SchedulerJob.id).where(
+        SchedulerJob.work_type == "competitor_crawl",
+        SchedulerJob.source_id == CompetitorCrawlRun.id,
+    )
+    runs = list(
+        (
+            await db.execute(
+                select(CompetitorCrawlRun)
+                .where(
+                    CompetitorCrawlRun.status == "running",
+                    CompetitorCrawlRun.started_at < cutoff,
+                    ~managed.exists(),
+                )
+                .with_for_update(skip_locked=True)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for run in runs:
+        run.status = "failed"
+        run.error_code = "worker_timeout"
+        run.error_message = "Competitor research worker timed out"
+        run.finished_at = datetime.now(UTC)
+        await append_audit(
+            db,
+            action="competitor.crawl.worker_timeout",
+            payload={"project_id": str(run.project_id), "crawl_id": str(run.id)},
+            tenant_id=run.tenant_id,
+            actor_id=None,
+        )
+    if runs:
+        await db.commit()
+    return len(runs)
+
+
 async def run_competitor_crawl(db: AsyncSession, crawl_id: UUID) -> dict[str, Any]:
     run = (
         await db.execute(
@@ -366,7 +406,7 @@ async def run_competitor_crawl(db: AsyncSession, crawl_id: UUID) -> dict[str, An
         while queue and int(run.progress.get("fetched", 0)) < max_pages:
             current = queue.popleft()
             fresh_run = await db.get(CompetitorCrawlRun, run.id, populate_existing=True)
-            if fresh_run is None or fresh_run.status == "cancelled":
+            if fresh_run is None or fresh_run.status != "running":
                 break
             page = CompetitorCrawlPage(
                 crawl_run_id=run.id,
@@ -413,14 +453,14 @@ async def run_competitor_crawl(db: AsyncSession, crawl_id: UUID) -> dict[str, An
 
         run = await db.get(CompetitorCrawlRun, run.id, populate_existing=True)
         assert run is not None
-        run.coverage = {
-            "origin": scope.origin,
-            "robots_respected": True,
-            "sitemaps_checked": sitemap_count,
-            "page_limit_reached": bool(queue),
-            "coverage": "partial" if queue else "bounded_complete",
-        }
-        if run.status != "cancelled":
+        if run.status == "running":
+            run.coverage = {
+                "origin": scope.origin,
+                "robots_respected": True,
+                "sitemaps_checked": sitemap_count,
+                "page_limit_reached": bool(queue),
+                "coverage": "partial" if queue else "bounded_complete",
+            }
             run.status = "partial" if queue else "done"
             run.finished_at = datetime.now(UTC)
         await db.commit()
@@ -428,18 +468,20 @@ async def run_competitor_crawl(db: AsyncSession, crawl_id: UUID) -> dict[str, An
     except SSRFBlockedError:
         run = await db.get(CompetitorCrawlRun, crawl_id, populate_existing=True)
         assert run is not None
-        run.status = "blocked"
-        run.error_code = "ssrf_blocked"
-        run.error_message = "The competitor domain resolved to a non-public address"
-        run.finished_at = datetime.now(UTC)
+        if run.status == "running":
+            run.status = "blocked"
+            run.error_code = "ssrf_blocked"
+            run.error_message = "The competitor domain resolved to a non-public address"
+            run.finished_at = datetime.now(UTC)
         await db.commit()
         return {"status": run.status, "crawl_id": str(run.id)}
     except Exception:  # noqa: BLE001
         run = await db.get(CompetitorCrawlRun, crawl_id, populate_existing=True)
         assert run is not None
-        run.status = "failed"
-        run.error_code = "crawler_failed"
-        run.error_message = "Competitor research could not be completed"
-        run.finished_at = datetime.now(UTC)
+        if run.status == "running":
+            run.status = "failed"
+            run.error_code = "crawler_failed"
+            run.error_message = "Competitor research could not be completed"
+            run.finished_at = datetime.now(UTC)
         await db.commit()
         return {"status": run.status, "crawl_id": str(run.id)}

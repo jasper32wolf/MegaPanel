@@ -6,7 +6,13 @@ from uuid import UUID
 from app.api.deps import AuthContext, require_roles
 from app.api.v1.projects import _project_or_404
 from app.db.session import get_db
-from app.models import CompetitorCrawlPage, CompetitorCrawlRun, CompetitorScan, KnowledgeDoc
+from app.models import (
+    CompetitorCrawlPage,
+    CompetitorCrawlRun,
+    CompetitorScan,
+    KnowledgeDoc,
+    SchedulerJob,
+)
 from app.schemas.phase3 import KnowledgeOut, ScanCreate, ScanOut
 from app.schemas.research import (
     CompetitorCrawlCancel,
@@ -21,7 +27,7 @@ from app.services.competitor import (
     scan_competitors,
 )
 from app.services.competitor_crawl import normalize_root_url
-from app.services.research_queue import enqueue_competitor_crawl
+from app.services.scheduler import cancel_job, create_competitor_crawl_job
 from fastapi import APIRouter, Depends, HTTPException
 from site_panel_security import SSRFBlockedError
 from sqlalchemy import select
@@ -139,6 +145,7 @@ async def create_domain_crawl(
     )
     db.add(crawl)
     await db.flush()
+    await create_competitor_crawl_job(db, crawl=crawl, requested_by=auth.user.id)
     await append_audit(
         db,
         action="competitor.crawl.queued",
@@ -153,20 +160,6 @@ async def create_domain_crawl(
         actor_id=auth.user.id,
     )
     await db.commit()
-    try:
-        await enqueue_competitor_crawl(crawl.id)
-    except Exception:  # noqa: BLE001
-        crawl.status = "failed"
-        crawl.error_code = "queue_unavailable"
-        crawl.error_message = "Research queue is unavailable"
-        await append_audit(
-            db,
-            action="competitor.crawl.queue_failed",
-            payload={"project_id": str(project.id), "crawl_id": str(crawl.id)},
-            tenant_id=project.tenant_id,
-            actor_id=auth.user.id,
-        )
-        await db.commit()
     await db.refresh(crawl)
     return crawl
 
@@ -195,15 +188,15 @@ async def _crawl_or_404(
     project_id: UUID,
     crawl_id: UUID,
     auth: AuthContext,
+    lock: bool = False,
 ) -> CompetitorCrawlRun:
+    statement = select(CompetitorCrawlRun).where(
+        CompetitorCrawlRun.id == crawl_id,
+        CompetitorCrawlRun.project_id == project_id,
+        CompetitorCrawlRun.tenant_id == auth.tenant_id,
+    )
     crawl = (
-        await db.execute(
-            select(CompetitorCrawlRun).where(
-                CompetitorCrawlRun.id == crawl_id,
-                CompetitorCrawlRun.project_id == project_id,
-                CompetitorCrawlRun.tenant_id == auth.tenant_id,
-            )
-        )
+        await db.execute(statement.with_for_update() if lock else statement)
     ).scalar_one_or_none()
     if not crawl:
         raise HTTPException(status_code=404, detail="Competitor crawl not found")
@@ -263,10 +256,29 @@ async def cancel_domain_crawl(
 ) -> CompetitorCrawlRun:
     project = await _project_or_404(db, project_id, auth)
     crawl = await _crawl_or_404(db, project_id=project_id, crawl_id=crawl_id, auth=auth)
-    if crawl.status not in {"queued", "running"}:
-        raise HTTPException(status_code=409, detail="Only active crawls can be cancelled")
-    crawl.status = "cancelled"
-    crawl.cancelled_at = datetime.now(UTC)
+    job = await db.scalar(
+        select(SchedulerJob)
+        .where(
+            SchedulerJob.work_type == "competitor_crawl",
+            SchedulerJob.source_id == crawl.id,
+            SchedulerJob.project_id == project.id,
+            SchedulerJob.tenant_id == project.tenant_id,
+        )
+        .with_for_update()
+    )
+    if job:
+        try:
+            await cancel_job(db, job=job)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+    else:
+        crawl = await _crawl_or_404(
+            db, project_id=project_id, crawl_id=crawl_id, auth=auth, lock=True
+        )
+        if crawl.status not in {"queued", "running"}:
+            raise HTTPException(status_code=409, detail="Only active crawls can be cancelled")
+        crawl.status = "cancelled"
+        crawl.cancelled_at = datetime.now(UTC)
     crawl.error_code = "cancelled_by_operator"
     crawl.error_message = body.reason.strip() if body.reason else None
     await append_audit(

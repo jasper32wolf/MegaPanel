@@ -22,7 +22,7 @@ from app.services.bukvarix_queue import (
     recover_stale_bukvarix_keyword_runs,
     run_bukvarix_keyword_run,
 )
-from app.services.competitor_crawl import run_competitor_crawl
+from app.services.competitor_crawl import recover_legacy_competitor_crawls, run_competitor_crawl
 from app.services.index_schedule import prepare_due_index_schedule_batches
 from app.services.intent_generation import validate_intent_page_proposal
 from app.services.operations import auto_resolve_inactive_incidents
@@ -111,25 +111,8 @@ async def bukvarix_keyword_sweep_task(ctx: dict) -> dict:
         async with open_db_session() as session:
             recovered = await recover_stale_bukvarix_keyword_runs(session)
             run_ids = await due_bukvarix_keyword_run_ids(session)
-            scheduler_sources = (
-                set(
-                    (
-                        await session.execute(
-                            select(SchedulerJob.source_id).where(
-                                SchedulerJob.work_type == "bukvarix_keyword",
-                                SchedulerJob.source_id.in_(tuple(run_ids)),
-                            )
-                        )
-                    )
-                    .scalars()
-                    .all()
-                )
-                if run_ids
-                else set()
-            )
-        legacy_run_ids = [run_id for run_id in run_ids if run_id not in scheduler_sources]
         enqueued = 0
-        for run_id in legacy_run_ids:
+        for run_id in run_ids:
             try:
                 await enqueue_bukvarix_keyword_run(run_id)
                 enqueued += 1
@@ -138,32 +121,41 @@ async def bukvarix_keyword_sweep_task(ctx: dict) -> dict:
         logger.info(
             "bukvarix_keyword_sweep",
             recovered=recovered,
-            queued=len(legacy_run_ids),
+            queued=len(run_ids),
             enqueued=enqueued,
         )
-        return {"recovered": recovered, "queued": len(legacy_run_ids), "enqueued": enqueued}
+        return {"recovered": recovered, "queued": len(run_ids), "enqueued": enqueued}
     except Exception:  # noqa: BLE001
         logger.exception("bukvarix_keyword_sweep_failed")
         return {"status": "failed", "error_code": "worker_sweep_failed"}
 
 
-async def scheduler_execute_task(ctx: dict, scheduler_job_id: str) -> dict:
-    """Execute one leased allowlisted job; it cannot publish or apply content."""
+async def scheduler_execute_task(
+    ctx: dict, scheduler_job_id: str, lease_id: str | None = None
+) -> dict:
+    """Execute one fenced lease; older job-only wakeups cannot claim newer attempts."""
     try:
         job_id = uuid.UUID(scheduler_job_id)
-    except ValueError:
+        lease = uuid.UUID(lease_id) if lease_id else None
+    except (TypeError, ValueError):
         return {"status": "failed", "error_code": "invalid_scheduler_job_id"}
+    if lease is None:
+        return {"status": "stale_lease", "scheduler_job_id": scheduler_job_id}
     async with open_db_session() as session:
-        job = await claim_execution(session, job_id)
+        job = await claim_execution(session, job_id, lease)
         if job is None:
             return {"status": "duplicate", "scheduler_job_id": scheduler_job_id}
         if job.work_type == "site_build":
-            result = await run_queued_candidate_build(session, job.source_id)
+            result = await run_queued_candidate_build(
+                session, job.source_id, scheduler_lease_id=lease
+            )
         elif job.work_type == "bukvarix_keyword":
             result = await run_bukvarix_keyword_run(session, job.source_id)
+        elif job.work_type == "competitor_crawl":
+            result = await run_competitor_crawl(session, job.source_id)
         else:
             result = {"status": "failed", "error_code": "unsupported_work_type"}
-        return await complete_execution(session, job_id=job.id, result=result)
+        return await complete_execution(session, job_id=job.id, lease_id=lease, result=result)
 
 
 async def candidate_build_task(ctx: dict, build_id: str) -> dict:
@@ -195,18 +187,21 @@ async def candidate_build_sweep_task(ctx: dict) -> dict:
     try:
         async with open_db_session() as session:
             legacy_recovered = await expire_stale_site_builds(session)
+            legacy_crawls_recovered = await recover_legacy_competitor_crawls(session)
             recovered = await recover_expired_scheduler_leases(session)
             leased = await dispatch_due_jobs(session)
             published = await publish_pending_wakeups(session)
         logger.info(
             "candidate_build_sweep",
             legacy_recovered=legacy_recovered,
+            legacy_crawls_recovered=legacy_crawls_recovered,
             recovered=recovered,
             leased=len(leased),
             published=published,
         )
         return {
             "legacy_recovered": legacy_recovered,
+            "legacy_crawls_recovered": legacy_crawls_recovered,
             "recovered": recovered,
             "leased": len(leased),
             "published": published,
@@ -229,9 +224,21 @@ async def index_schedule_sweep_task(ctx: dict) -> dict:
 
 
 async def competitor_crawl_task(ctx: dict, crawl_id: str) -> dict:
+    """Execute only legacy crawls not owned by the fair scheduler."""
     try:
         async with open_db_session() as session:
-            result = await run_competitor_crawl(session, uuid.UUID(crawl_id))
+            source_id = uuid.UUID(crawl_id)
+            scheduler_job = None
+            if hasattr(session, "scalar"):
+                scheduler_job = await session.scalar(
+                    select(SchedulerJob.id).where(
+                        SchedulerJob.work_type == "competitor_crawl",
+                        SchedulerJob.source_id == source_id,
+                    )
+                )
+            if scheduler_job:
+                return {"status": "scheduler_managed", "crawl_id": crawl_id}
+            result = await run_competitor_crawl(session, source_id)
         logger.info("competitor_crawl_processed", crawl_id=crawl_id, status=result["status"])
         return result
     except Exception as exc:  # noqa: BLE001
@@ -482,7 +489,7 @@ class WorkerSettings:
         cron(webhook_delivery_sweep_task, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}),
         cron(bukvarix_keyword_sweep_task, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}),
         cron(index_schedule_sweep_task, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}),
-        cron(candidate_build_sweep_task, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}),
+        cron(candidate_build_sweep_task, minute=set(range(60)), run_at_startup=True),
         cron(
             operational_incident_auto_resolve_task,
             minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55},

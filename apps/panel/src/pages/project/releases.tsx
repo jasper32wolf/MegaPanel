@@ -126,7 +126,7 @@ export function ProjectReleasesPage() {
     ]);
     setProject(nextProject);
     setBuilds(nextBuilds);
-    setScheduledWork(nextScheduledWork);
+    setScheduledWork(nextScheduledWork.filter((job) => job.work_type === "site_build"));
     setSelectedBuildId((current) =>
       current && nextBuilds.some((build) => build.id === current) ? current : nextBuilds[0]?.id || null,
     );
@@ -332,7 +332,7 @@ export function ProjectReleasesPage() {
 
       <Surface title="Очередь сборки">
         <p className="muted">Очередь распределяет только запуск immutable candidate-сборок. Пауза, продолжение и отмена не применяют черновик, не меняют индексацию и не публикуют сайт.</p>
-        {scheduledWork.length === 0 ? <EmptyState title="В очереди нет сборок" hint="После создания candidate появится отдельная запись планировщика." /> : <DataTable headers={["Тип", "Состояние", "Порядок", "Попытки", "Действия"]}>{scheduledWork.map((job) => <tr key={job.id}><td>{job.work_type === "site_build" ? "Candidate-сборка" : job.work_type}</td><td><StatusPill tone={tone(job.state)}>{job.state}</StatusPill>{job.failure_code ? <p className="error">{job.failure_code}</p> : null}</td><td>важность: {job.priority}{job.not_before ? <p className="muted">не раньше: {stamp(job.not_before)}</p> : null}</td><td>{job.attempt_count}{job.lease_expires_at ? <p className="muted">lease до: {stamp(job.lease_expires_at)}</p> : null}</td><td className="row">{job.state === "queued" || job.state === "failed" ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void controlScheduledWork(job, "pause")}>Пауза</button> : null}{job.state === "paused" ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void controlScheduledWork(job, "resume")}>Продолжить</button> : null}{["queued", "paused", "failed"].includes(job.state) ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void controlScheduledWork(job, "cancel")}>Отменить</button> : null}</td></tr>)}</DataTable>}
+        {scheduledWork.length === 0 ? <EmptyState title="В очереди нет сборок" hint="После создания candidate появится отдельная запись планировщика." /> : <DataTable headers={["Тип", "Состояние", "Порядок", "Попытки", "Действия"]}>{scheduledWork.map((job) => <tr key={job.id}><td>{job.work_type === "site_build" ? "Candidate-сборка" : job.work_type}</td><td><StatusPill tone={tone(job.state)}>{job.state}</StatusPill>{job.failure_code ? <p className="error">{job.failure_code}</p> : null}</td><td>важность: {job.priority}{job.not_before ? <p className="muted">не раньше: {stamp(job.not_before)}</p> : null}</td><td>{job.attempt_count}{job.lease_expires_at ? <p className="muted">lease до: {stamp(job.lease_expires_at)}</p> : null}</td><td className="row">{job.state === "queued" ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void controlScheduledWork(job, "pause")}>Пауза</button> : null}{job.state === "paused" ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void controlScheduledWork(job, "resume")}>Продолжить</button> : null}{["queued", "paused", "leased"].includes(job.state) ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void controlScheduledWork(job, "cancel")}>Отменить</button> : null}</td></tr>)}</DataTable>}
       </Surface>
 
       {builds ? (

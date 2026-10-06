@@ -129,7 +129,7 @@ class BukvarixKeywordResultOut(BaseModel):
 class BukvarixKeywordRunOut(BaseModel):
     id: UUID
     project_id: UUID
-    status: Literal["queued", "running", "completed", "failed"]
+    status: Literal["queued", "running", "completed", "failed", "cancelled"]
     provider_mode: Literal["https_public_free"]
     query_count: int
     result_count: int

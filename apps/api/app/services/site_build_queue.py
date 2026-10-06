@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from app.core.config import get_settings
-from app.models import SiteBuild, SiteBuildEvent
+from app.models import SchedulerJob, SiteBuild, SiteBuildEvent
 from arq import create_pool
 from arq.connections import RedisSettings
 from sqlalchemy import func, or_, select
@@ -86,14 +86,10 @@ async def append_site_build_event(
     return event
 
 
-async def available_candidate_build_slots(
-    db: AsyncSession, *, max_concurrency: int = 1
-) -> int:
+async def available_candidate_build_slots(db: AsyncSession, *, max_concurrency: int = 1) -> int:
     """Bound local candidate work so one VPS is never flooded by builds."""
     running = (
-        await db.execute(
-            select(func.count(SiteBuild.id)).where(SiteBuild.status == "running")
-        )
+        await db.execute(select(func.count(SiteBuild.id)).where(SiteBuild.status == "running"))
     ).scalar_one()
     return max(0, max_concurrency - int(running))
 
@@ -119,7 +115,10 @@ async def due_site_build_ids(db: AsyncSession, *, limit: int = 1) -> list[UUID]:
 
 
 async def expire_stale_site_builds(db: AsyncSession) -> int:
-    """Make an abandoned worker lease visible and retryable; never rebuild automatically."""
+    """Recover only legacy builds; managed jobs have fenced scheduler leases."""
+    managed = select(SchedulerJob.id).where(
+        SchedulerJob.work_type == "site_build", SchedulerJob.source_id == SiteBuild.id
+    )
     stale = list(
         (
             await db.execute(
@@ -128,6 +127,7 @@ async def expire_stale_site_builds(db: AsyncSession) -> int:
                     SiteBuild.status == "running",
                     SiteBuild.lease_expires_at.is_not(None),
                     SiteBuild.lease_expires_at < datetime.now(UTC),
+                    ~managed.exists(),
                 )
                 .with_for_update()
             )

@@ -33,6 +33,7 @@ from app.models import (
     ProjectSemanticCollection,
     ProjectSemanticCollectionKeyword,
     ProjectSemanticKeywordGeoBinding,
+    SchedulerJob,
     Site,
     SiteBuild,
     SiteBuildEvent,
@@ -3032,7 +3033,31 @@ def _page_metadata_from_candidate_result(result: dict, snapshot: dict) -> list[d
     ]
 
 
-async def run_queued_candidate_build(db: AsyncSession, build_id: UUID) -> dict:
+async def _current_candidate_lease(
+    db: AsyncSession, *, build: SiteBuild, lease_id: UUID | None
+) -> bool:
+    if lease_id is None:
+        return True  # Legacy direct task, never a scheduler-owned candidate.
+    job = await db.scalar(
+        select(SchedulerJob)
+        .where(SchedulerJob.work_type == "site_build", SchedulerJob.source_id == build.id)
+        .with_for_update()
+    )
+    if (
+        job is None
+        or job.lease_id != lease_id
+        or job.state != "running"
+        or job.lease_expires_at is None
+        or job.lease_expires_at <= datetime.now(UTC)
+    ):
+        return False
+    await db.refresh(build)
+    return build.status == "running"
+
+
+async def run_queued_candidate_build(
+    db: AsyncSession, build_id: UUID, *, scheduler_lease_id: UUID | None = None
+) -> dict:
     """Run one already-frozen candidate build. It never activates or publishes a release."""
     build = (
         await db.execute(select(SiteBuild).where(SiteBuild.id == build_id).with_for_update())
@@ -3106,6 +3131,8 @@ async def run_queued_candidate_build(db: AsyncSession, build_id: UUID) -> dict:
             assets=assets,
             activate=False,
         )
+        if not await _current_candidate_lease(db, build=build, lease_id=scheduler_lease_id):
+            return {"status": "stale_lease", "build_id": str(build_id)}
         page_metadata_snapshot = _page_metadata_from_candidate_result(result, snapshot)
         build.build_hash = result["build_hash"]
         build.pages_built = len(result["pages"])
@@ -3136,6 +3163,8 @@ async def run_queued_candidate_build(db: AsyncSession, build_id: UUID) -> dict:
         record_release_transition(action="build", outcome="success")
         return {"status": build.status, "build_id": str(build_id), "build_hash": build.build_hash}
     except Exception:  # noqa: BLE001
+        if not await _current_candidate_lease(db, build=build, lease_id=scheduler_lease_id):
+            return {"status": "stale_lease", "build_id": str(build_id)}
         build.status = "failed"
         build.failure_code = "build_execution_failed"
         build.completed_at = datetime.now(UTC)
@@ -3278,6 +3307,12 @@ async def retry_project_build(
 ) -> dict:
     project = await _project_or_404(db, project_id, auth)
     site = await _project_site_or_409(db, project)
+    if hasattr(db, "scalar"):
+        await db.scalar(
+            select(SchedulerJob.id)
+            .where(SchedulerJob.work_type == "site_build", SchedulerJob.source_id == build_id)
+            .with_for_update()
+        )
     build = (
         await db.execute(
             select(SiteBuild)

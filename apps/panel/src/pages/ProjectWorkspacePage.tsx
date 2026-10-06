@@ -19,7 +19,8 @@ type Plan = { id: string; slug: string; objective: string; intent: string | null
 type StructureRevision = { id: string; version: number; state: string };
 type BukvarixStatus = { enabled: true; status: "https_public_free"; message: string; personal_credentials_supported: false; max_seed_keywords: number; max_results_per_run: number; non_publish_policy: true };
 type BukvarixKeywordResult = { id: string; source_project_keyword_id: string; phrase: string; metrics: number[] };
-type BukvarixKeywordRun = { id: string; project_id: string; status: "queued" | "running" | "completed" | "failed"; provider_mode: "https_public_free"; query_count: number; result_count: number; failure_code: string | null; committed_source_run_id: string | null; queued_at: string | null; started_at: string | null; completed_at: string | null; created_at: string | null; results: BukvarixKeywordResult[] };
+type BukvarixKeywordRun = { id: string; project_id: string; status: "queued" | "running" | "completed" | "failed" | "cancelled"; provider_mode: "https_public_free"; query_count: number; result_count: number; failure_code: string | null; committed_source_run_id: string | null; queued_at: string | null; started_at: string | null; completed_at: string | null; created_at: string | null; results: BukvarixKeywordResult[] };
+type ScheduledPreview = { id: string; source_id: string; work_type: string; state: string; failure_code: string | null };
 type SemanticSourceRun = { id: string; project_id: string; provider: "bukvarix"; acquisition: "manual_export" | "https_public_free"; mode: "domain" | "compare" | "multi_domain"; source_label: string; observed_at: string; notes: string | null; selected_keyword_count: number; created_at: string | null };
 type Draft = { id: string; page_plan_id: string; author_profile_revision_id: string | null; revision: number; state: string; content_hash: string | null; last_qa_verdict: string | null; qa_runs: { verdict: string; findings: { verdict: string; rule: string; evidence: string }[] }[]; page_manifest: { blocks?: { type?: unknown }[] } & Record<string, unknown>; failure_message: string | null };
 type AuthorProfile = { id: string; supersedes_id: string | null; profile_hash: string; version: number; state: "draft" | "review" | "approved" | "rejected"; profile: { slug: string; name: string; role: string; biography: string; expertise: string[]; evidence: string[]; portrait_asset_id: string }; decision_reason: string | null };
@@ -70,6 +71,7 @@ export function ProjectWorkspacePage() {
   const [structureRevisions, setStructureRevisions] = useState<StructureRevision[]>([]);
   const [bukvarixStatus, setBukvarixStatus] = useState<BukvarixStatus | null>(null);
   const [bukvarixRuns, setBukvarixRuns] = useState<BukvarixKeywordRun[]>([]);
+  const [scheduledPreviews, setScheduledPreviews] = useState<Record<string, ScheduledPreview>>({});
   const [bukvarixSeedIds, setBukvarixSeedIds] = useState<string[]>([]);
   const [bukvarixConfirmed, setBukvarixConfirmed] = useState(false);
   const [bukvarixSelectedResultIds, setBukvarixSelectedResultIds] = useState<Record<string, string[]>>({});
@@ -188,7 +190,7 @@ export function ProjectWorkspacePage() {
   );
 
   async function load() {
-    const [nextProject, nextFacts, nextKeywords, nextProjectKeywords, nextPlaces, nextProjectGeo, nextPlans, nextDrafts, nextCoverage, nextAssetUsage, nextIndexPromotions, nextIndexSchedules, nextSeoRuns, nextSlotRuns, nextCollections, nextSignals, nextStructureRevisions, nextBukvarixStatus, nextBukvarixRuns, nextSourceRuns, nextAuthors] = await Promise.all([
+    const [nextProject, nextFacts, nextKeywords, nextProjectKeywords, nextPlaces, nextProjectGeo, nextPlans, nextDrafts, nextCoverage, nextAssetUsage, nextIndexPromotions, nextIndexSchedules, nextSeoRuns, nextSlotRuns, nextCollections, nextSignals, nextStructureRevisions, nextBukvarixStatus, nextBukvarixRuns, nextSourceRuns, nextAuthors, nextScheduledWork] = await Promise.all([
       api<Project>(`/api/v1/projects/${projectId}`, {}, token),
       api<FactRevision[]>(`/api/v1/projects/${projectId}/facts`, {}, token),
       api<{ items: Keyword[] }>("/api/v1/keywords?limit=100", {}, token),
@@ -210,6 +212,7 @@ export function ProjectWorkspacePage() {
       api<BukvarixKeywordRun[]>(`/api/v1/projects/${projectId}/bukvarix-keyword-runs`, {}, token),
       api<SemanticSourceRun[]>(`/api/v1/projects/${projectId}/semantic-source-runs`, {}, token),
       api<AuthorProfile[]>(`/api/v1/projects/${projectId}/authors`, {}, token),
+      api<ScheduledPreview[]>(`/api/v1/projects/${projectId}/scheduled-work`, {}, token),
     ]);
     setProject(nextProject);
     setFacts(nextFacts);
@@ -235,6 +238,9 @@ export function ProjectWorkspacePage() {
     setStructureRevisions(nextStructureRevisions);
     setBukvarixStatus(nextBukvarixStatus);
     setBukvarixRuns(nextBukvarixRuns);
+    setScheduledPreviews(Object.fromEntries(nextScheduledWork
+      .filter((job) => job.work_type === "bukvarix_keyword")
+      .map((job) => [job.source_id, job])));
     setSemanticSourceRuns(nextSourceRuns);
     setAuthorProfiles(nextAuthors);
     if (nextProject.site_id) {
@@ -292,14 +298,22 @@ export function ProjectWorkspacePage() {
   }, [projectId, token]);
 
   useEffect(() => {
-    if (!projectId || !bukvarixRuns.some((run) => run.status === "queued" || run.status === "running")) return;
+    if (!projectId || !bukvarixRuns.some((run) =>
+      (run.status === "queued" || run.status === "running") && scheduledPreviews[run.id]?.state !== "paused"
+    )) return;
     const interval = window.setInterval(() => {
-      api<BukvarixKeywordRun[]>(`/api/v1/projects/${projectId}/bukvarix-keyword-runs`, {}, token)
-        .then(setBukvarixRuns)
-        .catch(() => undefined);
-    }, 2_500);
+      void Promise.all([
+        api<BukvarixKeywordRun[]>(`/api/v1/projects/${projectId}/bukvarix-keyword-runs`, {}, token),
+        api<ScheduledPreview[]>(`/api/v1/projects/${projectId}/scheduled-work`, {}, token),
+      ]).then(([runs, jobs]) => {
+        setBukvarixRuns(runs);
+        setScheduledPreviews(Object.fromEntries(jobs
+          .filter((job) => job.work_type === "bukvarix_keyword")
+          .map((job) => [job.source_id, job])));
+      }).catch(() => undefined);
+    }, 5_000);
     return () => window.clearInterval(interval);
-  }, [projectId, token, bukvarixRuns]);
+  }, [projectId, token, bukvarixRuns, scheduledPreviews]);
 
   useEffect(() => {
     if (hash !== "#bukvarix" || !project) return;
@@ -415,6 +429,28 @@ export function ProjectWorkspacePage() {
           ? selected.filter((item) => item !== resultId)
           : [...selected, resultId],
       };
+    });
+  }
+
+  async function controlBukvarixQueue(job: ScheduledPreview, action: "pause" | "resume") {
+    await run(
+      `bukvarix-${action}:${job.id}`,
+      () => api(`/api/v1/projects/${projectId}/scheduled-work/${job.id}/${action}`, { method: "POST" }, token),
+      action === "pause" ? "Получение preview приостановлено. Фразы не импортированы." : "Получение preview возвращено в очередь без автоматического импорта.",
+    );
+  }
+
+  function cancelBukvarixQueue(job: ScheduledPreview) {
+    setConfirmation({
+      title: "Отменить получение preview?",
+      description: "Отменяется только ещё не начавшийся запрос. Уже импортированные фразы и сайт не меняются.",
+      confirmLabel: "Отменить запрос",
+      dangerous: true,
+      onConfirm: () => { void run(
+        `bukvarix-cancel:${job.id}`,
+        () => api(`/api/v1/projects/${projectId}/scheduled-work/${job.id}/cancel`, { method: "POST" }, token),
+        "Запрос preview отменён. Семантика и сайт не изменены.",
+      ); },
     });
   }
 
@@ -1105,8 +1141,10 @@ export function ProjectWorkspacePage() {
         {bukvarixRuns.length === 0 ? <p className="muted">Автоматические HTTPS runs пока не запускались.</p> : <div className="stack">{bukvarixRuns.map((run) => {
           const selectedResultIds = bukvarixSelectedResultIds[run.id] || [];
           const importConfirmed = bukvarixImportConfirmed[run.id] || false;
+          const scheduled = scheduledPreviews[run.id] || null;
           return <div className="surface" key={run.id}>
             <div className="row"><StatusPill tone={tone(run.status)}>{run.status}</StatusPill><strong>HTTPS public free · {run.id.slice(0, 8)}</strong><span className="muted">queries: {run.query_count}, results: {run.result_count}</span></div>
+            {scheduled ? <div className="row"><span className="muted">Очередь: {scheduled.state}{scheduled.failure_code ? ` · ${scheduled.failure_code}` : ""}</span>{scheduled.state === "queued" ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void controlBukvarixQueue(scheduled, "pause")}>Пауза</button> : null}{scheduled.state === "paused" ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void controlBukvarixQueue(scheduled, "resume")}>Продолжить</button> : null}{["queued", "paused", "leased"].includes(scheduled.state) ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => cancelBukvarixQueue(scheduled)}>Отменить запрос</button> : null}</div> : null}
             {run.failure_code ? <p className="muted">Безопасный код ошибки: {run.failure_code}</p> : null}
             {run.status === "completed" && !run.committed_source_run_id ? <div className="stack">
               <p className="muted">Выберите preview-фразы для явного импорта. Метрики — значения провайдера без неподтверждённой интерпретации.</p>

@@ -20,6 +20,8 @@ type Evidence = {
   content: { signals?: { sample_titles?: string[]; sample_h1?: string[]; sample_faq?: string[] } };
 };
 
+type ScheduledCrawl = { id: string; source_id: string; state: string; failure_code: string | null };
+
 type DomainCrawl = {
   id: string;
   root_url: string;
@@ -57,6 +59,7 @@ export function CompetitorsPage() {
   const [crawlAcknowledged, setCrawlAcknowledged] = useState(false);
   const [maxPages, setMaxPages] = useState(100);
   const [crawls, setCrawls] = useState<DomainCrawl[]>([]);
+  const [scheduledCrawls, setScheduledCrawls] = useState<Record<string, ScheduledCrawl>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -65,16 +68,21 @@ export function CompetitorsPage() {
       setScans([]);
       setEvidence([]);
       setCrawls([]);
+      setScheduledCrawls({});
       return;
     }
-    const [nextScans, nextEvidence, nextCrawls] = await Promise.all([
+    const [nextScans, nextEvidence, nextCrawls, nextScheduledWork] = await Promise.all([
       api<Scan[]>(`/api/v1/competitors/projects/${id}/scans`, {}, token),
       api<Evidence[]>(`/api/v1/competitors/projects/${id}/evidence`, {}, token),
       api<DomainCrawl[]>(`/api/v1/competitors/projects/${id}/domain-crawls`, {}, token),
+      api<(ScheduledCrawl & { work_type: string })[]>(`/api/v1/projects/${id}/scheduled-work`, {}, token),
     ]);
     setScans(nextScans);
     setEvidence(nextEvidence);
     setCrawls(nextCrawls);
+    setScheduledCrawls(Object.fromEntries(nextScheduledWork
+      .filter((job) => job.work_type === "competitor_crawl")
+      .map((job) => [job.source_id, job])));
   }
 
   useEffect(() => {
@@ -89,6 +97,14 @@ export function CompetitorsPage() {
   useEffect(() => {
     loadProjectData().catch((cause) => setError(cause instanceof Error ? cause.message : "Не удалось загрузить исследования"));
   }, [projectId, token]);
+
+  useEffect(() => {
+    if (!projectId || !crawls.some((crawl) =>
+      ["queued", "running"].includes(crawl.status) && scheduledCrawls[crawl.id]?.state !== "paused"
+    )) return;
+    const timer = window.setInterval(() => { void loadProjectData().catch(() => undefined); }, 5000);
+    return () => window.clearInterval(timer);
+  }, [projectId, token, crawls, scheduledCrawls]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -131,6 +147,22 @@ export function CompetitorsPage() {
       await loadProjectData();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Обход домена не запущен");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function controlCrawlQueue(job: ScheduledCrawl, action: "pause" | "resume") {
+    if (!projectId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api(`/api/v1/projects/${projectId}/scheduled-work/${job.id}/${action}`, {
+        method: "POST",
+      }, token);
+      await loadProjectData();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Очередь исследования не обновлена");
     } finally {
       setBusy(false);
     }
@@ -217,7 +249,7 @@ export function CompetitorsPage() {
           </label>
           <button className="btn" type="submit" disabled={busy || !projectId || !crawlAcknowledged || !domainRoot.trim()}>{busy ? "Запуск…" : "Запустить обход домена"}</button>
         </form>
-        {!projectId ? <EmptyState title="Выберите проект" hint="Обход и результаты всегда принадлежат одному проекту." /> : crawls.length === 0 ? <EmptyState title="Обходов пока нет" hint="Запустите bounded-исследование публичного HTTPS-домена, чтобы собрать карту страниц и SEO-сигналы." /> : <DataTable headers={["Дата", "Origin", "Статус", "Прогресс", "Покрытие", "Действие"]}>{crawls.map((crawl) => <tr key={crawl.id}><td className="muted">{crawl.created_at.slice(0, 19)}</td><td><strong>{crawl.origin}</strong><br /><span className="muted">лимит: {crawl.configuration.max_pages || crawl.progress.max_pages || "—"} страниц</span></td><td><StatusPill tone={crawlTone(crawl.status)}>{crawl.status}</StatusPill>{crawl.error_message ? <p className="error">{crawl.error_message}</p> : null}</td><td>{crawl.progress.fetched || 0} получено · {crawl.progress.discovered || 0} найдено · {crawl.progress.skipped || 0} пропущено</td><td>{crawl.coverage.coverage || "ожидание"}{crawl.coverage.page_limit_reached ? " · лимит достигнут" : ""}</td><td>{crawl.status === "queued" || crawl.status === "running" ? <button className="btn btn-ghost" type="button" disabled={busy} onClick={() => cancelCrawl(crawl)}>Отменить</button> : "—"}</td></tr>)}</DataTable>}
+        {!projectId ? <EmptyState title="Выберите проект" hint="Обход и результаты всегда принадлежат одному проекту." /> : crawls.length === 0 ? <EmptyState title="Обходов пока нет" hint="Запустите bounded-исследование публичного HTTPS-домена, чтобы собрать карту страниц и SEO-сигналы." /> : <DataTable headers={["Дата", "Origin", "Статус", "Прогресс", "Покрытие", "Действие"]}>{crawls.map((crawl) => <tr key={crawl.id}><td className="muted">{crawl.created_at.slice(0, 19)}</td><td><strong>{crawl.origin}</strong><br /><span className="muted">лимит: {crawl.configuration.max_pages || crawl.progress.max_pages || "—"} страниц</span></td><td><StatusPill tone={crawlTone(crawl.status)}>{crawl.status}</StatusPill>{scheduledCrawls[crawl.id] ? <p className="muted">Очередь: {scheduledCrawls[crawl.id].state}{scheduledCrawls[crawl.id].failure_code ? ` · ${scheduledCrawls[crawl.id].failure_code}` : ""}</p> : null}{crawl.error_message ? <p className="error">{crawl.error_message}</p> : null}</td><td>{crawl.progress.fetched || 0} получено · {crawl.progress.discovered || 0} найдено · {crawl.progress.skipped || 0} пропущено</td><td>{crawl.coverage.coverage || "ожидание"}{crawl.coverage.page_limit_reached ? " · лимит достигнут" : ""}</td><td className="row">{scheduledCrawls[crawl.id]?.state === "queued" ? <button className="btn btn-ghost" type="button" disabled={busy} onClick={() => controlCrawlQueue(scheduledCrawls[crawl.id], "pause")}>Пауза</button> : null}{scheduledCrawls[crawl.id]?.state === "paused" ? <button className="btn btn-ghost" type="button" disabled={busy} onClick={() => controlCrawlQueue(scheduledCrawls[crawl.id], "resume")}>Продолжить</button> : null}{crawl.status === "queued" || crawl.status === "running" ? <button className="btn btn-ghost" type="button" disabled={busy} onClick={() => cancelCrawl(crawl)}>Отменить</button> : "—"}</td></tr>)}</DataTable>}
       </Surface>
       <Surface title="Сохранённые исследования">
         {!projectId ? <EmptyState title="Выберите проект" hint="Источники и evidence намеренно не смешиваются между проектами." /> : scans.length === 0 ? <EmptyState title="Исследований пока нет" hint="Добавьте вручную выбранные публичные URL. После проверки результат можно отдельно одобрить как reference-only evidence." /> : <DataTable headers={["Дата", "URL", "Статус", "Извлечённые сигналы", "Evidence"]}>{scans.map((scan) => <tr key={scan.id}><td className="muted">{scan.created_at.slice(0, 19)}</td><td><strong>{scan.seed_url}</strong><br /><span className="muted">{scan.urls.length} URL</span></td><td><StatusPill tone={tone(scan.status)}>{scan.status}</StatusPill>{scan.error ? <p className="error">{scan.error}</p> : null}</td><td>{scan.skeleton.sample_titles?.slice(0, 2).join(" · ") || "—"}</td><td>{approvedScanIds.has(scan.id) ? <StatusPill tone="ok">approved</StatusPill> : scan.status === "done" ? <button className="btn btn-ghost" type="button" disabled={busy} onClick={() => approve(scan)}>Одобрить evidence</button> : "—"}</td></tr>)}</DataTable>}

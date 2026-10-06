@@ -5,7 +5,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from app.api.deps import AuthContext, require_roles
-from app.api.v1.projects import _project_or_404
+from app.api.v1.projects import _project_or_404, retry_project_build
 from app.db.session import get_db
 from app.models import SchedulerAttempt, SchedulerJob
 from app.services.audit import append_audit
@@ -46,12 +46,13 @@ def _serialize(job: SchedulerJob, attempts: list[SchedulerAttempt] | None = None
     }
 
 
-async def _job_or_404(db: AsyncSession, *, project_id: UUID, job_id: UUID) -> SchedulerJob:
-    job = await db.scalar(
-        select(SchedulerJob)
-        .where(SchedulerJob.id == job_id, SchedulerJob.project_id == project_id)
-        .with_for_update()
+async def _job_or_404(
+    db: AsyncSession, *, project_id: UUID, job_id: UUID, lock: bool = False
+) -> SchedulerJob:
+    statement = select(SchedulerJob).where(
+        SchedulerJob.id == job_id, SchedulerJob.project_id == project_id
     )
+    job = await db.scalar(statement.with_for_update() if lock else statement)
     if not job:
         raise HTTPException(status_code=404, detail="Scheduled work was not found")
     return job
@@ -115,7 +116,7 @@ async def _mutate(
     db: AsyncSession,
 ) -> dict:
     project = await _project_or_404(db, project_id, auth)
-    job = await _job_or_404(db, project_id=project.id, job_id=job_id)
+    job = await _job_or_404(db, project_id=project.id, job_id=job_id, lock=True)
     if job.tenant_id != project.tenant_id:
         raise HTTPException(status_code=404, detail="Scheduled work was not found")
     try:
@@ -135,6 +136,26 @@ async def _mutate(
         actor_id=auth.user.id,
     )
     await db.commit()
+    return _serialize(job)
+
+
+@router.post("/{project_id}/scheduled-work/{job_id}/retry")
+async def retry_scheduled_work(
+    project_id: UUID,
+    job_id: UUID,
+    auth: AuthContext = Depends(_WRITE),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    project = await _project_or_404(db, project_id, auth)
+    job = await _job_or_404(db, project_id=project.id, job_id=job_id)
+    if job.tenant_id != project.tenant_id:
+        raise HTTPException(status_code=404, detail="Scheduled work was not found")
+    if job.work_type != "site_build" or job.state != "failed":
+        raise HTTPException(
+            status_code=409,
+            detail="Only failed candidate builds can be retried from the frozen snapshot",
+        )
+    await retry_project_build(project_id, job.source_id, auth, db)
     return _serialize(job)
 
 

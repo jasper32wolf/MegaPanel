@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from app.core.config import get_settings
-from app.models import ProjectBukvarixKeywordResult, ProjectBukvarixKeywordRun
+from app.models import ProjectBukvarixKeywordResult, ProjectBukvarixKeywordRun, SchedulerJob
 from app.services.bukvarix_https import (
     MAX_RESULTS_PER_RUN,
     BukvarixHTTPSFailure,
@@ -29,13 +29,24 @@ async def enqueue_bukvarix_keyword_run(run_id: UUID) -> None:
         await pool.aclose()
 
 
+def _scheduler_owns_run():
+    return (
+        select(SchedulerJob.id)
+        .where(
+            SchedulerJob.work_type == "bukvarix_keyword",
+            SchedulerJob.source_id == ProjectBukvarixKeywordRun.id,
+        )
+        .exists()
+    )
+
+
 async def due_bukvarix_keyword_run_ids(db: AsyncSession, *, limit: int = 20) -> list[UUID]:
-    """Return only durable IDs needing delivery; no provider input leaves PostgreSQL."""
+    """Return only legacy run IDs; scheduler jobs use their own durable outbox."""
     return list(
         (
             await db.execute(
                 select(ProjectBukvarixKeywordRun.id)
-                .where(ProjectBukvarixKeywordRun.status == "queued")
+                .where(ProjectBukvarixKeywordRun.status == "queued", ~_scheduler_owns_run())
                 .order_by(ProjectBukvarixKeywordRun.queued_at, ProjectBukvarixKeywordRun.id)
                 .limit(limit)
             )
@@ -55,6 +66,7 @@ async def recover_stale_bukvarix_keyword_runs(db: AsyncSession) -> int:
                 .where(
                     ProjectBukvarixKeywordRun.status == "running",
                     ProjectBukvarixKeywordRun.started_at < cutoff,
+                    ~_scheduler_owns_run(),
                 )
                 .with_for_update(skip_locked=True)
             )
@@ -129,6 +141,9 @@ async def run_bukvarix_keyword_run(db: AsyncSession, run_id: UUID) -> dict:
                     break
             if len(rows) >= MAX_RESULTS_PER_RUN:
                 break
+        run = await db.get(ProjectBukvarixKeywordRun, run_id, populate_existing=True)
+        if run is None or run.status != "running":
+            return {"status": run.status if run else "missing", "run_id": str(run_id)}
         db.add_all(
             [
                 ProjectBukvarixKeywordResult(
@@ -160,6 +175,9 @@ async def run_bukvarix_keyword_run(db: AsyncSession, run_id: UUID) -> dict:
         code = exc.code
     except Exception:  # noqa: BLE001
         code = "provider_execution_failed"
+    run = await db.get(ProjectBukvarixKeywordRun, run_id, populate_existing=True)
+    if run is None or run.status != "running":
+        return {"status": run.status if run else "missing", "run_id": str(run_id)}
     run.status = "failed"
     run.failure_code = code
     run.query_count = queries_attempted
