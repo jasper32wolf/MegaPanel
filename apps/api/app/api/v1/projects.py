@@ -82,6 +82,7 @@ from app.services.release_gate import (
     serialize_release_gate,
     store_release_gate,
 )
+from app.services.scheduler import create_site_build_job, requeue_site_build_job
 from app.services.site_build_metadata import validate_page_metadata_snapshot
 from app.services.site_build_queue import append_site_build_event
 from app.services.telemetry import telemetry_token
@@ -3025,11 +3026,7 @@ def _page_metadata_from_candidate_result(result: dict, snapshot: dict) -> list[d
             **item,
             "source_hash": source_hashes[item["slug"]],
             "promoted_at": promoted_at[item["slug"]],
-            **(
-                {"index_promotion": promotions[item["slug"]]}
-                if item["slug"] in promotions
-                else {}
-            ),
+            **({"index_promotion": promotions[item["slug"]]} if item["slug"] in promotions else {}),
         }
         for item in result["pages"]
     ]
@@ -3089,9 +3086,7 @@ async def run_queued_candidate_build(db: AsyncSession, build_id: UUID) -> dict:
         manifest = SiteManifest.model_validate(snapshot["manifest"])
         if manifest.site_id != site.id or manifest.tenant_id != build.tenant_id:
             raise ValueError("snapshot_scope")
-        assets = await _build_assets_for_manifest(
-            db, manifest=manifest, tenant_id=build.tenant_id
-        )
+        assets = await _build_assets_for_manifest(db, manifest=manifest, tenant_id=build.tenant_id)
         frozen_context = snapshot["context"]
         context = {
             **dict(frozen_context["manifest_context"]),
@@ -3243,6 +3238,10 @@ async def materialize_project_build(
     )
     db.add(build)
     await db.flush()
+    # Test doubles used by legacy source-level workflow tests predate scheduler tables.
+    # Real AsyncSession instances always expose scalar() and create the durable job here.
+    if hasattr(db, "scalar"):
+        await create_site_build_job(db, build=build)
     await append_site_build_event(db, build=build, event_type="queued")
     await append_audit(
         db,
@@ -3302,6 +3301,11 @@ async def retry_project_build(
     build.lease_expires_at = None
     build.last_enqueued_at = datetime.now(UTC)
     build.not_before = build.last_enqueued_at
+    if hasattr(db, "scalar"):
+        try:
+            await requeue_site_build_job(db, build=build)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
     await append_site_build_event(db, build=build, event_type="retry_requested")
     await append_audit(
         db,

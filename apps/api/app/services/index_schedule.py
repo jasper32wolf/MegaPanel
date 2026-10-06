@@ -20,6 +20,7 @@ from app.models import (
     SiteBuild,
 )
 from app.services.audit import append_audit
+from app.services.scheduler import create_site_build_job
 from app.services.site_build_queue import append_site_build_event
 from site_panel_shared.manifests import PageManifest, SiteManifest
 from sqlalchemy import select
@@ -117,9 +118,7 @@ async def _validate_batch(
     return None
 
 
-async def prepare_due_index_schedule_batches(
-    db: AsyncSession, *, limit: int = 1
-) -> list[dict]:
+async def prepare_due_index_schedule_batches(db: AsyncSession, *, limit: int = 1) -> list[dict]:
     """Create at most ``limit`` frozen candidates; never activate or publish them."""
     now = datetime.now(UTC)
     schedules = list(
@@ -169,9 +168,7 @@ async def prepare_due_index_schedule_batches(
             continue
         stale_reason = await _validate_batch(db, schedule=schedule, items=batch)
         if stale_reason:
-            await _pause_stale_schedule(
-                db, schedule=schedule, items=batch, reason=stale_reason
-            )
+            await _pause_stale_schedule(db, schedule=schedule, items=batch, reason=stale_reason)
             continue
 
         project = await db.get(Project, schedule.project_id)
@@ -213,6 +210,8 @@ async def prepare_due_index_schedule_batches(
         )
         db.add(build)
         await db.flush()
+        if hasattr(db, "scalar"):
+            await create_site_build_job(db, build=build)
         await append_site_build_event(
             db,
             build=build,

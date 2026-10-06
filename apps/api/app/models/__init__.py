@@ -299,6 +299,12 @@ from app.models.publish import (  # noqa: E402
     SitePage,
 )
 from app.models.research import CompetitorCrawlPage, CompetitorCrawlRun  # noqa: E402
+from app.models.scheduler import (  # noqa: E402
+    SchedulerAttempt,
+    SchedulerJob,
+    SchedulerProjectTurn,
+    SchedulerWakeup,
+)
 from app.models.semantic_source import (  # noqa: E402
     ProjectBukvarixKeywordResult,
     ProjectBukvarixKeywordRun,
@@ -376,6 +382,10 @@ __all__ = [
     "PromptEvaluationRun",
     "Redirect",
     "SavedView",
+    "SchedulerAttempt",
+    "SchedulerJob",
+    "SchedulerProjectTurn",
+    "SchedulerWakeup",
     "SerpCheck",
     "Site",
     "SiteBuild",

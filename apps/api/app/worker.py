@@ -12,7 +12,7 @@ from app.api.v1.ai_workspace import _actual_cost, _usage_payload, _validate_prop
 from app.api.v1.projects import run_queued_candidate_build
 from app.core.config import get_settings
 from app.db.session import open_db_session
-from app.models import AIProviderConnection, AIRun
+from app.models import AIProviderConnection, AIRun, SchedulerJob
 from app.providers import ProviderError, StructuredRequest
 from app.services.ai_secrets import decrypt_provider_key
 from app.services.audit import append_audit
@@ -26,12 +26,14 @@ from app.services.competitor_crawl import run_competitor_crawl
 from app.services.index_schedule import prepare_due_index_schedule_batches
 from app.services.intent_generation import validate_intent_page_proposal
 from app.services.operations import auto_resolve_inactive_incidents
-from app.services.site_build_queue import (
-    available_candidate_build_slots,
-    due_site_build_ids,
-    enqueue_site_build,
-    expire_stale_site_builds,
+from app.services.scheduler import (
+    claim_execution,
+    complete_site_build_execution,
+    dispatch_due_jobs,
+    publish_pending_wakeups,
+    recover_expired_scheduler_leases,
 )
+from app.services.site_build_queue import expire_stale_site_builds
 from app.services.webhook_delivery import due_delivery_ids, process_delivery, recover_expired_leases
 from app.services.worker_heartbeat import record_worker_heartbeat
 
@@ -117,11 +119,42 @@ async def bukvarix_keyword_sweep_task(ctx: dict) -> dict:
         return {"status": "failed", "error_code": "worker_sweep_failed"}
 
 
+async def scheduler_execute_task(ctx: dict, scheduler_job_id: str) -> dict:
+    """Execute one leased allowlisted job; it cannot publish or apply content."""
+    try:
+        job_id = uuid.UUID(scheduler_job_id)
+    except ValueError:
+        return {"status": "failed", "error_code": "invalid_scheduler_job_id"}
+    async with open_db_session() as session:
+        job = await claim_execution(session, job_id)
+        if job is None:
+            return {"status": "duplicate", "scheduler_job_id": scheduler_job_id}
+        if job.work_type != "site_build":
+            return await complete_site_build_execution(
+                session,
+                job_id=job.id,
+                result={"status": "failed", "error_code": "unsupported_work_type"},
+            )
+        result = await run_queued_candidate_build(session, job.source_id)
+        return await complete_site_build_execution(session, job_id=job.id, result=result)
+
+
 async def candidate_build_task(ctx: dict, build_id: str) -> dict:
-    """Execute a single durable candidate build; never activate or publish it."""
+    """Compatibility handler for legacy messages that cannot bypass scheduler leases."""
     try:
         async with open_db_session() as session:
-            result = await run_queued_candidate_build(session, uuid.UUID(build_id))
+            source_id = uuid.UUID(build_id)
+            scheduler_job = None
+            if hasattr(session, "scalar"):
+                scheduler_job = await session.scalar(
+                    select(SchedulerJob.id).where(
+                        SchedulerJob.work_type == "site_build",
+                        SchedulerJob.source_id == source_id,
+                    )
+                )
+            if scheduler_job:
+                return {"status": "scheduler_managed", "build_id": build_id}
+            result = await run_queued_candidate_build(session, source_id)
         logger.info("candidate_build_processed", build_id=build_id, status=result["status"])
         return result
     except Exception:  # noqa: BLE001
@@ -131,23 +164,26 @@ async def candidate_build_task(ctx: dict, build_id: str) -> dict:
 
 
 async def candidate_build_sweep_task(ctx: dict) -> dict:
-    """Redeliver only durable queued IDs after a temporary Redis or worker outage."""
+    """Recover, fairly lease and wake frozen candidates; never publish a release."""
     try:
         async with open_db_session() as session:
-            recovered = await expire_stale_site_builds(session)
-            slots = await available_candidate_build_slots(session)
-            build_ids = await due_site_build_ids(session, limit=slots)
-        enqueued = 0
-        for build_id in build_ids:
-            try:
-                await enqueue_site_build(build_id)
-                enqueued += 1
-            except Exception:  # noqa: BLE001
-                logger.warning("candidate_build_enqueue_deferred", build_id=str(build_id))
+            legacy_recovered = await expire_stale_site_builds(session)
+            recovered = await recover_expired_scheduler_leases(session)
+            leased = await dispatch_due_jobs(session)
+            published = await publish_pending_wakeups(session)
         logger.info(
-            "candidate_build_sweep", recovered=recovered, queued=len(build_ids), enqueued=enqueued
+            "candidate_build_sweep",
+            legacy_recovered=legacy_recovered,
+            recovered=recovered,
+            leased=len(leased),
+            published=published,
         )
-        return {"recovered": recovered, "queued": len(build_ids), "enqueued": enqueued}
+        return {
+            "legacy_recovered": legacy_recovered,
+            "recovered": recovered,
+            "leased": len(leased),
+            "published": published,
+        }
     except Exception:  # noqa: BLE001
         logger.exception("candidate_build_sweep_failed")
         return {"status": "failed", "error_code": "worker_sweep_failed"}
@@ -403,6 +439,7 @@ class WorkerSettings:
         intent_page_proposal_task,
         bukvarix_keyword_task,
         bukvarix_keyword_sweep_task,
+        scheduler_execute_task,
         candidate_build_task,
         candidate_build_sweep_task,
         index_schedule_sweep_task,
