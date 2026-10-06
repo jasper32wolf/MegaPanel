@@ -21,6 +21,7 @@ export function ProjectWorkspaceLayout({ projectId, children }: { projectId: str
         {sections.map(([slug, label]) => (
           <NavLink
             key={slug}
+            data-testid={`project-nav-${slug}`}
             className={({ isActive }) => `btn btn-ghost${isActive ? " is-active" : ""}`}
             to={`/projects/${projectId}/${slug}`}
           >
