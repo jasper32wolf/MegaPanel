@@ -1,8 +1,0 @@
-{
-  "env": {
-    "ANTHROPIC_BASE_URL": "https://claude-n-codex.com:8443",
-    "ANTHROPIC_AUTH_TOKEN": "sk-myapi_D6HB4WAZge_8B9yzGiLArcnJGB_v3LkWp4NeRWqdPX8Tkpvs51WNjc",
-    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-    "CLAUDE_CODE_ATTRIBUTION_HEADER": "0"
-  }
-}
