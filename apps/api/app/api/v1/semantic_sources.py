@@ -28,7 +28,7 @@ from app.schemas.research import (
 )
 from app.services.audit import append_audit
 from app.services.bukvarix_https import MAX_RESULTS_PER_RUN, MAX_SEED_QUERIES
-from app.services.bukvarix_queue import enqueue_bukvarix_keyword_run
+from app.services.scheduler import create_bukvarix_keyword_job
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -168,6 +168,8 @@ async def create_bukvarix_keyword_run(
     )
     db.add(run)
     await db.flush()
+    if hasattr(db, "scalar"):
+        await create_bukvarix_keyword_job(db, run=run)
     await append_audit(
         db,
         action="bukvarix.https_public_free.queued",
@@ -181,11 +183,6 @@ async def create_bukvarix_keyword_run(
         actor_id=auth.user.id,
     )
     await db.commit()
-    try:
-        await enqueue_bukvarix_keyword_run(run.id)
-    except Exception:  # noqa: BLE001
-        # The durable queued row remains observable and may be redelivered manually by the worker.
-        pass
     return await _bukvarix_run_out(db, run, include_results=False)
 
 

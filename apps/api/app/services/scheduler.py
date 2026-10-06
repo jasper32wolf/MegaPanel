@@ -9,6 +9,7 @@ from uuid import UUID
 
 from app.core.config import get_settings
 from app.models import (
+    ProjectBukvarixKeywordRun,
     SchedulerAttempt,
     SchedulerJob,
     SchedulerProjectTurn,
@@ -20,6 +21,7 @@ from arq.connections import RedisSettings
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+_WORK_TYPE_BUKVARIX_KEYWORD = "bukvarix_keyword"
 _WORK_TYPE_SITE_BUILD = "site_build"
 _EVENTS = frozenset(
     {
@@ -120,6 +122,42 @@ async def create_site_build_job(db: AsyncSession, *, build: SiteBuild) -> Schedu
     return job
 
 
+async def create_bukvarix_keyword_job(
+    db: AsyncSession, *, run: ProjectBukvarixKeywordRun
+) -> SchedulerJob:
+    """Bind a frozen, preview-only Bukvarix run to an idempotent scheduler job."""
+    if run.status != "queued" or not run.seed_snapshot_hash:
+        raise ValueError("Only queued Bukvarix runs with a frozen seed snapshot can be scheduled")
+    existing = await db.scalar(
+        select(SchedulerJob).where(
+            SchedulerJob.work_type == _WORK_TYPE_BUKVARIX_KEYWORD,
+            SchedulerJob.source_id == run.id,
+        )
+    )
+    if existing:
+        if (
+            existing.tenant_id != run.tenant_id
+            or existing.project_id != run.project_id
+            or existing.source_hash != run.seed_snapshot_hash
+        ):
+            raise ValueError("Scheduler job source identity mismatch")
+        return existing
+    job = SchedulerJob(
+        tenant_id=run.tenant_id,
+        project_id=run.project_id,
+        work_type=_WORK_TYPE_BUKVARIX_KEYWORD,
+        source_id=run.id,
+        source_hash=run.seed_snapshot_hash,
+        source_version=1,
+        priority=50,
+        requested_by=run.requested_by,
+    )
+    db.add(job)
+    await db.flush()
+    await append_scheduler_attempt(db, job=job, event_type="queued")
+    return job
+
+
 async def requeue_site_build_job(db: AsyncSession, *, build: SiteBuild) -> SchedulerJob:
     job = await create_site_build_job(db, build=build)
     if job.state == "queued":
@@ -159,11 +197,23 @@ async def recover_expired_scheduler_leases(db: AsyncSession) -> int:
         .all()
     )
     for job in jobs:
-        job.state = "failed"
-        job.failure_code = "worker_timeout"
-        job.finished_at = now
         job.lease_id = None
         job.lease_expires_at = None
+        if job.work_type == _WORK_TYPE_BUKVARIX_KEYWORD:
+            run = await db.get(ProjectBukvarixKeywordRun, job.source_id)
+            if run and run.status == "running":
+                run.status = "queued"
+                run.started_at = None
+                run.completed_at = None
+                run.failure_code = None
+            job.state = "queued"
+            job.eligible_at = now
+            job.queued_at = now
+            job.failure_code = None
+        else:
+            job.state = "failed"
+            job.failure_code = "worker_timeout"
+            job.finished_at = now
         await append_scheduler_attempt(
             db, job=job, event_type="lease_expired", safe_code="worker_timeout"
         )
@@ -304,11 +354,17 @@ async def claim_execution(db: AsyncSession, job_id: UUID) -> SchedulerJob | None
     return job
 
 
-async def complete_site_build_execution(db: AsyncSession, *, job_id: UUID, result: dict) -> dict:
+async def complete_execution(db: AsyncSession, *, job_id: UUID, result: dict) -> dict:
+    """Finalize a completed allowlisted source without changing its public workflow state."""
     job = await db.scalar(select(SchedulerJob).where(SchedulerJob.id == job_id).with_for_update())
     if not job:
         return result
-    if result.get("status") == "ready":
+    if job.state == "cancel_requested":
+        job.state = "cancelled"
+        job.cancelled_at = _now()
+        event_type = "cancelled"
+        code = None
+    elif result.get("status") in {"ready", "completed"}:
         job.state = "succeeded"
         job.failure_code = None
         event_type = "succeeded"
@@ -364,7 +420,8 @@ __all__ = [
     "append_scheduler_attempt",
     "cancel_job",
     "claim_execution",
-    "complete_site_build_execution",
+    "complete_execution",
+    "create_bukvarix_keyword_job",
     "create_site_build_job",
     "dispatch_due_jobs",
     "pause_job",

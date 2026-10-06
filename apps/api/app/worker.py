@@ -28,7 +28,7 @@ from app.services.intent_generation import validate_intent_page_proposal
 from app.services.operations import auto_resolve_inactive_incidents
 from app.services.scheduler import (
     claim_execution,
-    complete_site_build_execution,
+    complete_execution,
     dispatch_due_jobs,
     publish_pending_wakeups,
     recover_expired_scheduler_leases,
@@ -83,10 +83,21 @@ async def webhook_delivery_sweep_task(ctx: dict) -> dict:
 
 
 async def bukvarix_keyword_task(ctx: dict, run_id: str) -> dict:
-    """Fetch a bounded HTTPS public-free Bukvarix preview; never commit or publish."""
+    """Compatibility handler for legacy Bukvarix messages outside scheduler ownership."""
     try:
         async with open_db_session() as session:
-            result = await run_bukvarix_keyword_run(session, uuid.UUID(run_id))
+            source_id = uuid.UUID(run_id)
+            scheduler_job = None
+            if hasattr(session, "scalar"):
+                scheduler_job = await session.scalar(
+                    select(SchedulerJob.id).where(
+                        SchedulerJob.work_type == "bukvarix_keyword",
+                        SchedulerJob.source_id == source_id,
+                    )
+                )
+            if scheduler_job:
+                return {"status": "scheduler_managed", "run_id": run_id}
+            result = await run_bukvarix_keyword_run(session, source_id)
         logger.info("bukvarix_keyword_processed", run_id=run_id, status=result["status"])
         return result
     except Exception:  # noqa: BLE001
@@ -95,13 +106,30 @@ async def bukvarix_keyword_task(ctx: dict, run_id: str) -> dict:
 
 
 async def bukvarix_keyword_sweep_task(ctx: dict) -> dict:
-    """Recover and redeliver only durable Bukvarix run IDs after worker/Redis interruption."""
+    """Redeliver only legacy runs; scheduler-owned work uses the generic outbox."""
     try:
         async with open_db_session() as session:
             recovered = await recover_stale_bukvarix_keyword_runs(session)
             run_ids = await due_bukvarix_keyword_run_ids(session)
+            scheduler_sources = (
+                set(
+                    (
+                        await session.execute(
+                            select(SchedulerJob.source_id).where(
+                                SchedulerJob.work_type == "bukvarix_keyword",
+                                SchedulerJob.source_id.in_(tuple(run_ids)),
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                if run_ids
+                else set()
+            )
+        legacy_run_ids = [run_id for run_id in run_ids if run_id not in scheduler_sources]
         enqueued = 0
-        for run_id in run_ids:
+        for run_id in legacy_run_ids:
             try:
                 await enqueue_bukvarix_keyword_run(run_id)
                 enqueued += 1
@@ -110,10 +138,10 @@ async def bukvarix_keyword_sweep_task(ctx: dict) -> dict:
         logger.info(
             "bukvarix_keyword_sweep",
             recovered=recovered,
-            queued=len(run_ids),
+            queued=len(legacy_run_ids),
             enqueued=enqueued,
         )
-        return {"recovered": recovered, "queued": len(run_ids), "enqueued": enqueued}
+        return {"recovered": recovered, "queued": len(legacy_run_ids), "enqueued": enqueued}
     except Exception:  # noqa: BLE001
         logger.exception("bukvarix_keyword_sweep_failed")
         return {"status": "failed", "error_code": "worker_sweep_failed"}
@@ -129,14 +157,13 @@ async def scheduler_execute_task(ctx: dict, scheduler_job_id: str) -> dict:
         job = await claim_execution(session, job_id)
         if job is None:
             return {"status": "duplicate", "scheduler_job_id": scheduler_job_id}
-        if job.work_type != "site_build":
-            return await complete_site_build_execution(
-                session,
-                job_id=job.id,
-                result={"status": "failed", "error_code": "unsupported_work_type"},
-            )
-        result = await run_queued_candidate_build(session, job.source_id)
-        return await complete_site_build_execution(session, job_id=job.id, result=result)
+        if job.work_type == "site_build":
+            result = await run_queued_candidate_build(session, job.source_id)
+        elif job.work_type == "bukvarix_keyword":
+            result = await run_bukvarix_keyword_run(session, job.source_id)
+        else:
+            result = {"status": "failed", "error_code": "unsupported_work_type"}
+        return await complete_execution(session, job_id=job.id, result=result)
 
 
 async def candidate_build_task(ctx: dict, build_id: str) -> dict:
