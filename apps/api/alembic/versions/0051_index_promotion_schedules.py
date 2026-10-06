@@ -66,10 +66,16 @@ def upgrade() -> None:
         sa.Column("paused_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column(
-            "created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
         ),
         sa.Column(
-            "updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
         ),
         sa.CheckConstraint(
             "state IN ('draft', 'review', 'active', 'paused', 'completed', 'cancelled')",
@@ -145,7 +151,10 @@ def upgrade() -> None:
         sa.Column("prepared_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("stale_reason", sa.String(length=128), nullable=True),
         sa.Column(
-            "created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
         ),
         sa.UniqueConstraint("schedule_id", "slug", name="uq_index_schedule_item_slug"),
         sa.CheckConstraint("batch_number >= 1", name="ck_index_schedule_item_batch"),
@@ -174,8 +183,14 @@ def upgrade() -> None:
 def downgrade() -> None:
     for table in ("index_promotion_schedule_items", "index_promotion_schedules"):
         op.execute(f"DROP POLICY IF EXISTS tenant_isolation_{table} ON {table}")
-    op.drop_index("ix_index_schedule_items_schedule_batch", table_name="index_promotion_schedule_items")
-    op.drop_index("ix_index_schedule_items_due", table_name="index_promotion_schedule_items")
+    op.drop_index(
+        "ix_index_schedule_items_schedule_batch",
+        table_name="index_promotion_schedule_items",
+    )
+    op.drop_index(
+        "ix_index_schedule_items_due",
+        table_name="index_promotion_schedule_items",
+    )
     op.drop_table("index_promotion_schedule_items")
     op.drop_index("ix_index_promotion_schedules_due", table_name="index_promotion_schedules")
     op.drop_table("index_promotion_schedules")
