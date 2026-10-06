@@ -6,7 +6,6 @@ from uuid import uuid4
 
 import pytest
 from app.db.rls import set_tenant_rls
-from app.db.session import open_db_session
 from app.models import (
     Project,
     SchedulerAttempt,
@@ -15,6 +14,7 @@ from app.models import (
     SchedulerWakeup,
     Tenant,
 )
+from postgres_test_session import isolated_db_session
 from sqlalchemy import text
 
 _ROLE = "site_panel_scheduler_rls_test"
@@ -28,7 +28,7 @@ def test_scheduler_tables_enforce_tenant_rls_with_non_owner_role():
     async def run() -> None:
         created_role = False
         try:
-            async with open_db_session() as db:
+            async with isolated_db_session() as db:
                 existing = await db.scalar(
                     text("SELECT 1 FROM pg_roles WHERE rolname = :name"), {"name": _ROLE}
                 )
@@ -52,7 +52,7 @@ def test_scheduler_tables_enforce_tenant_rls_with_non_owner_role():
             attempt_ids = (uuid4(), uuid4())
             wakeup_ids = (uuid4(), uuid4())
             turn_ids = (uuid4(), uuid4())
-            async with open_db_session() as db:
+            async with isolated_db_session() as db:
                 for index in range(2):
                     db.add(
                         Tenant(
@@ -86,6 +86,8 @@ def test_scheduler_tables_enforce_tenant_rls_with_non_owner_role():
                             priority=50,
                         )
                     )
+                await db.flush()  # Persist parents before inserting attempts and wakeups.
+                for index in range(2):
                     db.add(
                         SchedulerAttempt(
                             id=attempt_ids[index],
@@ -155,7 +157,7 @@ def test_scheduler_tables_enforce_tenant_rls_with_non_owner_role():
                 await db.rollback()  # Discard proof records without deleting append-only events.
         finally:
             if created_role:
-                async with open_db_session() as db:
+                async with isolated_db_session() as db:
                     await db.execute(text(f"DROP OWNED BY {_ROLE}"))
                     await db.execute(text(f"DROP ROLE {_ROLE}"))
                     await db.commit()

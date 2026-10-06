@@ -9,7 +9,6 @@ from uuid import UUID, uuid4
 
 import pytest
 from app.db.rls import set_tenant_rls
-from app.db.session import open_db_session
 from app.models import Site, Tenant
 from app.models.leads import AnalyticsDailyAggregate, AnalyticsEvent, AnalyticsRevokedSession
 from app.services.telemetry import session_digest
@@ -19,6 +18,7 @@ from app.services.telemetry_retention import (
     rollup_and_purge,
     session_was_revoked,
 )
+from postgres_test_session import isolated_db_session
 from sqlalchemy import delete, func, select, text
 
 pytestmark = pytest.mark.skipif(
@@ -49,8 +49,9 @@ def test_rollup_retention_withdrawal_and_utc_boundaries():
         old = _NOW - timedelta(days=31)
         sessions = [f"browser-session-{index:04d}" for index in range(6)]
         try:
-            async with open_db_session() as db:
+            async with isolated_db_session() as db:
                 db.add(Tenant(id=tenant_id, name="Telemetry retention", slug=tenant_id.hex))
+                await db.flush()
                 db.add(
                     Site(
                         id=site_id,
@@ -116,7 +117,7 @@ def test_rollup_retention_withdrawal_and_utc_boundaries():
                 )
                 await db.commit()
 
-            async with open_db_session() as db:
+            async with isolated_db_session() as db:
                 result = await rollup_and_purge(db, now=_NOW)
                 assert result["raw_deleted"] == 7
                 rows = await page_view_summary(
@@ -154,7 +155,7 @@ def test_rollup_retention_withdrawal_and_utc_boundaries():
                 assert "session" not in aggregate.__table__.columns
                 assert "payload" not in aggregate.__table__.columns
 
-            async with open_db_session() as db:
+            async with isolated_db_session() as db:
                 digest = session_digest(sessions[0])
                 assert (
                     await revoke_session(
@@ -192,7 +193,7 @@ def test_rollup_retention_withdrawal_and_utc_boundaries():
                     now=_NOW + timedelta(days=2),
                 )
         finally:
-            async with open_db_session() as db:
+            async with isolated_db_session() as db:
                 await db.execute(
                     delete(AnalyticsEvent).where(AnalyticsEvent.tenant_id == tenant_id)
                 )
@@ -208,7 +209,7 @@ def test_raw_aggregate_and_revocation_marker_enforce_tenant_rls():
         tenant_ids = (uuid4(), uuid4())
         site_ids = (uuid4(), uuid4())
         try:
-            async with open_db_session() as db:
+            async with isolated_db_session() as db:
                 assert not await db.scalar(
                     text("SELECT 1 FROM pg_roles WHERE rolname = :role"), {"role": _ROLE}
                 ), "Dedicated telemetry test role already exists"
@@ -222,13 +223,15 @@ def test_raw_aggregate_and_revocation_marker_enforce_tenant_rls():
                     await db.execute(text(f"GRANT SELECT, INSERT ON {table} TO {_ROLE}"))
                 await db.commit()
                 created_role = True
-            async with open_db_session() as db:
+            async with isolated_db_session() as db:
                 for index in range(2):
                     db.add(
                         Tenant(
                             id=tenant_ids[index], name="Telemetry RLS", slug=tenant_ids[index].hex
                         )
                     )
+                await db.flush()
+                for index in range(2):
                     db.add(
                         Site(
                             id=site_ids[index],
@@ -313,7 +316,7 @@ def test_raw_aggregate_and_revocation_marker_enforce_tenant_rls():
                 await db.rollback()
         finally:
             if created_role:
-                async with open_db_session() as db:
+                async with isolated_db_session() as db:
                     await db.execute(text(f"DROP OWNED BY {_ROLE}"))
                     await db.execute(text(f"DROP ROLE {_ROLE}"))
                     await db.commit()
