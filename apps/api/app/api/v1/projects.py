@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import secrets
 import time
@@ -103,6 +104,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 def _require_project_access(auth: AuthContext, project: Project) -> None:
@@ -179,6 +181,27 @@ def _record_release_event(db: AsyncSession, *, tenant_id: UUID, outcome: str) ->
         else "info",
         outcome={"success": "success", "failure": "failure", "blocked": "warning"}[outcome],
     )
+
+
+async def _compensate_release_activation(
+    *,
+    builder: SiteBuilder,
+    site_id: UUID,
+    candidate_hash: str,
+    old_hash: str | None,
+) -> bool:
+    try:
+        return builder.restore_activation(str(site_id), candidate_hash, old_hash)
+    except Exception:
+        logger.exception(
+            "Release activation compensation failed",
+            extra={
+                "site_id": str(site_id),
+                "candidate_hash": candidate_hash,
+                "had_previous_release": old_hash is not None,
+            },
+        )
+        return False
 
 
 async def _lead_routing_publish_blockers(db: AsyncSession, site: Site) -> list[str]:
@@ -3685,7 +3708,12 @@ async def publish_project_build(
         site.domain, str(Path(settings.caddy_sites_root) / str(site.id) / "current")
     )
     if not caddy.get("ok"):
-        restored = builder.restore_activation(str(site.id), build.build_hash, old_hash)
+        restored = await _compensate_release_activation(
+            builder=builder,
+            site_id=site.id,
+            candidate_hash=build.build_hash,
+            old_hash=old_hash,
+        )
         if restored:
             detail = (
                 "Caddy configuration failed; candidate activation reverted"
@@ -3798,7 +3826,12 @@ async def rollback_project_build(
         site.domain, str(Path(settings.caddy_sites_root) / str(site.id) / "current")
     )
     if not caddy.get("ok"):
-        restored = builder.restore_activation(str(site.id), body.build_hash, old_hash)
+        restored = await _compensate_release_activation(
+            builder=builder,
+            site_id=site.id,
+            candidate_hash=body.build_hash,
+            old_hash=old_hash,
+        )
         if restored:
             detail = (
                 "Caddy configuration failed; candidate activation reverted"

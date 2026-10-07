@@ -1068,6 +1068,31 @@ def test_publish_caddy_failure_with_unverified_recovery_has_no_projection_mutati
     audit.assert_not_awaited()
 
 
+def test_failed_release_activation_compensation_is_contained(caplog):
+    site_id = uuid4()
+
+    class Builder:
+        def restore_activation(self, *_args) -> bool:
+            raise OSError("release directory is unavailable")
+
+    with caplog.at_level("ERROR", logger="app.api.v1.projects"):
+        restored = asyncio.run(
+            projects._compensate_release_activation(
+                builder=Builder(),
+                site_id=site_id,
+                candidate_hash="b" * 64,
+                old_hash="a" * 64,
+            )
+        )
+
+    assert restored is False
+    assert "Release activation compensation failed" in caplog.text
+    assert len(caplog.records) == 1
+    assert caplog.records[0].site_id == str(site_id)
+    assert caplog.records[0].candidate_hash == "b" * 64
+    assert caplog.records[0].had_previous_release is True
+
+
 def test_first_publish_caddy_failure_compensates_without_persistence(monkeypatch):
     tenant_id, project_id, site_id, build_id = (uuid4() for _ in range(4))
     snapshot = _build_manifest_snapshot(site_id, tenant_id, [_page_manifest("/", "Candidate")])
