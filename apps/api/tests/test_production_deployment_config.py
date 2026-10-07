@@ -235,6 +235,12 @@ def test_caddy_proxies_only_through_the_public_origins():
     assert "reverse_proxy panel:80" in config
     assert "/.well-known/security.txt" not in config
     assert "Strict-Transport-Security" in config
+    assert "Content-Security-Policy" in config
+    assert "default-src 'self'" in config
+    assert "object-src 'none'" in config
+    assert "frame-ancestors 'none'" in config
+    assert "https://fonts.googleapis.com" in config
+    assert "https://fonts.gstatic.com" in config
     assert config.count('Permissions-Policy "geolocation=(), microphone=(), camera=()"') == 2
     assert config.count("X-Frame-Options DENY") == 2
 
