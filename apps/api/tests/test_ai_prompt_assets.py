@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 from app.services.ai_secrets import encrypt_provider_key, redact_secret
 from app.services.prompt_catalog import PromptAsset, list_prompts, load_prompt
@@ -57,3 +59,15 @@ def test_architecture_prompt_marks_competitor_evidence_as_reference_only() -> No
 
     assert "Approved competitor evidence is reference-only" in prompt.content
     assert '"approved_competitor_evidence": []' in prompt.content
+    assert "the chain pauses with `pending_approval` before any PagePlan" in prompt.content
+
+
+def test_architecture_prompt_example_matches_declared_output_fields() -> None:
+    prompt = load_prompt("architecture/propose-site-map.md")
+    schema_text = prompt.content.split("## Output JSON schema\n\n```json\n", 1)[1]
+    example_text = prompt.content.split("## Example\n", 1)[1].split("```json\n", 1)[1]
+    schema = json.loads(schema_text.split("\n```", 1)[0])
+    example = json.loads(example_text.split("\n```", 1)[0])
+
+    assert set(example) == set(schema)
+    assert set(example["pages"][0]) == set(schema["pages"][0])
