@@ -327,7 +327,7 @@ test("оператор ставит candidate в очередь без публ�
   await page.getByRole("dialog").getByRole("button", { name: "Применить" }).click();
   await expect(page.getByText("Сначала примените черновик страницы.")).not.toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "4.5. Использование media в snapshots", exact: true }),
+    page.getByRole("heading", { name: "4.6. Использование media в snapshots", exact: true }),
   ).toBeVisible();
 
   await page.getByTestId("project-nav-releases").click();

@@ -70,6 +70,10 @@ test("Букварикс: HTTPS preview становится импортом т
     if (path === `/api/v1/projects/${projectId}/bukvarix-keyword-runs/${runId}/commit`) return json({
       source_run_id: "d0000000-0000-4000-8000-000000000006", created_keywords: 1, existing_keywords: 0, linked_project_keywords: 1,
     });
+    if (path === `/api/v1/projects/${projectId}/scheduled-work`) return json(createdRun ? [{
+      id: "d0000000-0000-4000-8000-000000000007", source_id: runId, work_type: "bukvarix_keyword",
+      state: listRequests >= 2 ? "succeeded" : "queued", failure_code: null,
+    }] : []);
     if (path === `/api/v1/projects/${projectId}/coverage`) return json({ selected: 0, covered: 0, uncovered: [], plans: 0 });
     if (path === `/api/v1/projects/${projectId}/semantic-signals`) return json({ totals: { members: 0, bindings: 0, covered: 0, planned: 0, uncovered: 0, unbound: 0 }, cannibalization: [], unmapped_plans: [] });
     if (path === "/api/v1/geo") return json([]);
@@ -88,7 +92,8 @@ test("Букварикс: HTTPS preview становится импортом т
   await page.getByText("Подтверждаю запуск фиксированного HTTPS public free-mode Букварикса для выбранных seed-фраз.").click();
   await page.getByRole("button", { name: "Получить HTTPS preview" }).click();
   await expect(page.getByText("queued", { exact: true })).toBeVisible();
-  await expect.poll(() => listRequests).toBeGreaterThanOrEqual(2);
+  await expect(page.getByText("Очередь: queued")).toBeVisible();
+  await expect.poll(() => listRequests, { timeout: 15_000 }).toBeGreaterThanOrEqual(2);
   await expect(page.getByText("ремонт окон цены", { exact: true })).toBeVisible();
 
   await page.getByLabel("Импорт Букварикс: ремонт окон цены").check();

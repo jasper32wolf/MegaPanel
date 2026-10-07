@@ -256,6 +256,9 @@ test("releases center shows queued candidate details without mutation", async ({
         index_promotion_provenance: [],
       }]) });
     }
+    if (url.pathname === `/api/v1/projects/${projectId}/scheduled-work`) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+    }
     return route.fulfill({ status: 404, contentType: "application/json", body: '{"detail":"not used by proof"}' });
   });
 
@@ -300,6 +303,9 @@ test("rollback requires exact hash phrase and never publishes", async ({ page })
     }
     if (url.pathname === `/api/v1/projects/${projectId}/rollbacks`) {
       return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+    }
+    if (url.pathname === `/api/v1/projects/${projectId}/scheduled-work`) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
     }
     return route.fulfill({ status: 404, contentType: "application/json", body: '{"detail":"not used by proof"}' });
   });
@@ -385,6 +391,9 @@ test("legal rejection сохраняет reason и manual remediation без п�
       legal_review: { status: "block", blockers: ["Approve the legal review for this candidate build"], review: { state: "pending", evidence_ref: null, reason: null, replacement_guidance: null, reviewed_at: null } },
       index_promotion_provenance: [],
     }]) });
+    if (url.pathname === `/api/v1/projects/${projectId}/scheduled-work`) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+    }
     return route.fulfill({ status: 404, contentType: "application/json", body: '{"detail":"not used by proof"}' });
   });
 
@@ -513,6 +522,9 @@ test("releases center renders immutable index-promotion provenance without mutat
         legal_review: { status: "pass", blockers: [], review: { state: "approved", evidence_ref: "LEGAL-1", reason: null, replacement_guidance: null, reviewed_at: "2026-10-01T12:00:00Z" } },
         index_promotion_provenance: [{ slug: "/", reason: "Подтверждено для выдачи после passing QA", decided_at: "2026-10-01T11:30:00Z" }],
       }]) });
+    }
+    if (url.pathname === `/api/v1/projects/${projectId}/scheduled-work`) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
     }
     return route.fulfill({ status: 404, contentType: "application/json", body: '{"detail":"not used by proof"}' });
   });
