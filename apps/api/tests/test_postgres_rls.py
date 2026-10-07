@@ -100,6 +100,11 @@ def test_rls_scopes_sites_after_maintenance_session() -> None:
                             branding={},
                             quotas={},
                         ),
+                    ]
+                )
+                await db.flush()
+                db.add_all(
+                    [
                         Site(
                             id=first_site_id,
                             tenant_id=first_tenant_id,

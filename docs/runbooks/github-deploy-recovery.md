@@ -217,10 +217,11 @@ GitHub Environment approval по-прежнему обязателен: запр
 
 ### 7.1. Scheduled path
 
-Каждые 10 минут `Recover production` запрашивает `PUBLIC_HEALTH_URL`.
+Каждые 10 минут `Recover production` запрашивает `PUBLIC_HEALTH_URL`. URL должен иметь форму `https://<публичный API-домен>/api/v1/health/live`: без порта, query, credentials и редиректа. TLS проверяется стандартным trust store GitHub runner; неверный URL останавливает workflow **без SSH/recover**. Срок действия реального сертификата и доступность снаружи проверяйте независимо от внутреннего readiness.
 
 | Ситуация | Действие |
 |---|---|
+| `PUBLIC_HEALTH_URL` указан не как ограниченный HTTPS liveness | Workflow завершается ошибкой до сетевого запроса и не подключается по SSH. |
 | Публичный liveness отвечает | Никакой SSH-команды нет. |
 | Public liveness не отвечает, внутренний API readiness отвечает | Нет restart/rollback: вероятны DNS/TLS/маршрутизация или GitHub network issue. Workflow фиксирует результат. |
 | Внутренний readiness не отвечает | `auto-recover`: restart `api worker panel caddy`, затем повторный readiness probe. |

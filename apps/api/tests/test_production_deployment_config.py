@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import os
+import re
+import shutil
+import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -13,6 +18,7 @@ PROVISIONER_PATH = ROOT / "scripts" / "install-production-vps.sh"
 DEV_INSTALLER_PATH = ROOT / "scripts" / "install.sh"
 CI_PATH = ROOT / ".github" / "workflows" / "ci.yml"
 DEPLOY_PATH = ROOT / ".github" / "workflows" / "deploy-production.yml"
+RECOVER_PATH = ROOT / ".github" / "workflows" / "recover-production.yml"
 PANEL_ROOT = ROOT / "apps" / "panel"
 
 
@@ -64,6 +70,37 @@ def test_verification_branches_run_full_ci_without_triggering_production_deploy(
     deploy = DEPLOY_PATH.read_text(encoding="utf-8")
     assert "branches: [main]" in deploy
     assert "github.event.workflow_run.head_branch == 'main'" in deploy
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="requires Bash for probe URL checks")
+@pytest.mark.parametrize(
+    ("url", "accepted"),
+    [
+        ("https://api.example.ru/api/v1/health/live", True),
+        ("https://api.xn--p1ai/api/v1/health/live", True),
+        ("http://api.example.ru/api/v1/health/live", False),
+        ("https://user:secret@api.example.ru/api/v1/health/live", False),
+        ("https://api.example.ru:443/api/v1/health/live", False),
+        ("https://api.example.ru/api/v1/health/live?key=secret", False),
+        ("https://api.example.ru/api/v1/health/ready", False),
+        ("https://localhost/api/v1/health/live", False),
+    ],
+)
+def test_scheduled_public_health_uses_exact_credential_free_https_url(url: str, accepted: bool):
+    workflow = yaml.safe_load(RECOVER_PATH.read_text(encoding="utf-8"))
+    source = workflow["jobs"]["select-operation"]["steps"][0]["run"]
+    guard = next(line for line in source.splitlines() if 'PUBLIC_HEALTH_URL" =~' in line)
+    match = re.search(r" =~ (\^.+\$) \]\]; then", guard)
+    assert match, guard
+    assert source.index(guard) < source.index("if curl --fail --silent --show-error")
+    result = subprocess.run(
+        ["bash", "-c", '[[ "$PUBLIC_HEALTH_URL" =~ ' + match.group(1) + " ]]"],
+        env={**os.environ, "PUBLIC_HEALTH_URL": url},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert (result.returncode == 0) is accepted, url
 
 
 def test_production_compose_uploads_bounded_evidence_marker():
