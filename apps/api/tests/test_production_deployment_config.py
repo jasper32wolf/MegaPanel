@@ -12,6 +12,7 @@ WORKER_DOCKERFILE_PATH = ROOT / "infra" / "docker" / "Dockerfile.worker"
 PROVISIONER_PATH = ROOT / "scripts" / "install-production-vps.sh"
 DEV_INSTALLER_PATH = ROOT / "scripts" / "install.sh"
 CI_PATH = ROOT / ".github" / "workflows" / "ci.yml"
+DEPLOY_PATH = ROOT / ".github" / "workflows" / "deploy-production.yml"
 PANEL_ROOT = ROOT / "apps" / "panel"
 
 
@@ -49,6 +50,20 @@ def test_ci_cancels_superseded_branch_runs_and_caches_dependencies():
     assert "apps/api/pyproject.toml" in python_setup["cache-dependency-path"]
     assert panel_setup["cache"] == "npm"
     assert panel_setup["cache-dependency-path"] == "apps/panel/package-lock.json"
+
+
+def test_verification_branches_run_full_ci_without_triggering_production_deploy():
+    workflow = yaml.safe_load(CI_PATH.read_text(encoding="utf-8"))
+    for name in ("integration-services", "panel-e2e", "production-compose-smoke"):
+        if name == "integration-services":
+            assert "if" not in workflow["jobs"][name]
+            continue
+        condition = workflow["jobs"][name]["if"]
+        assert "startsWith(github.ref, 'refs/heads/verification/')" in condition
+        assert "github.ref == 'refs/heads/main'" in condition
+    deploy = DEPLOY_PATH.read_text(encoding="utf-8")
+    assert "branches: [main]" in deploy
+    assert "github.event.workflow_run.head_branch == 'main'" in deploy
 
 
 def test_production_compose_uploads_bounded_evidence_marker():
@@ -296,7 +311,8 @@ def test_ci_runs_authenticated_production_compose_smoke_through_caddy():
     assert job["runs-on"] == "ubuntu-latest"
     assert job["timeout-minutes"] == 20
     assert job["if"] == (
-        "github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'"
+        "github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || "
+        "startsWith(github.ref, 'refs/heads/verification/')"
     )
     assert any(step.get("uses") == "actions/setup-node@v4" for step in job["steps"])
     browser_cache = next(

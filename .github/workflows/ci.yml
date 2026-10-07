@@ -226,9 +226,11 @@ jobs:
 
 
   production-compose-smoke:
-    # Full Docker/Caddy/browser proof is intentionally reserved for main and
-    # explicit manual runs; fast unit/integration gates still run on every push.
-    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    # Full proof runs on main, manual dispatch, and named verification branches.
+    # Verification branches never trigger the separate main-only deploy workflow.
+    if: >-
+      github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' ||
+      startsWith(github.ref, 'refs/heads/verification/')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -648,9 +650,11 @@ jobs:
 
 
   panel-e2e:
-    # Browser journey is expensive and runs before deploy on main; branches keep
-    # the fast panel build while manual dispatch can request the full journey.
-    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    # Browser journey runs before deploy on main and in isolated verification
+    # branches; ordinary branches keep the fast panel build only.
+    if: >-
+      github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' ||
+      startsWith(github.ref, 'refs/heads/verification/')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
