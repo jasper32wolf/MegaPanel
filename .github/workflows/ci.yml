@@ -232,7 +232,9 @@ jobs:
       github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' ||
       startsWith(github.ref, 'refs/heads/verification/')
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Browser system packages occasionally exceed 20 minutes on a cold hosted runner.
+    # This remains bounded and runs only on main, manual dispatch, or verification refs.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

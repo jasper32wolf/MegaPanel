@@ -346,7 +346,7 @@ def test_ci_runs_authenticated_production_compose_smoke_through_caddy():
     )
 
     assert job["runs-on"] == "ubuntu-latest"
-    assert job["timeout-minutes"] == 20
+    assert job["timeout-minutes"] == 30
     assert job["if"] == (
         "github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || "
         "startsWith(github.ref, 'refs/heads/verification/')"
