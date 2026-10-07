@@ -87,8 +87,8 @@ test("оператор видит и отзывает другую сессию"
   }
 });
 
-test("оператор ставит candidate в очередь без публикации", async ({ page }) => {
-  test.setTimeout(90_000);
+test("оператор получает private preview candidate без публикации", async ({ page }) => {
+  test.setTimeout(240_000);
   const publishRequests: string[] = [];
   const prohibitedSemanticRequests: string[] = [];
   page.on("request", (request) => {
@@ -226,6 +226,11 @@ test("оператор ставит candidate в очередь без публ�
   const { id: semanticCollectionId } = (await approvedCollection.json()) as { id: string };
   const projectId = new URL(page.url()).pathname.split("/").at(-1);
   expect(projectId).toMatch(/^[0-9a-f-]+$/);
+  await page.getByTestId("project-nav-overview").click();
+  await expect(page.getByRole("heading", { name: "Следующее действие" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Перейти к этапу" })).toHaveAttribute("href", `/projects/${projectId}/site-structure`);
+  await page.goto(`/projects/${projectId}`);
+  await expect(page.getByRole("heading", { name: projectName })).toBeVisible();
 
   // Structure editor has focused UI coverage. This long service-backed candidate
   // workflow creates its approved prerequisite through the same guarded API so
@@ -302,9 +307,16 @@ test("оператор ставит candidate в очередь без публ�
   await approvePlan.click();
   await expect(page.getByRole("dialog")).toBeVisible();
   await page.getByRole("dialog").getByRole("button", { name: "Одобрить" }).click();
-  const createDraft = page.getByRole("button", { name: "Создать черновик", exact: true });
-  await expect(createDraft).toBeEnabled();
-  await createDraft.click();
+  await page.getByLabel("В пакет черновиков: / · v1").check();
+  await page.getByText("Подтверждаю создание только PageDraft для выбранных планов.").click();
+  const batchResponsePromise = page.waitForResponse((response) =>
+    response.request().method() === "POST" &&
+    new URL(response.url()).pathname === `/api/v1/projects/${projectId}/page-plans/drafts/batch`,
+  );
+  await page.getByRole("button", { name: "Создать выбранные черновики (1)" }).click();
+  const batchResponse = await batchResponsePromise;
+  expect(batchResponse.ok(), `batch drafts ${batchResponse.status()}: ${await batchResponse.text()}`).toBe(true);
+  expect((await batchResponse.json() as { drafts_only: boolean }).drafts_only).toBe(true);
 
   const draftSection = page.locator("section.surface").filter({
     has: page.getByRole("heading", { name: "5. Черновики и проверка качества", exact: true }),
@@ -344,7 +356,21 @@ test("оператор ставит candidate в очередь без публ�
     queuedCandidate.ok(),
     `queue candidate ${queuedCandidate.status()}: ${queuedCandidateBody}`,
   ).toBe(true);
-  expect((JSON.parse(queuedCandidateBody) as { status: string }).status).toBe("queued");
-  await expect(page.getByText("queued", { exact: true }).first()).toBeVisible();
+  const candidate = JSON.parse(queuedCandidateBody) as { id: string; status: string; activated: boolean; published: boolean };
+  expect(candidate.status).toBe("queued");
+  expect(candidate.activated).toBe(false);
+  expect(candidate.published).toBe(false);
+  await expect.poll(async () => {
+    const response = await page.request.get(`/api/v1/projects/${projectId}/builds`);
+    if (!response.ok()) return `HTTP ${response.status()}`;
+    const builds = await response.json() as { id: string; status: string }[];
+    return builds.find((build) => build.id === candidate.id)?.status || "missing";
+  }, { timeout: 120_000, intervals: [1000, 2000, 5000] }).toBe("ready");
+  const previewLink = page.getByRole("link", { name: "Открыть private preview" });
+  await expect(previewLink).toBeVisible({ timeout: 20_000 });
+  const previewResponse = await page.request.get(await previewLink.getAttribute("href") || "");
+  expect(previewResponse.status()).toBe(200);
+  expect(previewResponse.headers()["x-robots-tag"]).toContain("noindex");
+  expect(await previewResponse.text()).toContain("<h1");
   expect(publishRequests).toEqual([]);
 });

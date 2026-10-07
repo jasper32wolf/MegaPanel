@@ -309,6 +309,28 @@ class PageDraftRequest(BaseModel):
     pass
 
 
+class PageDraftBatchItem(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    plan_id: UUID
+    expected_latest_revision: int = Field(ge=0, le=1_000_000)
+
+
+class PageDraftBatchRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    items: list[PageDraftBatchItem] = Field(min_length=1, max_length=10)
+    confirm_drafts_only: Literal[True]
+
+    @field_validator("items")
+    @classmethod
+    def unique_plan_ids(cls, value: list[PageDraftBatchItem]) -> list[PageDraftBatchItem]:
+        ids = [item.plan_id for item in value]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Select each PagePlan only once")
+        return value
+
+
 class PageDraftMediaAttachIn(BaseModel):
     asset_id: UUID
     alt: str = Field(min_length=1, max_length=255)

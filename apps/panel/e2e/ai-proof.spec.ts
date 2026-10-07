@@ -86,6 +86,32 @@ test("оператор обновляет ограниченный список 
   await expect(page.locator('input[type="password"]')).toHaveValue("");
 });
 
+test("замена ключа не объявляется неуспешной при ошибке обновления списка", async ({ page }) => {
+  await mockAuth(page);
+  let refreshUnavailable = false;
+  const mutations: string[] = [];
+  await page.route("**/api/v1/ai/providers", (route) => route.fulfill(refreshUnavailable
+    ? { status: 503, contentType: "application/json", body: '{"detail":"provider list unavailable"}' }
+    : { status: 200, contentType: "application/json", body: JSON.stringify([provider]) }));
+  await page.route(`**/api/v1/ai/providers/${provider.id}`, (route) => {
+    if (route.request().method() === "PATCH") {
+      mutations.push(route.request().postData() || "");
+      refreshUnavailable = true;
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...provider, credential_last4: "4321" }) });
+    }
+    return route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
+  });
+
+  await page.getByRole("link", { name: "Провайдеры" }).click();
+  await page.getByRole("button", { name: "Заменить ключ" }).click();
+  await page.getByLabel("Новый API key").fill("controlled-replacement-key");
+  await page.getByRole("button", { name: "Сохранить новый ключ" }).click();
+  await expect(page.getByRole("status")).toContainText("API key для Mock gateway заменён");
+  await expect(page.getByRole("alert")).toContainText("Действие выполнено, но список подключений не обновился");
+  await expect(page.getByText("controlled-replacement-key")).toHaveCount(0);
+  expect(mutations).toEqual([JSON.stringify({ api_key: "controlled-replacement-key" })]);
+});
+
 test("ошибка discovery не раскрывает секрет и остаётся в интерфейсе", async ({ page }) => {
   await mockAuth(page);
   await mockProviderList(page);
@@ -229,6 +255,96 @@ test("pages deep link shows PagePlan and QA lineage without mutation", async ({ 
   expect(mutationRequests).toEqual([]);
 });
 
+test("project overview points to the next manual step without leaking facts", async ({ page }) => {
+  await mockAuth(page);
+  const projectId = "33333333-3333-4333-8333-333333333333";
+  const mutationRequests: string[] = [];
+  await page.route("**/api/v1/**", (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path === "/api/v1/security/me" || path === "/api/v1/auth/refresh") {
+      return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+    }
+    if (request.method() !== "GET") mutationRequests.push(`${request.method()} ${path}`);
+    if (path === `/api/v1/projects/${projectId}`) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+        id: projectId, name: "Overview proof", domain: "city.example.test", niche: "ремонт", site_id: null,
+        domain_check_meta: { dns_status: "ok" },
+      }) });
+    }
+    if (path === `/api/v1/projects/${projectId}/workflow-summary`) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+        facts_confirmed: true, keyword_count: 3, geo_count: 1, approved_collection_count: 1,
+        approved_structure_count: 0, approved_plan_count: 0, applied_draft_count: 0,
+        ready_candidate_count: 0, running_candidate_count: 0, published: false,
+      }) });
+    }
+    return route.fulfill({ status: 404, contentType: "application/json", body: '{"detail":"not used by proof"}' });
+  });
+
+  await page.goto(`/projects/${projectId}/overview`);
+  await expect(page.getByRole("heading", { name: "Overview proof" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Следующее действие" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Следующее действие" }).locator("..").getByText("Одобрить единую структуру сайта")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Перейти к этапу" })).toHaveAttribute("href", `/projects/${projectId}/site-structure`);
+  await expect(page.getByText("private-recipient@example.test")).toHaveCount(0);
+  expect(mutationRequests).toEqual([]);
+});
+
+test("operator batches only approved PageDraft snapshots without apply or publish", async ({ page }) => {
+  await mockAuth(page);
+  const projectId = "33333333-3333-4333-8333-333333333333";
+  const planIds = ["44444444-4444-4444-8444-444444444441", "44444444-4444-4444-8444-444444444442"];
+  const mutations: { path: string; body: unknown }[] = [];
+  await page.route("**/api/v1/**", (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    const json = (body: unknown) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+    if (path === "/api/v1/security/me" || path === "/api/v1/auth/refresh") return json({});
+    if (request.method() !== "GET") mutations.push({ path, body: request.postDataJSON() });
+    if (path === `/api/v1/projects/${projectId}`) return json({
+      id: projectId, name: "Batch proof", domain: null, site_id: null, current_fact_revision_id: null, domain_check_meta: {},
+    });
+    if (path === `/api/v1/projects/${projectId}/page-plans/drafts/batch`) return json({ drafts: [], drafts_only: true });
+    if (path === `/api/v1/projects/${projectId}/page-plans`) return json(planIds.map((id, index) => ({
+      id, slug: index ? "/second/" : "/first/", objective: "Проверка безопасных черновиков", state: "approved",
+      kit_key: "service-local-v1", version: 1, block_selection: {}, intent: null,
+    })));
+    if (path === `/api/v1/projects/${projectId}/page-drafts`) return json([{
+      id: "55555555-5555-4555-8555-555555555555", page_plan_id: planIds[0], revision: 2,
+      state: "draft", page_manifest: {}, qa_runs: [], last_qa_verdict: null, content_hash: "a".repeat(64),
+      failure_message: null, author_profile_revision_id: null,
+    }]);
+    if (path === "/api/v1/keywords") return json({ items: [] });
+    if (path === `/api/v1/projects/${projectId}/coverage`) return json({ selected: 0, covered: 0, uncovered: [], plans: 2 });
+    if (path === `/api/v1/projects/${projectId}/semantic-signals`) return json({
+      totals: { members: 0, bindings: 0, covered: 0, planned: 0, uncovered: 0, unbound: 0 },
+      cannibalization: [], unmapped_plans: [],
+    });
+    if (path === `/api/v1/projects/${projectId}/semantic-sources/bukvarix/status`) return json({
+      enabled: true, status: "https_public_free", message: "HTTPS public free-mode",
+      personal_credentials_supported: false, max_seed_keywords: 10, max_results_per_run: 1000, non_publish_policy: true,
+    });
+    if (path.startsWith(`/api/v1/projects/${projectId}/`) || path === "/api/v1/geo" || path === "/api/v1/media" || path === "/api/v1/ai/providers") return json([]);
+    return route.fulfill({ status: 404, contentType: "application/json", body: '{"detail":"not used by proof"}' });
+  });
+
+  await page.goto(`/projects/${projectId}`);
+  await expect(page.getByRole("heading", { name: "Batch proof" })).toBeVisible();
+  await page.getByLabel("В пакет черновиков: /first/ · v1").check();
+  await page.getByLabel("В пакет черновиков: /second/ · v1").check();
+  await page.getByText("Подтверждаю создание только PageDraft для выбранных планов.").click();
+  await page.getByRole("button", { name: "Создать выбранные черновики (2)" }).click();
+  await expect(page.getByText("Созданы только выбранные noindex PageDraft. QA, review, apply, candidate и публикация выполняются отдельно.")).toBeVisible();
+  expect(mutations).toEqual([{ path: `/api/v1/projects/${projectId}/page-plans/drafts/batch`, body: {
+    items: [
+      { plan_id: planIds[0], expected_latest_revision: 2 },
+      { plan_id: planIds[1], expected_latest_revision: 0 },
+    ],
+    confirm_drafts_only: true,
+  } }]);
+});
+
 test("releases center shows queued candidate details without mutation", async ({ page }) => {
   await mockAuth(page);
   const projectId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
@@ -274,6 +390,90 @@ test("releases center shows queued candidate details without mutation", async ({
   expect(mutationRequests).toEqual([]);
 });
 
+test("releases keep candidate history visible when scheduler is unavailable", async ({ page }) => {
+  await mockAuth(page);
+  const projectId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  let schedulerAvailable = false;
+  const mutationRequests: string[] = [];
+  await page.route("**/api/v1/**", (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path === "/api/v1/security/me" || path === "/api/v1/auth/refresh") {
+      return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+    }
+    if (request.method() !== "GET") mutationRequests.push(`${request.method()} ${path}`);
+    if (path === `/api/v1/projects/${projectId}`) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+        id: projectId, name: "Scheduler outage proof", domain: "example.test", site_id: "site-proof", domain_check_meta: {},
+      }) });
+    }
+    if (path === `/api/v1/projects/${projectId}/builds`) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+    }
+    if (path === `/api/v1/projects/${projectId}/scheduled-work`) {
+      return route.fulfill(schedulerAvailable ? {
+        status: 200, contentType: "application/json", body: JSON.stringify([{
+          id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", work_type: "site_build", source_id: "candidate",
+          state: "queued", priority: 50, not_before: null, attempt_count: 0, lease_expires_at: null, failure_code: null,
+        }]),
+      } : { status: 503, contentType: "application/json", body: '{"detail":"queue unavailable"}' });
+    }
+    return route.fulfill({ status: 404, contentType: "application/json", body: '{"detail":"not used by proof"}' });
+  });
+
+  await page.goto(`/projects/${projectId}/releases`);
+  await expect(page.getByRole("heading", { name: "Candidate-сборки · Scheduler outage proof" })).toBeVisible();
+  await expect(page.getByText("Сборок пока нет")).toBeVisible();
+  await expect(page.getByRole("alert")).toContainText("Её состояние неизвестно");
+  await expect(page.getByText("В очереди нет сборок")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Пауза" })).toHaveCount(0);
+  schedulerAvailable = true;
+  await page.getByRole("button", { name: "Обновить" }).click();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Пауза" })).toBeVisible();
+  expect(mutationRequests).toEqual([]);
+});
+
+test("candidate action reports success even when refresh fails", async ({ page }) => {
+  await mockAuth(page);
+  const projectId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  let created = false;
+  const mutations: string[] = [];
+  await page.route("**/api/v1/**", (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path === "/api/v1/security/me" || path === "/api/v1/auth/refresh") {
+      return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+    }
+    if (request.method() !== "GET") mutations.push(`${request.method()} ${path}`);
+    if (path === `/api/v1/projects/${projectId}`) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+        id: projectId, name: "Refresh proof", domain: "example.test", site_id: "site-proof", domain_check_meta: {},
+      }) });
+    }
+    if (path === `/api/v1/projects/${projectId}/builds`) {
+      if (request.method() === "POST") {
+        created = true;
+        return route.fulfill({ status: 202, contentType: "application/json", body: "{}" });
+      }
+      return route.fulfill(created
+        ? { status: 503, contentType: "application/json", body: '{"detail":"history unavailable"}' }
+        : { status: 200, contentType: "application/json", body: "[]" });
+    }
+    if (path === `/api/v1/projects/${projectId}/scheduled-work`) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+    }
+    return route.fulfill({ status: 404, contentType: "application/json", body: '{"detail":"not used by proof"}' });
+  });
+
+  await page.goto(`/projects/${projectId}/releases`);
+  await page.getByRole("button", { name: "Создать candidate-сборку" }).click();
+  await expect(page.getByText("Снимок зафиксирован. Очередь начнёт сборку в указанное время и не публикует сайт автоматически.")).toBeVisible();
+  await expect(page.getByRole("alert").first()).toContainText("Действие выполнено, но история сборок не обновилась");
+  await expect(page.getByRole("button", { name: "Пауза" })).toHaveCount(0);
+  expect(mutations).toEqual([`POST /api/v1/projects/${projectId}/builds`]);
+});
+
 test("rollback requires exact hash phrase and never publishes", async ({ page }) => {
   await mockAuth(page);
   const projectId = "abababab-abab-4bab-8bab-abababababab";
@@ -317,6 +517,11 @@ test("rollback requires exact hash phrase and never publishes", async ({ page })
   await dialog.getByLabel(`Введите: ROLLBACK ${buildHash}`).fill("ROLLBACK wrong");
   await expect(confirm).toBeDisabled();
   expect(mutationRequests).toEqual([]);
+  await page.keyboard.press("Escape");
+  await expect(dialog).not.toBeVisible();
+  expect(mutationRequests).toEqual([]);
+  await page.getByRole("button", { name: "Откатить на выбранный hash" }).click();
+  await expect(dialog).toBeVisible();
   await dialog.getByLabel(`Введите: ROLLBACK ${buildHash}`).fill(`ROLLBACK ${buildHash}`);
   await expect(confirm).toBeEnabled();
   await confirm.click();

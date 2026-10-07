@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from uuid import uuid4
 
 from app.api.v1.panel import (
+    _latest_ready_candidate,
     _manifest_media_reference_observation,
     _worker_heartbeat_observation,
     report_summary,
@@ -84,6 +86,25 @@ def test_report_summary_returns_actionable_current_state_alerts():
         "count": 1,
         "route": "/domains",
     }
+
+
+def test_observability_latest_success_uses_ready_candidate_not_legacy_success_state():
+    tenant_id = uuid4()
+    candidate = SimpleNamespace(status="ready", tenant_id=tenant_id)
+
+    class CaptureDatabase:
+        query = None
+
+        async def execute(self, statement):
+            self.query = str(statement.compile(compile_kwargs={"literal_binds": True}))
+            return SimpleNamespace(scalar_one_or_none=lambda: candidate)
+
+    db = CaptureDatabase()
+    auth = SimpleNamespace(role="manager", tenant_id=tenant_id)
+    assert asyncio.run(_latest_ready_candidate(db, auth)) is candidate
+    assert "site_builds.status = 'ready'" in db.query
+    assert tenant_id.hex in db.query
+    assert "success" not in db.query
 
 
 def test_materialized_media_references_are_aggregated_without_claiming_a_full_graph():

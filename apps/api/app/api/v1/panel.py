@@ -147,6 +147,17 @@ def _manifest_media_reference_observation(pages: list) -> dict:
     }
 
 
+async def _latest_ready_candidate(db: AsyncSession, auth: AuthContext) -> SiteBuild | None:
+    return (
+        await db.execute(
+            select(SiteBuild)
+            .where(*_tenant_predicate(SiteBuild, auth), SiteBuild.status == "ready")
+            .order_by(SiteBuild.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
 def _worker_heartbeat_observation(
     last_seen_at: datetime | None, now: datetime, stale_after_seconds: int
 ) -> dict:
@@ -474,14 +485,7 @@ async def report_observability(
             .limit(1)
         )
     ).scalar_one_or_none()
-    latest_success = (
-        await db.execute(
-            select(SiteBuild)
-            .where(*_tenant_predicate(SiteBuild, auth), SiteBuild.status == "success")
-            .order_by(SiteBuild.created_at.desc())
-            .limit(1)
-        )
-    ).scalar_one_or_none()
+    latest_success = await _latest_ready_candidate(db, auth)
     failed_ai = list(
         (
             await db.execute(

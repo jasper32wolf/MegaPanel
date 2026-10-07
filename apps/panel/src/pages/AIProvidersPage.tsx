@@ -67,6 +67,14 @@ export function AIProvidersPage() {
     load().catch((cause) => setError(cause instanceof Error ? cause.message : "Не удалось загрузить провайдеры"));
   }, [token]);
 
+  async function refreshAfterMutation() {
+    try {
+      await load();
+    } catch (cause) {
+      setError(`Действие выполнено, но список подключений не обновился. ${cause instanceof Error ? cause.message : "Повторите загрузку позже."}`);
+    }
+  }
+
   async function addProvider(event: FormEvent) {
     event.preventDefault();
     setBusy("add");
@@ -88,7 +96,7 @@ export function AIProvidersPage() {
       }, token);
       setApiKey("");
       setMessage("Подключение сохранено выключенным. Перед генерацией добавьте актуальные тарифы, активируйте connection и настройте лимит у провайдера.");
-      await load();
+      await refreshAfterMutation();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Не удалось сохранить подключение");
     } finally {
@@ -115,7 +123,7 @@ export function AIProvidersPage() {
           setMessage(action === "activate" ? "Провайдер активирован." : "Провайдер отключён.");
         }
       }
-      await load();
+      await refreshAfterMutation();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Операция провайдера не выполнена");
     } finally {
@@ -137,7 +145,7 @@ export function AIProvidersPage() {
       setReplacementKey("");
       setRotationId(null);
       setMessage(`API key для ${provider.label} заменён.`);
-      await load();
+      await refreshAfterMutation();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Не удалось заменить API key");
     } finally {

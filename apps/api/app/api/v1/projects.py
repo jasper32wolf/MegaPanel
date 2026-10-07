@@ -49,6 +49,7 @@ from app.schemas.workflow import (
     CandidateBuildRequest,
     FactRevisionCreate,
     PageDraftAuthorAttachIn,
+    PageDraftBatchRequest,
     PageDraftBlockMediaAttachIn,
     PageDraftDecision,
     PageDraftMediaAttachIn,
@@ -69,7 +70,12 @@ from app.services.block_library import instantiate_kit_for_site
 from app.services.caddy_client import CaddyClient
 from app.services.captcha import captcha_public_config
 from app.services.claim_slots import resolve_claim_slot_bindings
-from app.services.design_profiles import design_snapshot, resolve_design_profile, theme_from_profile
+from app.services.design_profiles import (
+    ResolvedDesignProfile,
+    design_snapshot,
+    resolve_design_profile,
+    theme_from_profile,
+)
 from app.services.domain_health import domain_probe
 from app.services.generation import create_page_draft
 from app.services.indexnow import new_indexnow_key
@@ -530,6 +536,56 @@ async def get_project(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     return _serialize_project(await _project_or_404(db, project_id, auth))
+
+
+@router.get("/{project_id}/workflow-summary")
+async def project_workflow_summary(
+    project_id: UUID,
+    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    project = await _project_or_404(db, project_id, auth)
+
+    async def count(model: type, *conditions) -> int:
+        return int(
+            await db.scalar(
+                select(func.count())
+                .select_from(model)
+                .where(
+                    model.tenant_id == project.tenant_id,
+                    model.project_id == project.id,
+                    *conditions,
+                )
+            )
+            or 0
+        )
+
+    site = await db.get(Site, project.site_id) if project.site_id else None
+    published = bool(
+        site
+        and site.tenant_id == project.tenant_id
+        and site.project_id in {None, project.id}
+        and site.publish_state == "published"
+        and site.build_hash
+    )
+    return {
+        "facts_confirmed": project.current_fact_revision_id is not None,
+        "keyword_count": await count(ProjectKeyword),
+        "geo_count": await count(ProjectGeoPlace),
+        "approved_collection_count": await count(
+            ProjectSemanticCollection, ProjectSemanticCollection.state == "approved"
+        ),
+        "approved_structure_count": await count(
+            SiteStructureRevision, SiteStructureRevision.state == "approved"
+        ),
+        "approved_plan_count": await count(PagePlan, PagePlan.state == "approved"),
+        "applied_draft_count": await count(PageDraft, PageDraft.state == "applied"),
+        "ready_candidate_count": await count(SiteBuild, SiteBuild.status == "ready"),
+        "running_candidate_count": await count(
+            SiteBuild, SiteBuild.status.in_(("queued", "running"))
+        ),
+        "published": published,
+    }
 
 
 @router.get("/{project_id}/activity")
@@ -1559,20 +1615,16 @@ async def list_page_drafts(
     return [_serialize_draft(draft) for draft in drafts]
 
 
-@router.post("/{project_id}/page-plans/{plan_id}/drafts", status_code=status.HTTP_201_CREATED)
-async def generate_page_draft(
-    project_id: UUID,
-    plan_id: UUID,
-    body: PageDraftRequest,
-    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor")),
-    db: AsyncSession = Depends(get_db),
-) -> dict:
-    del body
-    project = await _project_or_404(db, project_id, auth)
-    plan = await _plan_or_404(db, project, plan_id)
-    if plan.state != "approved":
-        raise HTTPException(status_code=409, detail={"blockers": ["Approve the page plan first"]})
-    facts = await _confirmed_facts(db, project)
+async def _generate_approved_draft(
+    db: AsyncSession,
+    *,
+    project: Project,
+    plan: PagePlan,
+    facts: ProjectFactRevision,
+    resolved_design: ResolvedDesignProfile,
+    actor_id: UUID,
+    expected_latest_revision: int | None = None,
+) -> PageDraft:
     latest = (
         await db.execute(
             select(PageDraft)
@@ -1581,10 +1633,12 @@ async def generate_page_draft(
             .limit(1)
         )
     ).scalar_one_or_none()
-    resolved_design = await resolve_design_profile(
-        db, tenant_id=project.tenant_id, project_id=project.id
-    )
-    profile_snapshot = design_snapshot(resolved_design)
+    revision = latest.revision if latest else 0
+    if expected_latest_revision is not None and revision != expected_latest_revision:
+        raise HTTPException(
+            status_code=409,
+            detail={"blockers": ["PageDraft revision changed; reload the project before retrying"]},
+        )
     if (
         resolved_design.effective_profile
         and plan.kit_key not in resolved_design.effective_profile.layout.allowed_kits
@@ -1597,7 +1651,7 @@ async def generate_page_draft(
         project=project,
         plan=plan,
         facts=facts,
-        design=profile_snapshot,
+        design=design_snapshot(resolved_design),
         theme=(
             theme_from_profile(resolved_design.effective_profile)
             if resolved_design.effective_profile
@@ -1609,13 +1663,13 @@ async def generate_page_draft(
         page_plan_id=plan.id,
         project_id=project.id,
         tenant_id=project.tenant_id,
-        revision=(latest.revision if latest else 0) + 1,
+        revision=revision + 1,
         state="draft",
         input_snapshot=input_snapshot,
         page_manifest=page_manifest,
         generator_meta=input_snapshot["generator_meta"],
         content_hash=content_hash,
-        requested_by=auth.user.id,
+        requested_by=actor_id,
     )
     db.add(draft)
     await db.flush()
@@ -1630,10 +1684,107 @@ async def generate_page_draft(
             "content_hash": content_hash,
         },
         tenant_id=project.tenant_id,
+        actor_id=actor_id,
+    )
+    return draft
+
+
+@router.post("/{project_id}/page-plans/{plan_id}/drafts", status_code=status.HTTP_201_CREATED)
+async def generate_page_draft(
+    project_id: UUID,
+    plan_id: UUID,
+    body: PageDraftRequest,
+    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    del body
+    project = await _project_or_404(db, project_id, auth)
+    plan = await _plan_or_404(db, project, plan_id)
+    await db.refresh(plan, with_for_update=True)
+    if plan.project_id != project.id or plan.tenant_id != project.tenant_id:
+        raise HTTPException(status_code=404, detail="Page plan not found")
+    if plan.state != "approved":
+        raise HTTPException(status_code=409, detail={"blockers": ["Approve the page plan first"]})
+    facts = await _confirmed_facts(db, project)
+    resolved_design = await resolve_design_profile(
+        db, tenant_id=project.tenant_id, project_id=project.id
+    )
+    draft = await _generate_approved_draft(
+        db,
+        project=project,
+        plan=plan,
+        facts=facts,
+        resolved_design=resolved_design,
         actor_id=auth.user.id,
     )
     await db.commit()
     return _serialize_draft(draft)
+
+
+@router.post("/{project_id}/page-plans/drafts/batch", status_code=status.HTTP_201_CREATED)
+async def generate_page_draft_batch(
+    project_id: UUID,
+    body: PageDraftBatchRequest,
+    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Create bounded deterministic drafts atomically; QA, apply and publish stay manual."""
+    project = await _project_or_404(db, project_id, auth)
+    expected = {item.plan_id: item.expected_latest_revision for item in body.items}
+    plans = list(
+        (
+            await db.execute(
+                select(PagePlan)
+                .where(
+                    PagePlan.id.in_(expected),
+                    PagePlan.project_id == project.id,
+                    PagePlan.tenant_id == project.tenant_id,
+                )
+                .order_by(PagePlan.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if len(plans) != len(expected):
+        raise HTTPException(status_code=404, detail="One or more PagePlans were not found")
+    if any(plan.state != "approved" for plan in plans):
+        raise HTTPException(
+            status_code=409, detail={"blockers": ["Approve all selected PagePlans first"]}
+        )
+    facts = await _confirmed_facts(db, project)
+    resolved_design = await resolve_design_profile(
+        db, tenant_id=project.tenant_id, project_id=project.id
+    )
+    drafts = []
+    try:
+        for plan in plans:
+            drafts.append(
+                await _generate_approved_draft(
+                    db,
+                    project=project,
+                    plan=plan,
+                    facts=facts,
+                    resolved_design=resolved_design,
+                    actor_id=auth.user.id,
+                    expected_latest_revision=expected[plan.id],
+                )
+            )
+    except HTTPException:
+        await db.rollback()
+        raise
+    except ValueError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "blockers": ["A selected PagePlan no longer satisfies draft generation constraints"]
+            },
+        ) from exc
+    await db.commit()
+    return {"drafts": [_serialize_draft(draft) for draft in drafts], "drafts_only": True}
 
 
 @router.post("/{project_id}/page-drafts/{draft_id}/media")
@@ -3138,8 +3289,7 @@ async def run_queued_candidate_build(
             "lead_api_url": "/api/v1/leads/public",
             "telemetry_token": str(frozen_context.get("telemetry_token") or ""),
             "telemetry_retention": dict(
-                frozen_context.get("telemetry_retention")
-                or {"raw_days": 30, "aggregate_days": 365}
+                frozen_context.get("telemetry_retention") or {"raw_days": 30, "aggregate_days": 365}
             ),
             "captcha": dict(frozen_context.get("captcha") or {}),
         }

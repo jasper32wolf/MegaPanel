@@ -81,6 +81,23 @@ def test_panel_e2e_always_uploads_playwright_diagnostics():
     )
 
 
+def test_authenticated_panel_e2e_runs_a_real_worker_for_private_candidates():
+    workflow = yaml.safe_load(CI_PATH.read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["panel-e2e"]["steps"]
+    smoke = next(step["run"] for step in steps if step.get("name") == "Authenticated panel smoke")
+    logs = next(step["run"] for step in steps if step.get("name") == "Print E2E logs")
+    browser = (PANEL_ROOT / "e2e" / "login.spec.ts").read_text(encoding="utf-8")
+
+    assert "exec arq app.worker.WorkerSettings" in smoke
+    assert "arq --check app.worker.WorkerSettings" in smoke
+    assert "worker_pid=$!" in smoke
+    assert 'for pid in "$api_pid" "$vite_pid" "$worker_pid"' in smoke
+    assert "site-panel-worker.log" in logs
+    assert 'toBe("ready")' in browser
+    assert "X-Robots-Tag" in browser or '"x-robots-tag"' in browser
+    assert "expect(publishRequests).toEqual([])" in browser
+
+
 def test_panel_uses_bundled_logo_and_favicon():
     index = (PANEL_ROOT / "index.html").read_text(encoding="utf-8")
     shell = (PANEL_ROOT / "src" / "components" / "Shell.tsx").read_text(encoding="utf-8")
@@ -313,7 +330,16 @@ def test_ci_runs_authenticated_production_compose_smoke_through_caddy():
     assert "https://localhost/" in command
     assert '<div id="root"></div>' in command
     assert "CaddyClient().upsert_site_vhost(" in command
-    assert '"site.localhost", "/srv/sites/compose-smoke/current"' in command
+    assert '"site.localhost", f"/srv/sites/{SITE_ID}/current"' in command
+    assert 'SiteBuilder(Path("/app/dist")).build(' in command
+    assert "data-site-panel-lead-form" in command
+    assert 'page.goto("/district/")' in command
+    assert 'getByRole("button", { name: "Отправить заявку" })' in command
+    assert 'get_encryptor().decrypt(lead.message_enc) == "Compose browser lead"' in command
+    assert '"telemetry_token": telemetry_token(site_id=SITE_ID, domain="site.localhost")' in command
+    assert "Telemetry collected before consent" in command
+    assert "Telemetry withdrawal failed" in command
+    assert 'AnalyticsEvent.source == "first_party"' in command
     assert "https://site.localhost${path}" in command
     assert "https://site.localhost/api/v1/leads/public" in command
     assert "compose-smoke-lead-token-00000001" in command

@@ -30,6 +30,8 @@ async function mockAuth(page: Page) {
 test("Букварикс: HTTPS preview становится импортом только после явного выбора", async ({ page }) => {
   let createdRun = false;
   let listRequests = 0;
+  let schedulerAvailable = true;
+  let commitAttempts = 0;
   const mutations: { method: string; path: string; body: string }[] = [];
 
   await page.route("**/api/v1/**", async (route) => {
@@ -67,13 +69,20 @@ test("Букварикс: HTTPS preview становится импортом т
         results: completed ? [{ id: resultId, source_project_keyword_id: seedId, phrase: "ремонт окон цены", metrics: [42, 3] }] : [],
       }]);
     }
-    if (path === `/api/v1/projects/${projectId}/bukvarix-keyword-runs/${runId}/commit`) return json({
-      source_run_id: "d0000000-0000-4000-8000-000000000006", created_keywords: 1, existing_keywords: 0, linked_project_keywords: 1,
-    });
-    if (path === `/api/v1/projects/${projectId}/scheduled-work`) return json(createdRun ? [{
-      id: "d0000000-0000-4000-8000-000000000007", source_id: runId, work_type: "bukvarix_keyword",
-      state: listRequests >= 2 ? "succeeded" : "queued", failure_code: null,
-    }] : []);
+    if (path === `/api/v1/projects/${projectId}/bukvarix-keyword-runs/${runId}/commit`) {
+      commitAttempts += 1;
+      if (commitAttempts === 1) return route.fulfill({ status: 503, contentType: "application/json", body: '{"detail":"temporary import failure"}' });
+      return json({
+        source_run_id: "d0000000-0000-4000-8000-000000000006", created_keywords: 1, existing_keywords: 0, linked_project_keywords: 1,
+      });
+    }
+    if (path === `/api/v1/projects/${projectId}/scheduled-work`) {
+      if (!schedulerAvailable) return route.fulfill({ status: 503, contentType: "application/json", body: '{"detail":"queue unavailable"}' });
+      return json(createdRun ? [{
+        id: "d0000000-0000-4000-8000-000000000007", source_id: runId, work_type: "bukvarix_keyword",
+        state: listRequests >= 2 ? "succeeded" : "queued", failure_code: null,
+      }] : []);
+    }
     if (path === `/api/v1/projects/${projectId}/coverage`) return json({ selected: 0, covered: 0, uncovered: [], plans: 0 });
     if (path === `/api/v1/projects/${projectId}/semantic-signals`) return json({ totals: { members: 0, bindings: 0, covered: 0, planned: 0, uncovered: 0, unbound: 0 }, cannibalization: [], unmapped_plans: [] });
     if (path === "/api/v1/geo") return json([]);
@@ -93,12 +102,20 @@ test("Букварикс: HTTPS preview становится импортом т
   await page.getByRole("button", { name: "Получить HTTPS preview" }).click();
   await expect(page.getByText("queued", { exact: true })).toBeVisible();
   await expect(page.getByText("Очередь: queued")).toBeVisible();
+  schedulerAvailable = false;
   await expect.poll(() => listRequests, { timeout: 15_000 }).toBeGreaterThanOrEqual(2);
   await expect(page.getByText("ремонт окон цены", { exact: true })).toBeVisible();
+  await expect(page.getByRole("alert")).toContainText("Очередь Букварикса недоступна");
 
   await page.getByLabel("Импорт Букварикс: ремонт окон цены").check();
   await page.getByText("Подтверждаю импорт только выбранных preview-фраз с provenance HTTPS public free-mode.").click();
   await page.getByRole("button", { name: "Импортировать выбранные фразы" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "temporary import failure" })).toBeVisible();
+  await expect(page.getByLabel("Импорт Букварикс: ремонт окон цены")).toBeChecked();
+  await expect(page.getByRole("button", { name: "Импортировать выбранные фразы" })).toBeEnabled();
+  await page.getByRole("button", { name: "Импортировать выбранные фразы" }).click();
+  await expect(page.getByText("Выбранные фразы импортированы и сохранены с provenance Букварикса. Semantic collection, Structure и публикация не создавались.")).toBeVisible();
+  expect(commitAttempts).toBe(2);
 
   const previewRequest = mutations.find((item) => item.path.endsWith("/bukvarix-keyword-runs") && item.method === "POST");
   const commitRequest = mutations.find((item) => item.path.endsWith("/commit"));

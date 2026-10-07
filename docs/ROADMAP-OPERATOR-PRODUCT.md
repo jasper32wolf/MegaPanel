@@ -80,7 +80,7 @@
 
 ### 4. Контролируемая генерация и QA
 
-**Базовый контур реализован.** Deterministic PageDraft generation, immutable inputs, `pass/warn/block`, audited warn override и explicit apply уже есть; provider-backed generation и async worker execution остаются post-proof work.
+**Базовый контур реализован.** Deterministic PageDraft generation, immutable inputs, `pass/warn/block`, audited warn override и explicit apply уже есть. До 10 approved PagePlans можно явно отправить в одну атомарную batch-операцию создания только noindex PageDraft с optimistic revision guard; QA/review/apply/build/publish остаются независимыми. Provider-backed generation и async worker execution требуют отдельного runtime proof.
 
 - Сохранять версию входных данных, prompt/model, стоимость, результат и причину fallback.
 - Выполнять детерминированные QA-проверки: обязательные факты, intent/keyword coverage, URL и internal links, SEO limits, дубли, запрещённые claims, PII и XSS.
@@ -99,7 +99,7 @@
 
 **Следующий срез (partial, 2026-10-05).** Добавлены reviewed hash-bound графики постепенного разрешения индексации: они создают только одну immutable candidate-сборку due-партии, ожидают явной публикации предыдущей партии и останавливаются при изменении контента/QA. Candidate scheduling получил priority и `not_before`, а worker ограничен одной одновременно выполняемой candidate-сборкой. Это не включает автоматическую публикацию, не отправляет IndexNow и не является гарантией поведения поисковых систем. Полный PostgreSQL/Redis/browser runtime proof ещё обязателен.
 
-Также добавлены видимая HTML-карта сайта, единый безопасный формат отображения российского телефона и более ясное disclosure у lead-формы. First-party telemetry теперь получает только allowlisted события после согласия/GPC-DNT проверки, не принимает `tenant_id` от клиента, не хранит IP и показывает оператору согласованные page-view/session aggregates с пометкой малой выборки. Её RLS/production runtime proof ещё обязателен. CAPTCHA получила базовый server-owned контур: Turnstile, hCaptcha и Google reCAPTCHA используют только фиксированные HTTPS verify endpoints, серверный secret не входит в build, а внешний challenge script загружается лишь после отметки согласия в форме. По умолчанию CAPTCHA выключена; её VPS-настройка и provider runtime proof ещё нужны. Search adapters, author/EEAT profiles, automated assistant и exit-offer остаются последующими отдельными срезами.
+Также добавлены видимая HTML-карта сайта, единый безопасный формат отображения российского телефона и более ясное disclosure у lead-формы. First-party telemetry теперь получает только allowlisted события после согласия/GPC-DNT проверки, не принимает `tenant_id` от клиента, не хранит IP и показывает оператору согласованные page-view/session aggregates с пометкой малой выборки. Её RLS/production runtime proof ещё обязателен. CAPTCHA получила базовый server-owned контур: Turnstile, hCaptcha и Google reCAPTCHA используют только фиксированные HTTPS verify endpoints, серверный secret не входит в build, а внешний challenge script загружается лишь после отметки согласия в форме. По умолчанию CAPTCHA выключена; её VPS-настройка и provider runtime proof ещё нужны. Verified author/EEAT revisions с ручным review и immutable candidate snapshot добавлены; production runtime proof ещё обязателен. Search adapters, automated assistant и exit-offer остаются отдельными последующими срезами.
 
 ### 6. Петля исходов лидов
 

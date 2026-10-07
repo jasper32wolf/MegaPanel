@@ -103,7 +103,8 @@ export function ProjectReleasesPage() {
   const { token } = useAuth();
   const [project, setProject] = useState<Project | null>(null);
   const [builds, setBuilds] = useState<Build[] | null>(null);
-  const [scheduledWork, setScheduledWork] = useState<ScheduledWork[]>([]);
+  const [scheduledWork, setScheduledWork] = useState<ScheduledWork[] | null>(null);
+  const [queueError, setQueueError] = useState<string | null>(null);
   const [selectedBuildId, setSelectedBuildId] = useState<string | null>(null);
   const [evidenceRef, setEvidenceRef] = useState("");
   const [rejectionReason, setRejectionReason] = useState("");
@@ -112,6 +113,7 @@ export function ProjectReleasesPage() {
   const [notBefore, setNotBefore] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
 
@@ -122,26 +124,34 @@ export function ProjectReleasesPage() {
     const [nextProject, nextBuilds, nextScheduledWork] = await Promise.all([
       api<Project>(`/api/v1/projects/${projectId}`, {}, token),
       api<Build[]>(`/api/v1/projects/${projectId}/builds`, {}, token),
-      api<ScheduledWork[]>(`/api/v1/projects/${projectId}/scheduled-work`, {}, token),
+      api<ScheduledWork[]>(`/api/v1/projects/${projectId}/scheduled-work`, {}, token)
+        .then((jobs) => ({ jobs, error: false }))
+        .catch(() => ({ jobs: [] as ScheduledWork[], error: true })),
     ]);
     setProject(nextProject);
     setBuilds(nextBuilds);
-    setScheduledWork(nextScheduledWork.filter((job) => job.work_type === "site_build"));
+    setLoadError(null);
+    setScheduledWork(nextScheduledWork.error ? null : nextScheduledWork.jobs.filter((job) => job.work_type === "site_build"));
+    setQueueError(nextScheduledWork.error ? "Очередь сборки недоступна. Её состояние неизвестно, управление очередью отключено; повторите загрузку." : null);
     setSelectedBuildId((current) =>
       current && nextBuilds.some((build) => build.id === current) ? current : nextBuilds[0]?.id || null,
     );
   }
 
+  function showLoadError(cause: unknown) {
+    setLoadError(cause instanceof Error ? cause.message : "Не удалось обновить candidate-сборки");
+    setScheduledWork(null);
+    setQueueError("Очередь сборки недоступна. Её состояние неизвестно, управление очередью отключено; повторите загрузку.");
+  }
+
   useEffect(() => {
-    void load().catch((cause) => {
-      setError(cause instanceof Error ? cause.message : "Не удалось загрузить candidate-сборки");
-    });
+    void load().catch(showLoadError);
   }, [projectId, token]);
 
   useEffect(() => {
     if (!builds?.some((build) => ["queued", "running"].includes(build.status))) return;
     const timer = window.setInterval(() => {
-      void load().catch(() => undefined);
+      void load().catch(showLoadError);
     }, 5000);
     return () => window.clearInterval(timer);
   }, [builds, projectId, token]);
@@ -152,10 +162,17 @@ export function ProjectReleasesPage() {
     setMessage(null);
     try {
       await request();
-      setMessage(success);
-      await load();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Операция не выполнена");
+      setBusy(null);
+      return;
+    }
+    setMessage(success);
+    try {
+      await load();
+    } catch (cause) {
+      showLoadError(cause);
+      setError(`Действие выполнено, но история сборок не обновилась. ${cause instanceof Error ? cause.message : "Обновите страницу позже."}`);
     } finally {
       setBusy(null);
     }
@@ -296,7 +313,7 @@ export function ProjectReleasesPage() {
         description="Очередь строит сайт из зафиксированного snapshot. Private preview, legal review, публикация и откат — независимые ручные границы."
         actions={
           <>
-            <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void load()}>
+            <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void load().catch(showLoadError)}>
               Обновить
             </button>
             <Link className="btn btn-ghost" to={`/projects/${projectId}`}>
@@ -306,8 +323,9 @@ export function ProjectReleasesPage() {
         }
       />
       {error ? <p className="error" role="alert">{error}</p> : null}
+      {loadError ? <p className="error" role="alert">Не удалось загрузить историю сборок: {loadError}</p> : null}
       {message ? <p className="muted" aria-live="polite">{message}</p> : null}
-      {!builds && !error ? <p className="muted" aria-live="polite">Загрузка candidate-сборок…</p> : null}
+      {!builds && !loadError ? <p className="muted" aria-live="polite">Загрузка candidate-сборок…</p> : null}
 
       <Surface title="Новый candidate">
         <p className="muted">
@@ -332,7 +350,8 @@ export function ProjectReleasesPage() {
 
       <Surface title="Очередь сборки">
         <p className="muted">Очередь распределяет только запуск immutable candidate-сборок. Пауза, продолжение и отмена не применяют черновик, не меняют индексацию и не публикуют сайт.</p>
-        {scheduledWork.length === 0 ? <EmptyState title="В очереди нет сборок" hint="После создания candidate появится отдельная запись планировщика." /> : <DataTable headers={["Тип", "Состояние", "Порядок", "Попытки", "Действия"]}>{scheduledWork.map((job) => <tr key={job.id}><td>{job.work_type === "site_build" ? "Candidate-сборка" : job.work_type}</td><td><StatusPill tone={tone(job.state)}>{job.state}</StatusPill>{job.failure_code ? <p className="error">{job.failure_code}</p> : null}</td><td>важность: {job.priority}{job.not_before ? <p className="muted">не раньше: {stamp(job.not_before)}</p> : null}</td><td>{job.attempt_count}{job.lease_expires_at ? <p className="muted">lease до: {stamp(job.lease_expires_at)}</p> : null}</td><td className="row">{job.state === "queued" ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void controlScheduledWork(job, "pause")}>Пауза</button> : null}{job.state === "paused" ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void controlScheduledWork(job, "resume")}>Продолжить</button> : null}{["queued", "paused", "leased"].includes(job.state) ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void controlScheduledWork(job, "cancel")}>Отменить</button> : null}</td></tr>)}</DataTable>}
+        {queueError ? <p className="error" role="alert">{queueError}</p> : null}
+        {scheduledWork === null ? (!queueError ? <p className="muted" aria-live="polite">Загрузка очереди…</p> : null) : scheduledWork.length === 0 ? <EmptyState title="В очереди нет сборок" hint="После создания candidate появится отдельная запись планировщика." /> : <DataTable headers={["Тип", "Состояние", "Порядок", "Попытки", "Действия"]}>{scheduledWork.map((job) => <tr key={job.id}><td>{job.work_type === "site_build" ? "Candidate-сборка" : job.work_type}</td><td><StatusPill tone={tone(job.state)}>{job.state}</StatusPill>{job.failure_code ? <p className="error">{job.failure_code}</p> : null}</td><td>важность: {job.priority}{job.not_before ? <p className="muted">не раньше: {stamp(job.not_before)}</p> : null}</td><td>{job.attempt_count}{job.lease_expires_at ? <p className="muted">lease до: {stamp(job.lease_expires_at)}</p> : null}</td><td className="row">{job.state === "queued" ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void controlScheduledWork(job, "pause")}>Пауза</button> : null}{job.state === "paused" ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void controlScheduledWork(job, "resume")}>Продолжить</button> : null}{["queued", "paused", "leased"].includes(job.state) ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void controlScheduledWork(job, "cancel")}>Отменить</button> : null}</td></tr>)}</DataTable>}
       </Surface>
 
       {builds ? (

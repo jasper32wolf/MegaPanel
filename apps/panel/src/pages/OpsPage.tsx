@@ -58,6 +58,7 @@ export function OpsPage() {
     setObservability(nextObservability);
     setIncidents(nextIncidents);
     setEvents(nextEvents);
+    setError(null);
     try {
       setVerification(await api<VerificationReport>("/api/v1/panel/reports/verification", {}, token));
       setVerificationError(null);
@@ -66,24 +67,37 @@ export function OpsPage() {
     }
   }
 
+  function showLoadError(cause: unknown) {
+    setError(cause instanceof Error ? cause.message : "Не удалось загрузить статус");
+  }
+
   async function updateIncident(incident: Incident, action: "acknowledge" | "resolve") {
-    await api(`/api/v1/panel/incidents/${incident.id}`, { method: "PATCH", body: JSON.stringify({ action }) }, token);
-    await load();
+    try {
+      await api(`/api/v1/panel/incidents/${incident.id}`, { method: "PATCH", body: JSON.stringify({ action }) }, token);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Решение по инциденту не сохранено");
+      return;
+    }
+    try {
+      await load();
+    } catch (cause) {
+      setError(`Решение по инциденту сохранено, но статус не обновился. ${cause instanceof Error ? cause.message : "Повторите загрузку позже."}`);
+    }
   }
 
   useEffect(() => {
-    load().catch((cause) => setError(cause instanceof Error ? cause.message : "Не удалось загрузить статус"));
-    const timer = window.setInterval(() => load().catch(() => undefined), 30_000);
+    void load().catch(showLoadError);
+    const timer = window.setInterval(() => void load().catch(showLoadError), 30_000);
     return () => window.clearInterval(timer);
   }, [token]);
 
   return (
     <div>
-      <PageHeader title="Статус системы" description="Только зафиксированные в БД и локальной медиатеке наблюдения. Экран не доказывает production готовность, Docker/browser checks или восстановление." actions={<button className="btn btn-ghost" type="button" onClick={() => void load()}>Обновить</button>} />
-      {error && <p className="error">{error}</p>}
+      <PageHeader title="Статус системы" description="Только зафиксированные в БД и локальной медиатеке наблюдения. Экран не доказывает production готовность, Docker/browser checks или восстановление." actions={<button className="btn btn-ghost" type="button" onClick={() => void load().catch(showLoadError)}>Обновить</button>} />
+      {error && <p className="error" role="alert">{error}</p>}
       <div className="stat-grid"><div className="stat"><div className="label">Сайты</div><div className="value">{summary?.sites ?? "—"}</div></div><div className="stat"><div className="label">Страницы</div><div className="value">{summary?.pages_estimate ?? "—"}</div></div><div className="stat"><div className="label">Лиды всего</div><div className="value">{summary?.leads ?? "—"}</div></div><div className="stat"><div className="label">Активные лиды</div><div className="value">{summary?.active_leads ?? "—"}</div></div></div>
       <Surface title="Доставка лидов"><div className="row"><StatusPill tone={summary?.delivery_dead_letter ? "danger" : summary?.delivery_pending ? "warn" : "ok"}>В очереди: {summary?.delivery_pending ?? "—"}</StatusPill><StatusPill tone={summary?.delivery_dead_letter ? "danger" : "ok"}>Dead letter: {summary?.delivery_dead_letter ?? "—"}</StatusPill></div><p className="muted">Это состояние database queue; история попыток и resend доступны в inbox лидов.</p></Surface>
-      <Surface title="Сборки и AI"><div className="detail-grid"><div><strong>Ошибки сборок: {observability?.builds.failed ?? "—"}</strong><p className="muted">Последняя successful build: {observability?.builds.latest_success?.build_hash?.slice(0, 12) || "нет записи"}</p></div><div><strong>AI runs: {Object.values(observability?.ai.status_counts || {}).reduce((sum, count) => sum + count, 0)}</strong><p className="muted">Recorded cost: ${observability?.ai.recorded_cost_usd.toFixed(6) ?? "—"}; reserved estimate: ${observability?.ai.reserved_estimated_usd.toFixed(6) ?? "—"}</p><p className="muted">AI DLQ: {observability?.ai.unresolved_dead_letter_jobs ?? "—"}</p></div></div></Surface>
+      <Surface title="Сборки и AI"><div className="detail-grid"><div><strong>Ошибки сборок: {observability?.builds.failed ?? "—"}</strong><p className="muted">Последняя готовая candidate (не публикация): {observability?.builds.latest_success?.build_hash?.slice(0, 12) || "нет записи"}</p></div><div><strong>AI runs: {Object.values(observability?.ai.status_counts || {}).reduce((sum, count) => sum + count, 0)}</strong><p className="muted">Recorded cost: ${observability?.ai.recorded_cost_usd.toFixed(6) ?? "—"}; reserved estimate: ${observability?.ai.reserved_estimated_usd.toFixed(6) ?? "—"}</p><p className="muted">AI DLQ: {observability?.ai.unresolved_dead_letter_jobs ?? "—"}</p></div></div></Surface>
       <Surface title="Контент и медиа"><div className="detail-grid"><div><strong>Thin pages: {observability?.content_gaps.thin_pages ?? "—"}</strong><p className="muted">Noindex pages: {observability?.content_gaps.noindex_pages ?? "—"}</p></div><div><strong>Assets: {observability?.media.assets ?? "—"}</strong><p className="muted">Отсутствуют файлы: {observability?.media.missing_files ?? "—"}; provenance gaps: {observability?.media.provenance_gaps ?? "—"}; expired: {observability?.media.expired_licenses ?? "—"}</p><p className="muted">References: {observability?.media.references.status || "—"} · assets {observability?.media.references.assets ?? "—"} · pages {observability?.media.references.pages ?? "—"}</p><p className="muted">Источник: {observability?.media.references.source || "—"}; malformed entries: {observability?.media.references.invalid_entries ?? "—"}. Это только persisted manifest snapshot materialized pages, не полный reference graph.</p></div></div></Surface>
       <Surface title="Границы доказательств"><p className="muted">Это фиксированная классификация bounded evidence, а не live production-check и не release approval. Fixture, local Compose и CI не доказывают staging или VPS production.</p>{verificationError ? <p className="muted" role="status">Доказательства недоступны: {verificationError}</p> : !verification ? <p className="muted" aria-live="polite">Загрузка evidence…</p> : <DataTable headers={["Проверка", "Режим", "Состояние", "Наблюдалось", "Охват и граница"]}>{verification.checks.map((check) => <tr key={check.check_key}><td>{check.label}</td><td>{check.mode}</td><td><StatusPill tone={verificationTone(check.state)}>{check.state}</StatusPill></td><td>{check.observed_at ? new Date(check.observed_at).toLocaleString() : "—"}</td><td><span>{check.coverage}</span><p className="muted">Не доказывает: {check.limitation}</p></td></tr>)}</DataTable>}</Surface>
       <Surface title="Инциденты"><p className="muted">Только фиксированные сигналы без PII, URL, секретов, hash или свободных ошибок. Acknowledge и resolve не меняют исходные delivery, QA или release данные.</p>{incidents.length === 0 ? <p className="muted">Зафиксированных инцидентов пока нет.</p> : <DataTable headers={["Сигнал", "Критичность", "Статус", "Срабатывания", "Действия"]}>{incidents.map((incident) => <tr key={incident.id}><td>{incident.signal_code}</td><td><StatusPill tone={incident.severity === "critical" ? "danger" : incident.severity === "warning" ? "warn" : "accent"}>{incident.severity}</StatusPill></td><td><StatusPill tone={incident.status === "resolved" ? "ok" : incident.status === "open" ? "danger" : "warn"}>{incident.status}</StatusPill></td><td>{incident.occurrence_count}</td><td className="row">{incident.status === "open" && <button className="btn btn-ghost" type="button" onClick={() => void updateIncident(incident, "acknowledge")}>Подтвердить</button>}{incident.status !== "resolved" && <button className="btn btn-ghost" type="button" onClick={() => void updateIncident(incident, "resolve")}>Закрыть</button>}</td></tr>)}</DataTable>}</Surface>

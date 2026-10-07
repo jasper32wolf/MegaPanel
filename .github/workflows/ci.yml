@@ -331,6 +331,10 @@ jobs:
           from app.db.session import open_db_session
           from app.models import Site, Tenant
           from app.services.caddy_client import CaddyClient
+          from app.services.telemetry import telemetry_token
+          from site_panel_blocks import instantiate_blocks, load_kit
+          from site_panel_shared.manifests import BlockDef, PageManifest, SiteManifest
+          from site_panel_ssg import SiteBuilder
 
           SITE_ID = UUID("20000000-0000-0000-0000-000000000001")
           TENANT_ID = UUID("10000000-0000-0000-0000-000000000001")
@@ -338,11 +342,32 @@ jobs:
 
 
           async def main() -> None:
-              root = Path("/app/dist/compose-smoke/current")
-              nested = root / "district"
-              nested.mkdir(parents=True, exist_ok=True)
-              (root / "index.html").write_text("compose smoke root", encoding="utf-8")
-              (nested / "index.html").write_text("compose smoke district", encoding="utf-8")
+              kit = load_kit("service-local-v1")
+              instances, _css = instantiate_blocks(kit.blocks, SITE_ID, kit.theme)
+              blocks = [
+                  BlockDef(type=item["type"], hash_class=item["hash_class"],
+                           html=item["html"], css=item["css"], order=item["order"])
+                  for item in instances
+              ]
+              manifest = SiteManifest(
+                  site_id=SITE_ID, tenant_id=TENANT_ID, domain="site.localhost",
+                  contacts={"phone": "+79990000000"}, legal={"org": "Compose smoke"},
+                  pages=[
+                      PageManifest(slug="/", title_template="Compose smoke root",
+                                   h1_template="Compose smoke root", service="Smoke",
+                                   blocks=blocks, unique_core="compose smoke root"),
+                      PageManifest(slug="/district", title_template="Compose smoke district",
+                                   h1_template="Compose smoke district", service="Smoke",
+                                   blocks=blocks, unique_core="compose smoke district"),
+                  ],
+              )
+              result = SiteBuilder(Path("/app/dist")).build(
+                  manifest,
+                  {"phone": "+79990000000", "lead_token": LEAD_TOKEN,
+                   "lead_api_url": "/api/v1/leads/public", "service": "Smoke",
+                   "telemetry_token": telemetry_token(site_id=SITE_ID, domain="site.localhost")},
+              )
+              assert result["build_hash"]
               async with open_db_session() as db:
                   db.add(Tenant(id=TENANT_ID, name="Compose smoke", slug="compose-smoke"))
                   await db.flush()
@@ -359,7 +384,7 @@ jobs:
               result = None
               for _ in range(10):
                   result = await CaddyClient().upsert_site_vhost(
-                      "site.localhost", "/srv/sites/compose-smoke/current"
+                      "site.localhost", f"/srv/sites/{SITE_ID}/current"
                   )
                   if result["ok"]:
                       return
@@ -376,6 +401,10 @@ jobs:
           done
           grep --fixed-strings 'compose smoke root' /tmp/site-panel-site-.html
           grep --fixed-strings 'compose smoke district' /tmp/site-panel-site-district-.html
+          for path in /tmp/site-panel-site-.html /tmp/site-panel-site-district-.html; do
+            grep --fixed-strings 'data-site-panel-lead-form' "$path"
+            grep --fixed-strings 'site-panel-leads.js' "$path"
+          done
           lead_form_ts="$(python3 -c 'import time; print(time.time() - 5)')"
           curl --insecure --fail --silent --show-error \
             --resolve site.localhost:443:127.0.0.1 \
@@ -485,13 +514,116 @@ jobs:
           )
           docker compose -f infra/docker/docker-compose.production.yml --env-file .env exec -T worker arq --check app.worker.WorkerSettings
           docker compose -f infra/docker/docker-compose.production.yml --env-file .env exec -T caddy wget -q -O - http://127.0.0.1:2019/config/ >/dev/null
+          (
+            cd apps/panel
+            node --input-type=module - <<'NODE'
+            import { chromium, expect } from "@playwright/test";
+
+            const browser = await chromium.launch({
+              headless: true,
+              args: ["--host-resolver-rules=MAP site.localhost 127.0.0.1"],
+            });
+            try {
+              const context = await browser.newContext({
+                baseURL: "https://site.localhost",
+                ignoreHTTPSErrors: true,
+              });
+              const page = await context.newPage();
+              const telemetryRequests = [];
+              page.on("request", (request) => {
+                if (request.method() === "POST" && new URL(request.url()).pathname === "/api/v1/telemetry/collect") {
+                  telemetryRequests.push(request.url());
+                }
+              });
+              await page.goto("/district/");
+              await expect(page.getByRole("dialog", { name: "Настройки приватности" })).toBeVisible();
+              if (telemetryRequests.length) throw new Error("Telemetry collected before consent");
+              const collectResponse = page.waitForResponse((response) =>
+                response.request().method() === "POST" &&
+                new URL(response.url()).pathname === "/api/v1/telemetry/collect"
+              );
+              await page.getByRole("button", { name: "Разрешить аналитику" }).click();
+              const collection = await collectResponse;
+              if (!collection.ok() || !(await collection.json()).ok) {
+                throw new Error(`Consented telemetry collection failed: HTTP ${collection.status()}`);
+              }
+              const revokeResponse = page.waitForResponse((response) =>
+                response.request().method() === "POST" &&
+                new URL(response.url()).pathname === "/api/v1/telemetry/revoke"
+              );
+              await page.getByRole("button", { name: "Настройки приватности" }).click();
+              await page.getByRole("button", { name: "Только необходимые" }).click();
+              if (!(await revokeResponse).ok()) throw new Error("Telemetry withdrawal failed");
+              if (await page.evaluate(() => JSON.parse(localStorage.getItem("sp_consent") || "null")?.analytics !== false)) {
+                throw new Error("Browser retained analytics consent after withdrawal");
+              }
+              const form = page.locator("[data-site-panel-lead-form]");
+              await expect(form).toBeVisible();
+              await form.locator('[name="name"]').fill("Compose browser");
+              await form.locator('[name="phone"]').fill("+79990000001");
+              await form.locator('[name="message"]').fill("Compose browser lead");
+              await form.locator('[name="consent"]').check();
+              const submit = form.getByRole("button", { name: "Отправить заявку" });
+              await expect(submit).toBeEnabled({ timeout: 10_000 });
+              const responsePromise = page.waitForResponse((response) =>
+                response.request().method() === "POST" &&
+                new URL(response.url()).pathname === "/api/v1/leads/public"
+              );
+              await submit.click();
+              const response = await responsePromise;
+              if (!response.ok() || !(await response.json()).ok) {
+                throw new Error(`Generated form submission failed: HTTP ${response.status()}`);
+              }
+              const submitted = response.request().postDataJSON();
+              if (submitted.message !== "Compose browser lead" || submitted.page_slug !== "/district/") {
+                throw new Error("Generated form lost its message or page path");
+              }
+              await context.close();
+            } finally {
+              await browser.close();
+            }
+          NODE
+          )
+          docker compose -f infra/docker/docker-compose.production.yml --env-file .env exec -T api python - <<'PY'
+          import asyncio
+          from uuid import UUID
+
+          from app.db.session import open_db_session
+          from app.models.leads import AnalyticsEvent, Lead
+          from app.services.leads import get_encryptor
+          from sqlalchemy import func, select
+
+
+          async def main() -> None:
+              async with open_db_session() as db:
+                  assert await db.scalar(
+                      select(func.count()).select_from(AnalyticsEvent).where(
+                          AnalyticsEvent.site_id == UUID("20000000-0000-0000-0000-000000000001"),
+                          AnalyticsEvent.source == "first_party",
+                      )
+                  ) == 0
+                  lead = (
+                      await db.execute(
+                          select(Lead).where(
+                              Lead.site_id == UUID("20000000-0000-0000-0000-000000000001"),
+                              Lead.idempotency_key != "compose-smoke-lead-key-0001",
+                          )
+                      )
+                  ).scalar_one()
+                  assert lead.message_enc != "Compose browser lead"
+                  assert get_encryptor().decrypt(lead.message_enc) == "Compose browser lead"
+                  assert lead.page_slug == "/district/"
+
+
+          asyncio.run(main())
+          PY
       - name: Write bounded Compose evidence
         if: success()
         run: |
           {
             printf '%s\n' 'mode=ci'
             printf '%s\n' 'check=production_compose_localhost'
-            printf '%s\n' 'scope=isolated Compose Caddy controlled receiver and authenticated panel smoke'
+            printf '%s\n' 'scope=isolated Compose generated SSG site Caddy consented lead controlled receiver and authenticated panel smoke'
             printf '%s\n' 'limitation=not external staging or VPS production proof'
           } > "$RUNNER_TEMP/site-panel-compose-evidence.txt"
       - name: Upload bounded Compose evidence
@@ -605,9 +737,14 @@ jobs:
           set -euo pipefail
           api_pid=""
           vite_pid=""
+          worker_pid=""
           cleanup() {
-            kill "$api_pid" "$vite_pid" 2>/dev/null || true
-            wait "$api_pid" "$vite_pid" 2>/dev/null || true
+            for pid in "$api_pid" "$vite_pid" "$worker_pid"; do
+              if [ -n "$pid" ]; then
+                kill "$pid" 2>/dev/null || true
+                wait "$pid" 2>/dev/null || true
+              fi
+            done
           }
           trap cleanup EXIT
           (
@@ -646,6 +783,21 @@ jobs:
             fi
             if [ "$attempt" -eq 20 ]; then
               echo "API readiness smoke timed out" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          (
+            cd apps/api
+            exec arq app.worker.WorkerSettings
+          ) >/tmp/site-panel-worker.log 2>&1 &
+          worker_pid=$!
+          for attempt in $(seq 1 45); do
+            if (cd apps/api && arq --check app.worker.WorkerSettings >/dev/null 2>&1); then
+              break
+            fi
+            if ! kill -0 "$worker_pid" 2>/dev/null || [ "$attempt" -eq 45 ]; then
+              cat /tmp/site-panel-worker.log >&2
               exit 1
             fi
             sleep 1
@@ -692,6 +844,7 @@ jobs:
         run: |
           cat /tmp/site-panel-api.log || true
           cat /tmp/site-panel-vite.log || true
+          cat /tmp/site-panel-worker.log || true
 
 
   release-automation:

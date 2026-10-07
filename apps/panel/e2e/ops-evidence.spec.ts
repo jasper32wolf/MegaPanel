@@ -43,7 +43,7 @@ test("Ops shows bounded verification evidence without mutation", async ({ page }
     if (url.pathname.endsWith("/reports/observability")) {
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
         observed_at: "2026-10-01T12:00:00Z",
-        builds: { failed: 0, latest_success: null },
+        builds: { failed: 0, latest_success: { build_hash: "a".repeat(64), created_at: "2026-10-01T12:00:00Z" } },
         ai: { status_counts: {}, failed_error_codes: {}, reserved_estimated_usd: 0, recorded_cost_usd: 0, unresolved_dead_letter_jobs: 0 },
         media: { assets: 0, missing_files: 0, provenance_gaps: 0, expired_licenses: 0, references: { status: "manifest_snapshot", source: "controlled", assets: 0, pages: 0, invalid_entries: 0 } },
         content_gaps: { thin_pages: 0, noindex_pages: 0 },
@@ -69,6 +69,7 @@ test("Ops shows bounded verification evidence without mutation", async ({ page }
   await page.goto("/ops");
   await expect(page.getByRole("heading", { name: "Статус системы" })).toBeVisible();
   await expect(page.getByText("Границы доказательств")).toBeVisible();
+  await expect(page.getByText("Последняя готовая candidate (не публикация): aaaaaaaaaaaa")).toBeVisible();
   await expect(page.getByText("passed", { exact: true })).toBeVisible();
   await expect(page.getByText("not_observed", { exact: true })).toBeVisible();
   await expect(page.getByText("не доказывают staging или VPS production", { exact: false })).toBeVisible();

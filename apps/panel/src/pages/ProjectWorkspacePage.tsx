@@ -72,6 +72,7 @@ export function ProjectWorkspacePage() {
   const [bukvarixStatus, setBukvarixStatus] = useState<BukvarixStatus | null>(null);
   const [bukvarixRuns, setBukvarixRuns] = useState<BukvarixKeywordRun[]>([]);
   const [scheduledPreviews, setScheduledPreviews] = useState<Record<string, ScheduledPreview>>({});
+  const [scheduledPreviewError, setScheduledPreviewError] = useState(false);
   const [bukvarixSeedIds, setBukvarixSeedIds] = useState<string[]>([]);
   const [bukvarixConfirmed, setBukvarixConfirmed] = useState(false);
   const [bukvarixSelectedResultIds, setBukvarixSelectedResultIds] = useState<Record<string, string[]>>({});
@@ -164,6 +165,8 @@ export function ProjectWorkspacePage() {
   const [planClaimBindings, setPlanClaimBindings] = useState<ClaimSlotBinding[]>([]);
   const [planSemanticCollectionId, setPlanSemanticCollectionId] = useState("");
   const [planSemanticSelections, setPlanSemanticSelections] = useState<string[]>([]);
+  const [batchPlanIds, setBatchPlanIds] = useState<string[]>([]);
+  const [batchDraftConfirmed, setBatchDraftConfirmed] = useState(false);
   const [kitKey, setKitKey] = useState("service-local-v1");
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -189,6 +192,15 @@ export function ProjectWorkspacePage() {
     [structureRevisions],
   );
 
+  async function loadScheduledPreviews() {
+    try {
+      const jobs = await api<ScheduledPreview[]>(`/api/v1/projects/${projectId}/scheduled-work`, {}, token);
+      return { jobs, unavailable: false };
+    } catch {
+      return { jobs: [] as ScheduledPreview[], unavailable: true };
+    }
+  }
+
   async function load() {
     const [nextProject, nextFacts, nextKeywords, nextProjectKeywords, nextPlaces, nextProjectGeo, nextPlans, nextDrafts, nextCoverage, nextAssetUsage, nextIndexPromotions, nextIndexSchedules, nextSeoRuns, nextSlotRuns, nextCollections, nextSignals, nextStructureRevisions, nextBukvarixStatus, nextBukvarixRuns, nextSourceRuns, nextAuthors, nextScheduledWork] = await Promise.all([
       api<Project>(`/api/v1/projects/${projectId}`, {}, token),
@@ -212,7 +224,7 @@ export function ProjectWorkspacePage() {
       api<BukvarixKeywordRun[]>(`/api/v1/projects/${projectId}/bukvarix-keyword-runs`, {}, token),
       api<SemanticSourceRun[]>(`/api/v1/projects/${projectId}/semantic-source-runs`, {}, token),
       api<AuthorProfile[]>(`/api/v1/projects/${projectId}/authors`, {}, token),
-      api<ScheduledPreview[]>(`/api/v1/projects/${projectId}/scheduled-work`, {}, token),
+      loadScheduledPreviews(),
     ]);
     setProject(nextProject);
     setFacts(nextFacts);
@@ -238,9 +250,10 @@ export function ProjectWorkspacePage() {
     setStructureRevisions(nextStructureRevisions);
     setBukvarixStatus(nextBukvarixStatus);
     setBukvarixRuns(nextBukvarixRuns);
-    setScheduledPreviews(Object.fromEntries(nextScheduledWork
+    setScheduledPreviews(Object.fromEntries(nextScheduledWork.jobs
       .filter((job) => job.work_type === "bukvarix_keyword")
       .map((job) => [job.source_id, job])));
+    setScheduledPreviewError(nextScheduledWork.unavailable);
     setSemanticSourceRuns(nextSourceRuns);
     setAuthorProfiles(nextAuthors);
     if (nextProject.site_id) {
@@ -304,13 +317,14 @@ export function ProjectWorkspacePage() {
     const interval = window.setInterval(() => {
       void Promise.all([
         api<BukvarixKeywordRun[]>(`/api/v1/projects/${projectId}/bukvarix-keyword-runs`, {}, token),
-        api<ScheduledPreview[]>(`/api/v1/projects/${projectId}/scheduled-work`, {}, token),
-      ]).then(([runs, jobs]) => {
+        loadScheduledPreviews(),
+      ]).then(([runs, result]) => {
         setBukvarixRuns(runs);
-        setScheduledPreviews(Object.fromEntries(jobs
+        setScheduledPreviews(Object.fromEntries(result.jobs
           .filter((job) => job.work_type === "bukvarix_keyword")
           .map((job) => [job.source_id, job])));
-      }).catch(() => undefined);
+        setScheduledPreviewError(result.unavailable);
+      }).catch(() => setError("Не удалось обновить preview Букварикса. Повторите загрузку проекта."));
     }, 5_000);
     return () => window.clearInterval(interval);
   }, [projectId, token, bukvarixRuns, scheduledPreviews]);
@@ -332,13 +346,20 @@ export function ProjectWorkspacePage() {
     setMessage(null);
     try {
       await request();
-      setMessage(success);
-      await load();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Операция не выполнена");
+      setBusy(null);
+      return false;
+    }
+    setMessage(success);
+    try {
+      await load();
+    } catch (cause) {
+      setError(`Действие выполнено, но проект не обновился. ${cause instanceof Error ? cause.message : "Повторите загрузку позже."}`);
     } finally {
       setBusy(null);
     }
+    return true;
   }
 
   async function saveFacts(event: FormEvent) {
@@ -459,7 +480,7 @@ export function ProjectWorkspacePage() {
       setError("Выберите seed keywords и подтвердите HTTPS public free-mode.");
       return;
     }
-    await run(
+    const created = await run(
       "bukvarix-queue",
       () => api(`/api/v1/projects/${projectId}/bukvarix-keyword-runs`, {
         method: "POST",
@@ -470,6 +491,7 @@ export function ProjectWorkspacePage() {
       }, token),
       "Сбор Букварикса поставлен в очередь. Результаты останутся preview до явного импорта.",
     );
+    if (!created) return;
     setBukvarixSeedIds([]);
     setBukvarixConfirmed(false);
   }
@@ -480,7 +502,7 @@ export function ProjectWorkspacePage() {
       setError("Выберите результаты и отдельно подтвердите импорт preview-данных.");
       return;
     }
-    await run(
+    const committed = await run(
       `bukvarix-commit:${keywordRun.id}`,
       () => api(`/api/v1/projects/${projectId}/bukvarix-keyword-runs/${keywordRun.id}/commit`, {
         method: "POST",
@@ -491,6 +513,7 @@ export function ProjectWorkspacePage() {
       }, token),
       "Выбранные фразы импортированы и сохранены с provenance Букварикса. Semantic collection, Structure и публикация не создавались.",
     );
+    if (!committed) return;
     setBukvarixSelectedResultIds((current) => ({ ...current, [keywordRun.id]: [] }));
     setBukvarixImportConfirmed((current) => ({ ...current, [keywordRun.id]: false }));
   }
@@ -500,7 +523,7 @@ export function ProjectWorkspacePage() {
       setError("Для ручного источника нужны название, выбранные ключи и явное подтверждение.");
       return;
     }
-    await run(
+    const recorded = await run(
       "semantic-source-run",
       () => api(`/api/v1/projects/${projectId}/semantic-source-runs`, {
         method: "POST",
@@ -517,6 +540,7 @@ export function ProjectWorkspacePage() {
       }, token),
       "Зафиксирован ручной экспорт Букварикса как provenance. Данные не загружались из провайдера и никакие страницы не созданы.",
     );
+    if (!recorded) return;
     setSourceKeywordIds([]);
     setSourceLabel("");
     setSemanticSourceNotes("");
@@ -529,7 +553,7 @@ export function ProjectWorkspacePage() {
       setError("Для коллекции нужны название, выбранные ключи и география проекта.");
       return;
     }
-    await run(
+    const created = await run(
       "semantic-create",
       () => api(`/api/v1/projects/${projectId}/semantic-collections`, {
         method: "POST",
@@ -547,6 +571,7 @@ export function ProjectWorkspacePage() {
       }, token),
       "Semantic collection создана как draft. Отправьте её на review и одобрение.",
     );
+    if (!created) return;
     setSemanticCollectionSourceRunIds([]);
   }
 
@@ -645,6 +670,34 @@ export function ProjectWorkspacePage() {
 
   async function generate(plan: Plan) {
     await run(`generate:${plan.id}`, () => api(`/api/v1/projects/${projectId}/page-plans/${plan.id}/drafts`, { method: "POST", body: "{}" }, token), "Черновик создан. Запустите проверку качества.");
+  }
+
+  function toggleBatchPlan(planId: string) {
+    setBatchPlanIds((current) => current.includes(planId)
+      ? current.filter((id) => id !== planId)
+      : [...current, planId]);
+    setBatchDraftConfirmed(false);
+  }
+
+  async function generateBatch() {
+    const selected = plans.filter((plan) => batchPlanIds.includes(plan.id) && plan.state === "approved");
+    if (!batchDraftConfirmed || selected.length !== batchPlanIds.length || !selected.length) {
+      setError("Выберите только одобренные PagePlans и подтвердите создание отдельных черновиков.");
+      return;
+    }
+    const items = selected.map((plan) => ({
+      plan_id: plan.id,
+      expected_latest_revision: Math.max(0, ...drafts.filter((draft) => draft.page_plan_id === plan.id).map((draft) => draft.revision)),
+    }));
+    await run("draft-batch", async () => {
+      const result = await api(`/api/v1/projects/${projectId}/page-plans/drafts/batch`, {
+        method: "POST",
+        body: JSON.stringify({ items, confirm_drafts_only: true }),
+      }, token);
+      setBatchPlanIds([]);
+      setBatchDraftConfirmed(false);
+      return result;
+    }, "Созданы только выбранные noindex PageDraft. QA, review, apply, candidate и публикация выполняются отдельно.");
   }
 
   async function quoteAIDraft() {
@@ -815,23 +868,20 @@ export function ProjectWorkspacePage() {
   async function generateBlockSlotCopy() {
     if (!slotPlanId || !slotBlockId || !slotQuote || !slotConsent) return;
     const quote = slotQuote;
-    setBusy(`slot-copy:${slotPlanId}`);
-    setError(null);
-    try {
-      const result = await api<AIRunBrief>(
-        `/api/v1/projects/${projectId}/page-plans/${slotPlanId}/block-slot-copy`,
-        { method: "POST", body: JSON.stringify({ provider_connection_id: aiProviderId, model: aiModel.trim(), block_id: slotBlockId, max_cost_usd: Number(aiMaxCost), max_output_tokens: Number(aiMaxOutput), operator_confirmed_external_processing: true, operator_confirmed_provider_budget: true, confirmed_estimated_cost_usd: quote.estimated_cost_usd, quote_snapshot_hash: quote.input_snapshot_hash }) },
-        token,
-      );
-      setSlotRun(result);
-      resetSlotQuote();
-      setMessage("Текст блока создан как отдельное proposal; PageDraft и сайт не изменены.");
-      await load();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Не удалось создать proposal текста блока");
-    } finally {
-      setBusy(null);
-    }
+    await run(
+      `slot-copy:${slotPlanId}`,
+      async () => {
+        const result = await api<AIRunBrief>(
+          `/api/v1/projects/${projectId}/page-plans/${slotPlanId}/block-slot-copy`,
+          { method: "POST", body: JSON.stringify({ provider_connection_id: aiProviderId, model: aiModel.trim(), block_id: slotBlockId, max_cost_usd: Number(aiMaxCost), max_output_tokens: Number(aiMaxOutput), operator_confirmed_external_processing: true, operator_confirmed_provider_budget: true, confirmed_estimated_cost_usd: quote.estimated_cost_usd, quote_snapshot_hash: quote.input_snapshot_hash }) },
+          token,
+        );
+        setSlotRun(result);
+        resetSlotQuote();
+        return result;
+      },
+      "Текст блока создан как отдельное proposal; PageDraft и сайт не изменены.",
+    );
   }
 
   async function decideSlotRun(decision: "approve" | "reject") {
@@ -847,7 +897,7 @@ export function ProjectWorkspacePage() {
   async function attachDraftMedia() {
     if (!mediaDraftId || !mediaAssetId || !mediaAlt.trim()) return;
     const blockPlacement = Boolean(mediaBlockId);
-    await run(
+    const attached = await run(
       `draft-media:${mediaDraftId}`,
       () => api(
         `/api/v1/projects/${projectId}/page-drafts/${mediaDraftId}/${blockPlacement ? "block-media" : "media"}`,
@@ -858,7 +908,7 @@ export function ProjectWorkspacePage() {
         ? "Файл размещён после curated-блока. QA и ручную проверку нужно выполнить заново."
         : "Файл прикреплён к черновику. QA и ручную проверку нужно выполнить заново.",
     );
-    setMediaAlt("");
+    if (attached) setMediaAlt("");
   }
 
   function authorLines(value: string) {
@@ -968,7 +1018,7 @@ export function ProjectWorkspacePage() {
 
   async function createIndexSchedule() {
     if (!scheduledIndexSlugs.length || !indexScheduleStartsAt || !indexScheduleConfirmed) return;
-    await run(
+    const created = await run(
       "index-schedule-create",
       () => api(
         `/api/v1/projects/${projectId}/index-schedules`,
@@ -986,6 +1036,7 @@ export function ProjectWorkspacePage() {
       ),
       "Создан черновик графика. Он не меняет индексацию, не собирает и не публикует сайт.",
     );
+    if (!created) return;
     setScheduledIndexSlugs([]);
     setIndexScheduleConfirmed(false);
   }
@@ -1019,12 +1070,12 @@ export function ProjectWorkspacePage() {
       setError("Добавьте private email или полные URL и secret webhook-получателя.");
       return;
     }
-    await run(
+    const created = await run(
       "routing-create",
       () => api(`/api/v1/projects/${projectId}/lead-routing`, { method: "POST", body: JSON.stringify({ destinations }) }, token),
       "Создана draft policy маршрутизации. Отправьте её на review перед активацией.",
     );
-    setRoutingWebhookSecret("");
+    if (created) setRoutingWebhookSecret("");
   }
 
   async function submitRoutingPolicy(policy: LeadRoutingPolicy) {
@@ -1131,12 +1182,13 @@ export function ProjectWorkspacePage() {
       <Surface id="bukvarix" title="3.5. Источник семантики: Букварикс">
         <p className="muted">{bukvarixStatus?.message || "Проверка статуса Букварикса…"}</p>
         <p className="muted">Автоматический сбор использует только фиксированный HTTPS public free-mode. URL, endpoint, personal API key и параметры запроса в панели не вводятся и не хранятся. Лимит: до {bukvarixStatus?.max_seed_keywords || 10} seed-фраз и {bukvarixStatus?.max_results_per_run || 1000} результатов за запуск.</p>
+        {scheduledPreviewError ? <p className="error" role="alert">Очередь Букварикса недоступна: состояние задач неизвестно. Новые запросы отключены; preview уже завершённых runs остаётся доступен.</p> : null}
         <div className="stack">
           <strong>Автоматический HTTPS preview</strong>
           <p className="muted">Выберите уже сохранённые project keywords. Постановка в очередь не импортирует фразы, не создаёт semantic collection, Structure, candidate, публикацию или IndexNow.</p>
           {projectKeywords.length === 0 ? <EmptyState title="В проекте нет seed keywords" hint="Сначала сохраните ключевые фразы для проекта." /> : <DataTable headers={["", "Seed-фраза", "Intent", "Priority"]}>{projectKeywords.map((item) => <tr key={item.id}><td><input aria-label={`Seed Букварикс: ${item.phrase}`} type="checkbox" checked={bukvarixSeedIds.includes(item.id)} onChange={() => toggleBukvarixSeed(item.id)} disabled={busy !== null} /></td><td>{item.phrase}</td><td>{item.intent || "—"}</td><td>{item.priority ?? "—"}</td></tr>)}</DataTable>}
           <label className="field"><span><input type="checkbox" checked={bukvarixConfirmed} onChange={(event) => setBukvarixConfirmed(event.target.checked)} disabled={busy !== null} /> Подтверждаю запуск фиксированного HTTPS public free-mode Букварикса для выбранных seed-фраз.</span></label>
-          <button className="btn btn-ghost" type="button" disabled={busy !== null || !bukvarixSeedIds.length || !bukvarixConfirmed} onClick={() => void queueBukvarixRun()}>{busy === "bukvarix-queue" ? "Постановка в очередь…" : "Получить HTTPS preview"}</button>
+          <button className="btn btn-ghost" type="button" disabled={busy !== null || scheduledPreviewError || !bukvarixSeedIds.length || !bukvarixConfirmed} onClick={() => void queueBukvarixRun()}>{busy === "bukvarix-queue" ? "Постановка в очередь…" : "Получить HTTPS preview"}</button>
         </div>
         {bukvarixRuns.length === 0 ? <p className="muted">Автоматические HTTPS runs пока не запускались.</p> : <div className="stack">{bukvarixRuns.map((run) => {
           const selectedResultIds = bukvarixSelectedResultIds[run.id] || [];
@@ -1193,7 +1245,20 @@ export function ProjectWorkspacePage() {
           <div className="surface"><strong>Дословные утверждённые claims</strong><p className="muted">Не AI-текст: выбранное утверждение будет скопировано без перефразирования в серверный curated text slot после freeze facts и review плана.</p><div className="detail-grid"><label className="field">Curated slot<select value={planClaimSlot} onChange={(event) => setPlanClaimSlot(event.target.value)}><option value="hero.unique_core">hero · unique_core</option><option value="hero.hero_supporting_text">hero · hero_supporting_text</option></select></label><label className="field">Claim<select value={planClaimIndex} onChange={(event) => setPlanClaimIndex(event.target.value)}><option value="">Выберите подтверждённый claim</option>{approvedClaims.map((claim, index) => <option key={`${index}-${claim}`} value={index}>{index + 1}. {claim}</option>)}</select></label></div><button className="btn btn-ghost" type="button" disabled={busy !== null || !planClaimIndex} onClick={addPlanClaimBinding}>Привязать дословно</button>{planClaimBindings.length > 0 && <ul>{planClaimBindings.map((binding) => <li key={`${binding.block_id}.${binding.slot}`}><code>{binding.block_id}.{binding.slot}</code> ← #{binding.claim_index + 1}: {approvedClaims[binding.claim_index]} <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => setPlanClaimBindings((current) => current.filter((item) => item !== binding))}>Убрать</button></li>)}</ul>}{approvedClaims.length === 0 && <p className="muted">Сначала сохраните и подтвердите claims в facts. Без binding обычный deterministic draft не изменяется.</p>}</div>
           <button className="btn" type="submit" disabled={busy !== null || !planObjective.trim() || !approvedStructure}>{busy === "plan" ? "Сохранение…" : "Создать черновик плана"}</button>
         </form>
-        {plans.length === 0 ? <EmptyState title="Планов страниц пока нет" /> : <DataTable headers={["Путь", "Цель", "Статус", "Действия"]}>{plans.map((plan) => <tr key={plan.id}><td>{plan.slug}</td><td>{plan.objective}</td><td><StatusPill tone={tone(plan.state)}>{plan.state}</StatusPill></td><td className="row">{plan.state === "draft" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => decision(plan, "submit-review")}>На проверку</button>}{plan.state === "review" && <><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => decision(plan, "approve")}>Одобрить</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => decision(plan, "reject")}>Отклонить</button></>}{plan.state === "approved" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => generate(plan)}>Создать черновик</button>}</td></tr>)}</DataTable>}
+        {plans.length === 0 ? <EmptyState title="Планов страниц пока нет" /> : <>
+          <DataTable headers={["Выбрать", "Путь", "Цель", "Статус", "Действия"]}>
+            {plans.map((plan) => <tr key={plan.id}>
+              <td><input type="checkbox" aria-label={`В пакет черновиков: ${plan.slug} · v${plan.version}`} checked={batchPlanIds.includes(plan.id)} disabled={busy !== null || plan.state !== "approved"} onChange={() => toggleBatchPlan(plan.id)} /></td>
+              <td>{plan.slug}</td><td>{plan.objective}</td><td><StatusPill tone={tone(plan.state)}>{plan.state}</StatusPill></td>
+              <td className="row">{plan.state === "draft" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => decision(plan, "submit-review")}>На проверку</button>}{plan.state === "review" && <><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => decision(plan, "approve")}>Одобрить</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => decision(plan, "reject")}>Отклонить</button></>}{plan.state === "approved" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => generate(plan)}>Создать черновик</button>}</td>
+            </tr>)}
+          </DataTable>
+          <div className="stack">
+            <p className="muted">До 10 одобренных планов за одну операцию. Снимки создаются атомарно; повтор с устаревшей ревизией отклоняется. Никакие QA, apply, сборка и публикация не выполняются автоматически.</p>
+            <label><input type="checkbox" checked={batchDraftConfirmed} disabled={busy !== null || batchPlanIds.length === 0 || batchPlanIds.length > 10} onChange={(event) => setBatchDraftConfirmed(event.target.checked)} /> Подтверждаю создание только PageDraft для выбранных планов.</label>
+            <button className="btn btn-ghost" type="button" disabled={busy !== null || !batchDraftConfirmed || !batchPlanIds.length || batchPlanIds.length > 10} onClick={() => void generateBatch()}>Создать выбранные черновики ({batchPlanIds.length})</button>
+          </div>
+        </>}
       </Surface>
       <Surface title="4.1. AI-черновик текста и SEO">
         {aiProviderError && <p className="muted" role="status">AI-операции недоступны: {aiProviderError}. Основной проектный workflow продолжает работать.</p>}
