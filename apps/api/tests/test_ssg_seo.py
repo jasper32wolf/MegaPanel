@@ -43,12 +43,42 @@ def test_ssg_writes_seo_artifacts(tmp_path: Path):
     assert (current / "sitemap" / "index.html").exists()
     assert (current / "index.html").exists()
     html = (current / "index.html").read_text(encoding="utf-8")
+    assert html.count("<h1>Услуги в Москве</h1>") == 1
     assert "application/ld+json" in html
     assert "FAQPage" in html
     assert (current / "index.html.gz").exists()
     assert (current / "privacy" / "index.html").exists()
     assert (current / "cookie-banner.js").exists()
     assert '<script src="cookie-banner.js" defer></script>' in html
+
+
+def test_ssg_does_not_duplicate_an_existing_block_h1(tmp_path: Path):
+    site = SiteManifest(
+        site_id=uuid4(),
+        tenant_id=uuid4(),
+        domain="example.test",
+        pages=[
+            PageManifest(
+                slug="/",
+                title_template="Услуги",
+                h1_template="Услуги в Москве",
+                service="Услуги",
+                blocks=[
+                    BlockDef(
+                        type="hero",
+                        hash_class="blk-hero",
+                        html="<h1>Услуги в Москве</h1><p>Подтверждённая услуга</p>",
+                    )
+                ],
+            )
+        ],
+    )
+
+    SiteBuilder(tmp_path).build(site)
+    html = (tmp_path / str(site.site_id) / "current" / "index.html").read_text(encoding="utf-8")
+
+    assert html.count("<h1>Услуги в Москве</h1>") == 1
+    assert html.count("<h1") == 1
 
 
 def test_russian_phone_has_a_readable_display_and_canonical_schema_value(tmp_path: Path):

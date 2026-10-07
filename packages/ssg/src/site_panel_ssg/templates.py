@@ -78,6 +78,7 @@ def render_page(
     )
 
     has_hero = any(block.type == "hero" for block in blocks)
+    has_h1 = False
     for block in blocks:
         slot_values = {
             key: escape(str(value or ""))
@@ -90,6 +91,7 @@ def render_page(
                 {**ctx, "unique_core": escape(page.unique_core or ""), **slot_values},
             )
         )
+        has_h1 = has_h1 or re.search(r"<h1(?:\s|>)", html, re.I) is not None
         body_parts.append(
             f'<section class="{escape(block.hash_class, quote=True)}" '
             f'data-block="{escape(block.type, quote=True)}">{html}</section>'
@@ -118,7 +120,7 @@ def render_page(
         if (url := (media_urls or {}).get(str(item.asset_id)))
     )
     body = "\n".join([*body_parts, media_html] if media_html else body_parts)
-    h1_html = "" if has_hero else f"<h1>{h1}</h1>"
+    h1_html = "" if has_h1 else f"<h1>{h1}</h1>"
     unique_html = "" if has_hero or not unique else f'<p class="unique-core">{unique}</p>'
     author_html = ""
     if page.author:

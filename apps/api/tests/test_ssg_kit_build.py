@@ -8,8 +8,9 @@ from site_panel_shared.manifests import BlockDef, PageManifest, SiteManifest
 from site_panel_ssg import BuildAsset, SiteBuilder
 
 
-def test_ssg_kit_build_contains_core_blocks(tmp_path: Path):
-    kit = load_kit("service-local-v1")
+@pytest.mark.parametrize("kit_key", ["service-local-v1", "home-repair-v1"])
+def test_ssg_kit_build_contains_core_blocks(tmp_path: Path, kit_key: str):
+    kit = load_kit(kit_key)
     site_id = uuid4()
     instances, css_vars = instantiate_blocks(kit.blocks, site_id, kit.theme)
     mapped = {
@@ -70,6 +71,8 @@ def test_ssg_kit_build_contains_core_blocks(tmp_path: Path):
     result = SiteBuilder(tmp_path).build(site, context)
     assert result["build_hash"]
     html = (tmp_path / str(site_id) / "current" / "index.html").read_text(encoding="utf-8")
+    assert html.count("<h1>Ремонт в Москве</h1>") == 1
+    assert html.count("<h1") == 1
     assert 'data-block="hero"' in html
     assert 'data-block="pricing_table"' in html
     assert 'data-block="team"' in html
@@ -95,6 +98,8 @@ def test_ssg_kit_build_contains_core_blocks(tmp_path: Path):
     assert (root / "site-panel-leads.js").exists()
     assert (root / "cookie-banner.js").exists()
     nested_html = (nested / "index.html").read_text(encoding="utf-8")
+    assert nested_html.count("<h1>Ремонт в Москве</h1>") == 1
+    assert nested_html.count("<h1") == 1
     assert 'src="site-panel-leads.js"' in nested_html
     assert 'src="cookie-banner.js"' in nested_html
     assert (nested / "site-panel-leads.js").exists()
