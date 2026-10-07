@@ -306,8 +306,26 @@ test("оператор получает private preview candidate без пуб�
   await expect(approvePlan).toBeVisible();
   await approvePlan.click();
   await expect(page.getByRole("dialog")).toBeVisible();
+  const approvePlanResponse = page.waitForResponse((response) =>
+    response.request().method() === "POST" &&
+    /\/page-plans\/[^/]+\/approve$/.test(new URL(response.url()).pathname),
+  );
   await page.getByRole("dialog").getByRole("button", { name: "Одобрить" }).click();
-  await page.getByLabel("В пакет черновиков: / · v1").check();
+  const approvedPlanResponse = await approvePlanResponse;
+  expect(
+    approvedPlanResponse.ok(),
+    `approve plan ${approvedPlanResponse.status()}: ${await approvedPlanResponse.text()}`,
+  ).toBe(true);
+  const approvedPlan = await approvedPlanResponse.json() as {
+    slug: string;
+    version: number;
+    state: string;
+  };
+  expect(approvedPlan.state).toBe("approved");
+  expect(approvedPlan.slug).toBe("/");
+  await page.getByLabel(
+    `В пакет черновиков: ${approvedPlan.slug} · v${approvedPlan.version}`,
+  ).check();
   await page.getByText("Подтверждаю создание только PageDraft для выбранных планов.").click();
   const batchResponsePromise = page.waitForResponse((response) =>
     response.request().method() === "POST" &&
