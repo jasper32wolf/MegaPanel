@@ -1484,22 +1484,22 @@ Installer требует разные `PANEL_DOMAIN` и `API_DOMAIN`. Панел
 
 ### Как включить страну и город в журнале сессий?
 
-Панель не отправляет IP-адреса сторонним сервисам. Для country/city используется только локальная MaxMind City MMDB. До настройки сессия честно показывает «не определено» и вход не блокируется.
+Панель не отправляет IP-адреса сторонним сервисам. Для country/city используется только локальная DB-IP Lite City MMDB. До настройки сессия честно показывает «не определено» и вход не блокируется.
 
 После отдельного разрешения на production deploy оператор должен:
 
-1. Получить City MMDB по своей лицензии MaxMind и не передавать license key, сам файл или его содержимое в Git, чат, CI и логи.
-2. Создать закрытый каталог `/opt/site-panel/shared/geoip` и разместить в нём `GeoLite2-City.mmdb`, доступный пользователю production deploy.
+1. Скачать City MMDB только с официального DB-IP Lite и не передавать download credentials, сам файл или его содержимое в Git, чат, CI и логи.
+2. Создать закрытый каталог `/opt/site-panel/shared/geoip` и разместить в нём `dbip-city-lite.mmdb`, доступный пользователю production deploy.
 3. В `/opt/site-panel/shared/.env` указать только пути и реальную внутреннюю сеть Caddy-to-API:
 
    ```dotenv
    GEOIP_HOST_DIR=/opt/site-panel/shared/geoip
-   GEOIP_CITY_DB_PATH=/app/geoip/GeoLite2-City.mmdb
+   GEOIP_CITY_DB_PATH=/app/geoip/dbip-city-lite.mmdb
    TRUSTED_PROXY_CIDRS=<внутренний CIDR Caddy-to-API>
    ```
 
    Не используйте `0.0.0.0/0` и не угадывайте CIDR. Без доверенного proxy CIDR панель не верит `X-Forwarded-For`.
-4. Настроить безопасное атомарное обновление базы по правилам MaxMind. После обновления перезапустить API только через утверждённый maintenance/release путь.
+4. Настроить безопасное атомарное обновление базы по условиям DB-IP Lite и добавить требуемое attribution. После обновления перезапустить API только через утверждённый maintenance/release путь.
 5. В staging проверить новый вход: страна/город должны быть правдоподобными, а IP/локация не должны появиться в telemetry, audit payload, браузерном storage или неаутентифицированном API.
 
 ### Где лежат backup credentials?

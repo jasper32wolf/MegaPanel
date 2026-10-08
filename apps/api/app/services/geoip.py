@@ -20,18 +20,15 @@ class GeoIPResolver:
         if not self.database_path or not _is_global_ip(ip_address):
             return GeoLocation()
         try:
-            import geoip2.database
+            import maxminddb
 
             if not Path(self.database_path).is_file():
                 return GeoLocation()
-            with geoip2.database.Reader(self.database_path) as reader:
-                result = reader.city(ip_address)
+            with maxminddb.open_database(self.database_path) as reader:
+                record = reader.get(ip_address)
         except Exception:  # noqa: BLE001
             return GeoLocation()
-        return GeoLocation(
-            country=_clean_location(result.country.name),
-            city=_clean_location(result.city.name),
-        )
+        return _location_from_record(record)
 
 
 def _is_global_ip(value: str | None) -> bool:
@@ -39,6 +36,25 @@ def _is_global_ip(value: str | None) -> bool:
         return bool(value and ipaddress.ip_address(value).is_global)
     except ValueError:
         return False
+
+
+def _location_from_record(record: object) -> GeoLocation:
+    if not isinstance(record, dict):
+        return GeoLocation()
+    return GeoLocation(
+        country=_location_field(record.get("country")),
+        city=_location_field(record.get("city")),
+    )
+
+
+def _location_field(value: object) -> str | None:
+    if isinstance(value, dict):
+        names = value.get("names")
+        if isinstance(names, dict):
+            value = names.get("en") or names.get("ru")
+        else:
+            value = value.get("name") or value.get("iso_code") or value.get("code")
+    return _clean_location(value)
 
 
 def _clean_location(value: object) -> str | None:
