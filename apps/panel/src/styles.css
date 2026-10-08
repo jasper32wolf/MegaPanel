@@ -115,6 +115,10 @@ textarea:focus-visible {
   outline-offset: -3px;
 }
 
+.incident-snoozed {
+  opacity: 0.72;
+}
+
 .shell {
   display: grid;
   grid-template-columns: var(--nav-width) 1fr;

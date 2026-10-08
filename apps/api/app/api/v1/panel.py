@@ -26,7 +26,7 @@ from app.services.operations import (
     transition_incident,
 )
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -34,7 +34,16 @@ router = APIRouter()
 
 
 class IncidentActionIn(BaseModel):
-    action: Literal["acknowledge", "resolve"]
+    action: Literal["acknowledge", "resolve", "snooze"]
+    snooze_minutes: Literal[60, 240, 1440] | None = None
+
+    @model_validator(mode="after")
+    def validate_snooze(self) -> IncidentActionIn:
+        if self.action == "snooze" and self.snooze_minutes is None:
+            raise ValueError("snooze_minutes is required for snooze")
+        if self.action != "snooze" and self.snooze_minutes is not None:
+            raise ValueError("snooze_minutes is only allowed for snooze")
+        return self
 
 
 @router.get("/builds/{site_id}")
@@ -406,11 +415,28 @@ async def update_incident(
         raise HTTPException(status_code=404, detail="Incident not found")
     if auth.role != "superadmin" and incident.tenant_id != auth.tenant_id:
         raise HTTPException(status_code=403, detail="Forbidden")
-    await transition_incident(db, incident=incident, action=body.action)
+    try:
+        await transition_incident(
+            db,
+            incident=incident,
+            action=body.action,
+            snooze_minutes=body.snooze_minutes,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     await append_audit(
         db,
         action=f"operational_incident.{body.action}",
-        payload={"incident_id": str(incident.id), "status": incident.status},
+        payload={
+            "incident_id": str(incident.id),
+            "status": incident.status,
+            **({"snooze_minutes": body.snooze_minutes} if body.snooze_minutes else {}),
+            **(
+                {"snoozed_until": incident.snoozed_until.isoformat()}
+                if incident.snoozed_until
+                else {}
+            ),
+        },
         tenant_id=incident.tenant_id,
         actor_id=auth.user.id,
     )

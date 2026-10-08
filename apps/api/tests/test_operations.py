@@ -2,18 +2,23 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from app.models.operations import AlertIncident
 from app.services.operations import (
+    _serialize_incident,
     auto_resolve_inactive_incidents,
     observe_alert,
     record_operational_event,
     serialize_operational_event,
     transition_incident,
 )
+from sqlalchemy.dialects import postgresql
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 
 class OperationsDatabase:
@@ -78,6 +83,85 @@ def test_incident_lifecycle_deduplicates_active_signal_without_details():
     assert reopened is not incident
     assert reopened.status == "open"
     assert reopened.occurrence_count == 1
+
+
+def test_incident_snooze_is_bounded_and_cleared_by_acknowledge_or_resolve():
+    incident = SimpleNamespace(
+        id=uuid4(),
+        status="open",
+        snoozed_until=None,
+        acknowledged_at=None,
+        resolved_at=None,
+    )
+    db = OperationsDatabase()
+
+    asyncio.run(transition_incident(db, incident=incident, action="snooze", snooze_minutes=60))
+    assert incident.snoozed_until is not None
+    assert incident.status == "open"
+    first_snooze = incident.snoozed_until
+
+    asyncio.run(transition_incident(db, incident=incident, action="acknowledge"))
+    assert incident.status == "acknowledged"
+    assert incident.acknowledged_at is not None
+    assert incident.snoozed_until is None
+
+    asyncio.run(transition_incident(db, incident=incident, action="snooze", snooze_minutes=240))
+    assert incident.snoozed_until is not None and incident.snoozed_until > first_snooze
+    asyncio.run(transition_incident(db, incident=incident, action="resolve"))
+    assert incident.status == "resolved"
+    assert incident.resolved_at is not None
+    assert incident.snoozed_until is None
+
+    with pytest.raises(ValueError, match="cannot be snoozed"):
+        asyncio.run(transition_incident(db, incident=incident, action="snooze", snooze_minutes=60))
+
+
+def test_incident_snooze_rejects_unbounded_duration_and_serializes_deadline():
+    incident = SimpleNamespace(
+        id=uuid4(),
+        signal_code="qa-block",
+        severity="warning",
+        status="open",
+        occurrence_count=1,
+        opened_at=None,
+        acknowledged_at=None,
+        snoozed_until=None,
+        resolved_at=None,
+    )
+
+    with pytest.raises(ValueError, match="snooze duration"):
+        asyncio.run(
+            transition_incident(
+                OperationsDatabase(), incident=incident, action="snooze", snooze_minutes=5
+            )
+        )
+    incident.snoozed_until = datetime.now(UTC)
+    assert _serialize_incident(incident)["snoozed_until"] is not None
+
+
+def test_postgresql_active_incident_upsert_contract_uses_partial_dedupe_target():
+    statement = (
+        pg_insert(AlertIncident)
+        .values(
+            id=uuid4(),
+            tenant_id=uuid4(),
+            signal_code="qa-block",
+            severity="warning",
+            status="open",
+            occurrence_count=1,
+        )
+        .on_conflict_do_update(
+            index_elements=[AlertIncident.tenant_id, AlertIncident.signal_code],
+            index_where=AlertIncident.status.in_(("open", "acknowledged")),
+            set_={"occurrence_count": AlertIncident.occurrence_count + 1},
+        )
+        .returning(AlertIncident)
+    )
+    sql = str(statement.compile(dialect=postgresql.dialect()))
+
+    assert "ON CONFLICT (tenant_id, signal_code) WHERE status IN" in sql
+    assert "occurrence_count = (alert_incidents.occurrence_count +" in sql
+    assert "RETURNING" in sql
 
 
 def test_auto_resolution_closes_only_inactive_qa_block_incidents(monkeypatch):

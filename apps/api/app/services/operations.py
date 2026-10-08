@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from uuid import UUID
+from datetime import UTC, datetime, timedelta
+from uuid import UUID, uuid4
 
 from app.models.operational_verification import OperationalVerification
 from app.models.operations import AlertIncident, OperationalEvent
 from app.models.project import PageDraft
 from app.services.audit import append_audit
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 _SHA_RE = re.compile(r"[a-f0-9]{40}(?:[a-f0-9]{24})?")
@@ -161,6 +162,12 @@ SIGNALS = {
     "system-operation-failed": "warning",
     "worker-heartbeat-stale": "warning",
 }
+SNOOZE_MINUTES = frozenset({60, 240, 1440})
+
+
+def _postgres_dialect(db: AsyncSession) -> bool:
+    bind = getattr(db, "bind", None)
+    return getattr(getattr(bind, "dialect", None), "name", None) == "postgresql"
 
 
 def _require_value(value: str, allowed: frozenset[str], label: str) -> None:
@@ -179,6 +186,7 @@ def _serialize_incident(incident: AlertIncident) -> dict:
         "acknowledged_at": incident.acknowledged_at.isoformat()
         if incident.acknowledged_at
         else None,
+        "snoozed_until": incident.snoozed_until.isoformat() if incident.snoozed_until else None,
         "resolved_at": incident.resolved_at.isoformat() if incident.resolved_at else None,
     }
 
@@ -233,6 +241,28 @@ async def observe_alert(
     severity = SIGNALS.get(signal_code)
     if severity is None:
         raise ValueError("Unsupported operational signal")
+    now = datetime.now(UTC)
+    if active and _postgres_dialect(db):
+        statement = (
+            pg_insert(AlertIncident)
+            .values(
+                id=uuid4(),
+                tenant_id=tenant_id,
+                signal_code=signal_code,
+                severity=severity,
+                status="open",
+                occurrence_count=1,
+                opened_at=now,
+            )
+            .on_conflict_do_update(
+                index_elements=[AlertIncident.tenant_id, AlertIncident.signal_code],
+                index_where=AlertIncident.status.in_(("open", "acknowledged")),
+                set_={"occurrence_count": AlertIncident.occurrence_count + 1},
+            )
+            .returning(AlertIncident)
+        )
+        return (await db.execute(statement)).scalar_one()
+
     incident = (
         await db.execute(
             select(AlertIncident)
@@ -244,7 +274,6 @@ async def observe_alert(
             .with_for_update()
         )
     ).scalar_one_or_none()
-    now = datetime.now(UTC)
     if active:
         if incident is None:
             incident = AlertIncident(
@@ -262,6 +291,7 @@ async def observe_alert(
     if incident is not None:
         incident.status = "resolved"
         incident.resolved_at = now
+        incident.snoozed_until = None
     return incident
 
 
@@ -318,16 +348,26 @@ async def transition_incident(
     *,
     incident: AlertIncident,
     action: str,
+    snooze_minutes: int | None = None,
 ) -> AlertIncident:
     now = datetime.now(UTC)
     if action == "acknowledge":
         if incident.status == "open":
             incident.status = "acknowledged"
             incident.acknowledged_at = now
+        incident.snoozed_until = None
+        return incident
+    if action == "snooze":
+        if incident.status == "resolved":
+            raise ValueError("Resolved incidents cannot be snoozed")
+        if snooze_minutes not in SNOOZE_MINUTES:
+            raise ValueError("Unsupported incident snooze duration")
+        incident.snoozed_until = now + timedelta(minutes=snooze_minutes)
         return incident
     if action == "resolve":
         if incident.status != "resolved":
             incident.status = "resolved"
             incident.resolved_at = now
+        incident.snoozed_until = None
         return incident
     raise ValueError("Unsupported incident action")

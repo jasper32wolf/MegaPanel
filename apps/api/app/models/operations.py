@@ -39,4 +39,5 @@ class AlertIncident(Base):
     occurrence_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    snoozed_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
