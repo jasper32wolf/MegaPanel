@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { api, useAuth } from "../lib/auth";
-import { ConfirmDialog, DataTable, EmptyState, PageHeader, StatusPill, Surface } from "../components/ui";
+import { AsyncFeedback, ConfirmDialog, DataTable, EmptyState, PageHeader, StatusPill, Surface } from "../components/ui";
 
 type Site = { id: string; domain: string; publish_state: string };
 type BulkResult = { operation_id: string; updated: number };
@@ -92,8 +92,7 @@ export function BulkPage() {
         description="Выберите сайты, проверьте предварительный список и обновите только телефон или email. Операция не создаёт страницы, не запускает проверку качества и не публикует сайты; массовая публикация и IndexNow намеренно недоступны."
         actions={<StatusPill tone={selectedSites.length ? "accent" : "default"}>Выбрано: {selectedSites.length}</StatusPill>}
       />
-      {error && <p className="error">{error}</p>}
-      {message && <p className="muted">{message}</p>}
+      <AsyncFeedback error={error} message={message} />
 
       <Surface title="1. Выберите сайты">
         <DataTable headers={["", "Домен", "Публикация"]}>

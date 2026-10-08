@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, useAuth } from "../lib/auth";
-import { ConfirmDialog, DataTable, EmptyState, PageHeader, StatusPill, Surface } from "../components/ui";
+import { AsyncFeedback, ConfirmDialog, DataTable, EmptyState, PageHeader, StatusPill, Surface } from "../components/ui";
 
 type Domain = {
   id: string;
@@ -143,7 +143,7 @@ export function DomainsPage() {
   return (
     <div>
       <PageHeader title="Домены" description="Привязывайте публичный hostname к собранному сайту, проверяйте DNS и TLS, затем управляйте редиректами в одном месте." />
-      {error && <p className="error">{error}</p>}
+      <AsyncFeedback error={error} />
       <Surface title="Подключить домен">
         {sites.length === 0 ? <EmptyState title="Сначала создайте сайт" hint="Домен можно привязать только к конкретному static release." /> : (
           <form onSubmit={onCreate} className="stack">
