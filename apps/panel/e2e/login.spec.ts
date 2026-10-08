@@ -79,7 +79,7 @@ test("оператор видит и отзывает другую сессию"
     await expect(page.getByRole("dialog")).toBeVisible();
     await page.getByRole("dialog").getByRole("button", { name: "Отозвать" }).click();
     await expect(revokeButtons).toHaveCount(before - 1);
-    await page.getByRole("link", { name: "Обзор" }).click();
+    await page.getByRole("link", { name: "Главная" }).click();
     await expect(page.getByRole("heading", { name: "Обзор" })).toBeVisible();
     await expect(page.getByText("API: ok")).toBeVisible();
   } finally {
