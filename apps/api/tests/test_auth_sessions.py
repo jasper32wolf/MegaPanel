@@ -169,6 +169,7 @@ def test_session_context_keeps_only_bounded_browser_language_and_encrypted_locat
     request = request_with_headers(
         [
             (b"user-agent", b"Mozilla/5.0 Chrome/123.0"),
+            (b"sec-ch-ua", b'"Google Chrome";v="123", "Chromium";v="123"'),
             (b"accept-language", b"ru-RU,ru;q=0.9,en;q=0.8"),
         ]
     )
@@ -216,6 +217,62 @@ def test_new_session_copies_the_original_environment_snapshot_on_rotation(monkey
     assert replacement.family_id == first.family_id
     assert replacement.browser_name == "Firefox"
     assert replacement.language == "en-US"
+    assert replacement.ip_address_enc == "encrypted-ip"
+    assert replacement.country_enc == "encrypted-country"
+    assert replacement.city_enc == "encrypted-city"
+
+
+@pytest.mark.parametrize(
+    ("user_agent", "expected"),
+    [
+        ("Mozilla/5.0 YaBrowser/25.1 Chrome/132.0", "Yandex Browser"),
+        ("Mozilla/5.0 OPR/117.0 Chrome/132.0", "Opera"),
+        ("Mozilla/5.0 Vivaldi/7.1 Chrome/132.0", "Vivaldi"),
+        ("Mozilla/5.0 Edg/132.0 Chrome/132.0", "Microsoft Edge"),
+    ],
+)
+def test_browser_name_prioritizes_specific_chromium_markers(user_agent: str, expected: str):
+    request = request_with_headers([(b"user-agent", user_agent.encode())])
+
+    assert auth._browser_name(request) == expected
+
+
+def test_browser_name_does_not_claim_unknown_chromium_is_chrome():
+    request = request_with_headers([(b"user-agent", b"Mozilla/5.0 Chrome/132.0")])
+
+    assert auth._browser_name(request) == "Chromium browser"
+
+
+def test_refresh_backfills_context_for_legacy_session(monkeypatch):
+    user = SimpleNamespace(id=uuid4(), tenant_id=uuid4(), role="superadmin", is_active=True)
+    monkeypatch.setattr(auth.settings, "app_secret_key", "test-session-key-" + "x" * 32)
+    refresh = create_refresh_token(user.id)
+    legacy_session = auth._new_session(user, refresh, device_label="Chrome on Windows")
+    database = RefreshDatabase(legacy_session, user)
+
+    async def require_single_operator(_db: object, _user: object) -> None:
+        return None
+
+    monkeypatch.setattr(auth, "require_single_operator", require_single_operator)
+    monkeypatch.setattr(auth, "_device_label", lambda _request: "Yandex Browser on Windows")
+    monkeypatch.setattr(
+        auth,
+        "_session_context",
+        lambda _request: {
+            "browser_name": "Yandex Browser",
+            "language": "ru-RU",
+            "ip_address_enc": "encrypted-ip",
+            "country_enc": "encrypted-country",
+            "city_enc": "encrypted-city",
+        },
+    )
+
+    asyncio.run(auth.refresh(refresh_request(refresh), Response(), database))
+
+    replacement = database.added[0]
+    assert replacement.device_label == "Yandex Browser on Windows"
+    assert replacement.browser_name == "Yandex Browser"
+    assert replacement.language == "ru-RU"
     assert replacement.ip_address_enc == "encrypted-ip"
     assert replacement.country_enc == "encrypted-country"
     assert replacement.city_enc == "encrypted-city"

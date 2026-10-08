@@ -91,11 +91,23 @@ def _browser_name(request: Request) -> str | None:
     if not user_agent:
         return None
     return (
-        "Edge"
+        "Yandex Browser"
+        if "YaBrowser/" in user_agent
+        else "Opera"
+        if "OPR/" in user_agent or "Opera/" in user_agent
+        else "Vivaldi"
+        if "Vivaldi/" in user_agent
+        else "Microsoft Edge"
         if "Edg/" in user_agent
+        else "Samsung Internet"
+        if "SamsungBrowser/" in user_agent
         else "Firefox"
         if "Firefox/" in user_agent
+        else "Brave"
+        if "Brave/" in user_agent
         else "Chrome"
+        if "Chrome/" in user_agent and "Google Chrome" in request.headers.get("Sec-CH-UA", "")
+        else "Chromium browser"
         if "Chrome/" in user_agent
         else "Safari"
         if "Safari/" in user_agent
@@ -139,6 +151,18 @@ def _session_context(request: Request) -> dict[str, str | None]:
         "country_enc": encryptor.encrypt(location.country) if location.country else None,
         "city_enc": encryptor.encrypt(location.city) if location.city else None,
     }
+
+
+def _has_session_context(session: AuthSession) -> bool:
+    return any(
+        (
+            session.browser_name,
+            session.language,
+            session.ip_address_enc,
+            session.country_enc,
+            session.city_enc,
+        )
+    )
 
 
 def _new_session(
@@ -264,16 +288,24 @@ async def refresh(
         raise HTTPException(status_code=401, detail="Single operator access required") from exc
 
     new_refresh = create_refresh_token(user.id)
+    has_context = _has_session_context(session)
+    context = (
+        {
+            "browser_name": session.browser_name,
+            "language": session.language,
+            "ip_address_enc": session.ip_address_enc,
+            "country_enc": session.country_enc,
+            "city_enc": session.city_enc,
+        }
+        if has_context
+        else _session_context(request)
+    )
     replacement = _new_session(
         user,
         new_refresh,
         family_id=session.family_id,
-        device_label=session.device_label,
-        browser_name=session.browser_name,
-        language=session.language,
-        ip_address_enc=session.ip_address_enc,
-        country_enc=session.country_enc,
-        city_enc=session.city_enc,
+        device_label=session.device_label if has_context else _device_label(request),
+        **context,
     )
     db.add(replacement)
     await db.flush()
