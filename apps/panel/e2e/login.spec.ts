@@ -112,7 +112,7 @@ test("оператор получает private preview candidate без пуб�
       keywordImportRequests.push(new URL(request.url()).pathname);
     }
   });
-  await page.getByRole("link", { name: "Семантика" }).click();
+  await page.getByRole("link", { name: "Запросы и семантика" }).click();
   await expect(page.getByRole("heading", { name: "Семантика" })).toBeVisible();
   await page.getByLabel("CSV-файл (UTF-8, до 10 МБ)").setInputFiles({
     name: "e2e-keywords.csv",

@@ -1128,6 +1128,8 @@ export function ProjectWorkspacePage() {
       <PageHeader title={project.name} description="Факты → семантика → география → план страниц → черновик и проверка качества. Публикация не выполняется автоматически." actions={<div className="row"><Link className="btn btn-ghost" to={`/projects/${projectId}/activity`}>Activity</Link><Link className="btn btn-ghost" to="/projects">К проектам</Link></div>} />
       {error && <p className="error" role="alert">{error}</p>}
       {message && <p className="muted" aria-live="polite">{message}</p>}
+      <section className="workflow-stage" id="data" aria-label="Исходные данные">
+        <div className="workflow-stage-heading"><strong>Исходные данные</strong><span>Сохраните и подтвердите сведения о бизнесе, затем настройте получение заявок.</span><Link to="/help?topic=business-facts">Справка по данным бизнеса</Link></div>
       <Surface title="Подготовка структуры">
         {approvedStructure ? <p className="muted">Одобрена структура сайта v{approvedStructure.version}. Новые direct PagePlan будут сохранены с её server-owned provenance; для полного дерева используйте materialization в <Link to={`/projects/${projectId}/site-structure`}>разделе структуры</Link>.</p> : <p className="error">Перед созданием новых PagePlan одобрите структуру сайта. Существующие планы, черновики, candidate builds и release workflow остаются доступными. <Link to={`/projects/${projectId}/site-structure`}>Открыть структуру сайта</Link></p>}
       </Surface>
@@ -1167,6 +1169,9 @@ export function ProjectWorkspacePage() {
           {routingPolicies.length === 0 ? <EmptyState title="Активной policy пока нет" hint="До явной активации сохраняется legacy delivery compatibility; настройте policy перед следующей публикацией." /> : <DataTable headers={["Версия", "Получатели", "Статус", "Действия"]}>{routingPolicies.map((policy) => <tr key={policy.id}><td>v{policy.version}</td><td>{policy.destinations.map((destination) => <span key={destination.id} className="row"><StatusPill tone={destination.configured ? "ok" : "danger"}>{destination.channel}</StatusPill><span>{destination.target_key}{destination.required ? " · required" : " · optional"}</span></span>)}</td><td><StatusPill tone={tone(policy.state)}>{policy.state}</StatusPill></td><td className="row">{policy.state === "draft" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void submitRoutingPolicy(policy)}>На review</button>}{policy.state === "review" && <><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => rejectRoutingPolicy(policy)}>Отклонить</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => activateRoutingPolicy(policy)}>Активировать</button></>}</td></tr>)}</DataTable>}
         </>}
       </Surface>
+      </section>
+      <section className="workflow-stage" id="research" aria-label="Запросы, география и исследование">
+        <div className="workflow-stage-heading"><strong>Запросы, география и исследование</strong><span>Выберите спрос и территорию, изучите результаты и отдельно одобрите коллекцию.</span><Link to="/help?topic=research">Справка по исследованию</Link></div>
       <Surface title="3. Семантика проекта">
         <p className="muted">Выберите уже импортированные ключевые фразы. Это не создаёт страницы и не запускает генерацию.</p>
         <DataTable headers={["", "Фраза", "Намерение"]}>{keywords.map((keyword) => <tr key={keyword.id}><td><input aria-label={`Выбрать ${keyword.phrase}`} type="checkbox" disabled={busy !== null} checked={selectedKeywordSet.has(keyword.id)} onChange={() => toggleKeyword(keyword.id)} /></td><td>{keyword.phrase}</td><td>{keyword.meta?.intent || "—"}</td></tr>)}</DataTable>
@@ -1234,6 +1239,9 @@ export function ProjectWorkspacePage() {
         {semanticSignals?.cannibalization.map((collision, index) => <p className="muted" key={`${collision.reason}-${index}`}>Предупреждение: {collision.reason} — {collision.plans.map((plan) => plan.slug).join(", ")}</p>)}
         {semanticSignals?.unmapped_plans.length ? <p className="muted">Legacy PagePlan без explicit semantic target: {semanticSignals.unmapped_plans.map((plan) => plan.slug).join(", ")}. Они не считаются покрытием.</p> : null}
       </Surface>
+      </section>
+      <section className="workflow-stage" id="plans" aria-label="Структура и планирование страниц">
+        <div className="workflow-stage-heading"><strong>Структура и планирование страниц</strong><span>Определите назначение страницы, проверьте план и создайте черновик только после одобрения.</span><Link to="/help?topic=pages-and-qa">Справка по планам страниц</Link></div>
       <Surface title="4. План страниц">
         <p className="muted">Coverage: {coverage?.covered || 0} из {coverage?.selected || 0} выбранных ключей связаны с планами.</p>
         <form className="stack" onSubmit={createPlan}>
@@ -1260,6 +1268,9 @@ export function ProjectWorkspacePage() {
           </div>
         </>}
       </Surface>
+      </section>
+      <section className="workflow-stage" id="ai" aria-label="Подготовка контента">
+        <div className="workflow-stage-heading"><strong>Подготовка контента</strong><span>AI, медиа и профиль автора готовят материалы, но не подтверждают факты и не публикуют сайт.</span><Link to="/help?topic=ai-preparation">Справка по AI-предложениям</Link></div>
       <Surface title="4.1. AI-черновик текста и SEO">
         {aiProviderError && <p className="muted" role="status">AI-операции недоступны: {aiProviderError}. Основной проектный workflow продолжает работать.</p>}
         <p className="muted">Доступен только для утверждённых PagePlan. AI изменяет текстовые поля нового PageDraft, сохраняет curated blocks и не применяет результат к сайту. После генерации обязателен обычный QA и ручная проверка.</p>
@@ -1341,6 +1352,9 @@ export function ProjectWorkspacePage() {
         <p className="muted">Это derived projection из draft и immutable snapshots всех ready, текущих и исторических release builds. Current status проверяет живую запись, rights, expiry, hash и локальный файл; недоступность не удаляет историческое использование и не переписывает release.</p>
         {assetUsage.length === 0 ? <EmptyState title="В draft и build snapshots нет прикреплённых media" hint="Использование появится после прикрепления файла к draft." /> : <DataTable headers={["Scope", "Страница", "Размещение", "Ассет", "Current status"]}>{assetUsage.map((usage) => <tr key={`${usage.scope}-${usage.source.draft_id || usage.source.build_id}-${usage.slug}-${usage.placement}-${usage.asset_id}`}><td><StatusPill tone={usage.scope === "published" ? "ok" : usage.scope === "candidate" ? "warn" : "accent"}>{usage.scope}</StatusPill></td><td>{usage.slug}</td><td>{usage.placement}</td><td>{usage.asset_id.slice(0, 8)} · {usage.expected_sha256.slice(0, 12)}</td><td><StatusPill tone={usage.current_status === "verified" ? "ok" : "danger"}>{usage.current_status}</StatusPill></td></tr>)}</DataTable>}
       </Surface>
+      </section>
+      <section className="workflow-stage" id="qa" aria-label="Проверка и наблюдение">
+        <div className="workflow-stage-heading"><strong>Проверка и наблюдение</strong><span>Проверьте черновики, затем отдельно решайте вопрос индексации и смотрите только согласованные данные посещений.</span><Link to="/help?topic=pages-and-qa">Справка по проверке качества</Link></div>
       <Surface title="5. Черновики и проверка качества">
         {drafts.length === 0 ? <EmptyState title="Черновиков пока нет" hint="Одобрите план страницы, затем создайте детерминированный черновик." /> : <DataTable headers={["План", "Версия", "Статус", "QA", "Действия"]}>{drafts.map((draft) => <tr key={draft.id}><td>{plans.find((plan) => plan.id === draft.page_plan_id)?.slug || draft.page_plan_id}</td><td>{draft.revision}</td><td><StatusPill tone={tone(draft.state)}>{draft.state}</StatusPill>{draft.failure_message && <p className="error" role="alert">{draft.failure_message}</p>}</td><td><StatusPill tone={tone(draft.last_qa_verdict || "draft")}>{draft.last_qa_verdict || "не запускалась"}</StatusPill>{draft.qa_runs.at(-1)?.findings.map((finding) => <p className="muted" key={finding.rule}>{finding.rule}: {finding.evidence}</p>)}</td><td className="row">{draft.state === "draft" && <><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => qa(draft)}>Проверить</button>{draft.last_qa_verdict && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => submitDraft(draft)}>На ручную проверку</button>}</>}{draft.state === "review" && draft.last_qa_verdict !== "block" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => apply(draft)}>Применить</button>}</td></tr>)}</DataTable>}
       </Surface>
@@ -1366,11 +1380,15 @@ export function ProjectWorkspacePage() {
         <p className="muted">Показываются только события после согласия посетителя. Сырые события хранятся {telemetrySummary?.privacy.raw_retention_days ?? 30} завершённых календарных дней UTC и удаляются ежедневной задачей; затем остаются суточные итоги без идентификатора сессии. Если согласованных сессий меньше пяти, точные числа скрыты. Сессия на двух разных днях учитывается дважды.</p>
         {!project.site_id ? <EmptyState title="Статистика появится после создания сайта" /> : telemetrySummary === null ? <p className="muted">Статистика пока недоступна или на сайте ещё нет согласованных событий.</p> : telemetrySummary.pages.length === 0 ? <EmptyState title="Пока нет согласованных посещений" hint="После публикации сайта статистика появится только у посетителей, которые разрешили аналитику." /> : <DataTable headers={["Страница", "Просмотры", "Сессии (сумма по дням)", "Оценка"]}>{telemetrySummary.pages.map((item) => <tr key={item.path}><td>{item.path}</td><td>{item.page_views ?? "—"}</td><td>{item.consented_session_days ?? "—"}</td><td><StatusPill tone={item.traffic_state === "observed" ? "ok" : "warn"}>{item.traffic_state === "not_enough_data" ? "мало данных" : item.traffic_state === "low_traffic" ? "низкая посещаемость" : "посещаемость есть"}</StatusPill></td></tr>)}</DataTable>}
       </Surface>
+      </section>
+      <section className="workflow-stage" id="release" aria-label="Пробная сборка и выпуск">
+        <div className="workflow-stage-heading"><strong>Пробная сборка и выпуск</strong><span>Закрытый предпросмотр, юридическая проверка и публикация остаются отдельными ручными решениями.</span><Link to="/help?topic=candidate-and-publish">Справка по выпуску</Link></div>
       <Surface title="8. Candidate-сборки, preview и публикация">
         <p className="muted">Candidate создаётся из зафиксированного snapshot в отдельной durable queue. Private preview, legal review, публикация и безопасный rollback доступны только в центре Releases; worker никогда не публикует сайт и не запускает IndexNow.</p>
         <Link className="btn" to={`/projects/${projectId}/releases`}>Открыть центр candidate-сборок</Link>
       </Surface>
       <Surface title="Следующий шаг"><p className="muted">После применения черновик меняет только манифест проекта. Candidate-сборка не становится публичной до явной публикации.</p>{project.site_id && <Link className="btn btn-ghost" to="/sites">Открыть сайт и сборки</Link>}</Surface>
+      </section>
       <ConfirmDialog
         open={confirmation !== null}
         title={confirmation?.title || "Подтверждение"}

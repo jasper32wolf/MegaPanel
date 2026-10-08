@@ -102,6 +102,7 @@ class ArchitectureQuoteOut(BaseModel):
     input_snapshot_hash: str
     pricing_source: str
     pricing_observed_at: str
+    context_summary: dict[str, int] = Field(default_factory=dict)
 
 
 class AIDraftGenerationRequest(BaseModel):
@@ -296,6 +297,8 @@ class PageProposal(BaseModel):
 class ArchitectureProposalOut(BaseModel):
     run_id: UUID
     status: AIRunStatus
+    provider_id: str
+    model_id: str
     pages: list[PageProposal]
     prompt_id: str
     prompt_version: str

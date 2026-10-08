@@ -13,11 +13,14 @@ type Quote = {
   input_snapshot_hash: string;
   pricing_source: string;
   pricing_observed_at: string;
+  context_summary: Record<string, number>;
   expires_in_seconds: number;
 };
 type Proposal = {
   run_id: string;
   status: string;
+  provider_id: string;
+  model_id: string;
   prompt_id: string;
   prompt_version: string;
   prompt_hash: string;
@@ -43,6 +46,18 @@ type RunSummary = {
   cost_usd: number | null;
   error_code: string | null;
   created_at: string | null;
+};
+
+const contextLabels: Record<string, string> = {
+  project_profile: "Профиль проекта",
+  confirmed_public_facts: "Подтверждённые публичные данные",
+  selected_keywords: "Выбранные запросы",
+  validated_geo: "Проверенная география",
+  approved_competitor_evidence: "Одобренные материалы исследования",
+  existing_page_plans: "Существующие планы страниц",
+  allowed_kits: "Разрешённые комплекты",
+  operator_constraints: "Ограничения оператора",
+  regenerate_page_ids: "Страницы для обновления",
 };
 
 export function AIWorkspacePage() {
@@ -226,12 +241,12 @@ export function AIWorkspacePage() {
           </div>
           <label className="field">Ограничения оператора<textarea value={constraints} onChange={(event) => { setConstraints(event.target.value); setQuote(null); setConsented(false); }} rows={4} placeholder="Одно ограничение на строку" /></label>
           <button className="btn btn-ghost" type="button" onClick={() => void calculateQuote()} disabled={busy || !providerId || !projectId || !model}>{busy ? "Расчёт…" : "Рассчитать стоимость до запроса"}</button>
-          {quote && <Surface title="Оценка до генерации"><p><strong>${quote.estimated_cost_usd.toFixed(6)}</strong> (верхняя оценка) · лимит ${quote.max_cost_usd.toFixed(6)}</p><p className="muted">Источник: {quote.pricing_source}; актуально на {quote.pricing_observed_at}. Оценка не гарантирует фактический счёт: дневной/30-дневный лимиты являются preflight-проверкой, а не резервированием средств при одновременных запросах. Для жёсткого ограничения настройте spending cap у провайдера.</p></Surface>}
-          <label className="field"><span><input type="checkbox" checked={consented} onChange={(event) => setConsented(event.target.checked)} required disabled={!quote} /> Подтверждаю именно показанную оценку, передачу контекста провайдеру и наличие у провайдера соответствующего spending limit. Фактическая цена/retention определяются провайдером.</span></label>
+          {quote && <Surface title="Оценка и состав внешнего запроса"><p><strong>${quote.estimated_cost_usd.toFixed(6)}</strong> (верхняя оценка) · лимит ${quote.max_cost_usd.toFixed(6)}</p><p>Провайдер: <strong>{quote.provider_id}</strong> · модель: <strong>{quote.model_id}</strong></p><p className="muted">Расчёт не обращается к провайдеру. Он проверяет сохранённый контекст, модель, текущие лимиты и цену до внешнего запроса.</p><p className="muted">Во внешний запрос попадут только перечисленные ниже категории. Здесь не выводятся их значения. Секреты, приватные получатели заявок и необработанные материалы исследования не отправляются.</p><ul>{Object.entries(quote.context_summary).map(([category, count]) => <li key={category}>{contextLabels[category] || category}: {count}</li>)}</ul><p className="muted">Источник цены: {quote.pricing_source}; актуально на {quote.pricing_observed_at}. Оценка не гарантирует фактический счёт: дневной/30-дневный лимиты являются preflight-проверкой, а не резервированием средств при одновременных запросах. Для жёсткого ограничения настройте spending cap у провайдера.</p></Surface>}
+          <label className="field"><span><input type="checkbox" checked={consented} onChange={(event) => setConsented(event.target.checked)} required disabled={!quote} /> Подтверждаю эту оценку, перечисленные категории контекста и внешний вызов выбранного провайдера. У провайдера настроен spending limit; его цена и срок хранения данных определяются его правилами.</span><span className="muted">Перед постановкой в очередь сервер заново сверит расчёт и снимок. Если данные или лимиты изменились, запрос остановится без отправки обновлённого контекста.</span></label>
           <button className="btn" type="submit" disabled={busy || !providerId || !consented || !quote}>{busy ? "Генерация…" : "Подтвердить оценку и создать предложение"}</button>
         </form>
       </Surface>
-      {proposal && <Surface title="Результат и approval gate"><div className="detail-grid"><div><strong>Статус</strong><p>{proposal.status}</p></div><div><strong>Расчётная стоимость</strong><p>${proposal.estimated_cost_usd?.toFixed(6) ?? "—"} / ${proposal.max_cost_usd?.toFixed(6) ?? "—"}</p></div><div><strong>Prompt</strong><p>{proposal.prompt_id} · v{proposal.prompt_version}</p></div><div><strong>Prompt hash</strong><p><code>{proposal.prompt_hash.slice(0, 16)}…</code></p></div><div><strong>Input snapshot</strong><p><code>{proposal.input_snapshot_hash.slice(0, 16)}…</code></p></div></div>{proposal.error_code && <p className="error" role="alert">Run остановлен: {proposal.error_code}. Проверьте расчёт/лимит провайдера; предложение не утверждено.</p>}<p className="muted">Предложений страниц: {proposal.pages.length}. Результат остаётся отдельным от PagePlan.</p>{proposal.pages.length > 0 && <pre className="code-block">{JSON.stringify(proposal.pages, null, 2)}</pre>}{proposal.status === "pending_approval" && <div className="row"><button className="btn" type="button" disabled={busy} onClick={() => decide("approve")}>Одобрить предложение</button><button className="btn btn-ghost" type="button" disabled={busy} onClick={() => decide("reject")}>Отклонить</button></div>}{proposal.status === "approved" && projectId && <div className="stack"><p className="muted">AI approval не создаёт PagePlan. Импортируйте результат в отдельную draft-версию структуры, затем independently выполните review, approval и materialization.</p><Link className="btn" to={`/projects/${projectId}/site-structure`}>Открыть структуру сайта для импорта</Link></div>}</Surface>}
+      {proposal && <Surface title="Результат и approval gate"><div className="detail-grid"><div><strong>Статус</strong><p>{proposal.status}</p></div><div><strong>Провайдер / модель</strong><p>{proposal.provider_id} / {proposal.model_id}</p></div><div><strong>Расчётная стоимость</strong><p>${proposal.estimated_cost_usd?.toFixed(6) ?? "—"} / ${proposal.max_cost_usd?.toFixed(6) ?? "—"}</p></div><div><strong>Prompt</strong><p>{proposal.prompt_id} · v{proposal.prompt_version}</p></div><div><strong>Prompt hash</strong><p><code>{proposal.prompt_hash.slice(0, 16)}…</code></p></div><div><strong>Input snapshot</strong><p><code>{proposal.input_snapshot_hash.slice(0, 16)}…</code></p></div></div>{proposal.error_code && <p className="error" role="alert">Run остановлен: {proposal.error_code}. Проверьте расчёт/лимит провайдера; предложение не утверждено.</p>}<p className="muted">Предложений страниц: {proposal.pages.length}. Результат остаётся отдельным от PagePlan.</p>{proposal.pages.length > 0 && <pre className="code-block">{JSON.stringify(proposal.pages, null, 2)}</pre>}{proposal.status === "pending_approval" && <div className="stack"><p className="muted">Решение только принимает или отклоняет предложение. Оно не импортирует структуру, не создаёт PagePlan, не запускает сборку и не публикует сайт.</p><div className="row"><button className="btn" type="button" disabled={busy} onClick={() => decide("approve")}>Одобрить предложение без импорта</button><button className="btn btn-ghost" type="button" disabled={busy} onClick={() => decide("reject")}>Отклонить</button></div></div>}{proposal.status === "approved" && projectId && <div className="stack"><p className="muted">AI approval не создаёт PagePlan. Импортируйте результат в отдельную draft-версию структуры, затем independently выполните review, approval и materialization.</p><Link className="btn" to={`/projects/${projectId}/site-structure`}>Открыть структуру сайта для импорта</Link></div>}</Surface>}
     </div>
   );
 }

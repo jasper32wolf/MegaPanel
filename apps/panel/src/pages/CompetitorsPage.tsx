@@ -226,7 +226,7 @@ export function CompetitorsPage() {
           <label className="row">
             <input type="checkbox" checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)} required />
             <span>Я отвечаю за право анализа указанных публичных страниц и понимаю, что URL не будут расширяться в crawl.</span>
-            <HelpTip label="Что извлекается">Заголовок, meta description, H1–H6 и question-like headings. Контент не считается подтверждённым фактом и не публикуется автоматически.</HelpTip>
+            <HelpTip label="Какие данные собираются" topicId="research">Заголовок страницы, краткое описание, заголовки H1–H6 и похожие на вопросы заголовки. Эти данные не считаются подтверждёнными фактами и не публикуются автоматически.</HelpTip>
           </label>
           <button className="btn" type="submit" disabled={busy || !projectId || !acknowledged || !urlsText.trim()}>{busy ? "Анализ…" : "Проанализировать URL"}</button>
         </form>
@@ -245,7 +245,7 @@ export function CompetitorsPage() {
           <label className="row">
             <input type="checkbox" checked={crawlAcknowledged} onChange={(event) => setCrawlAcknowledged(event.target.checked)} required />
             <span>Я отвечаю за право исследования этого публичного домена и понимаю, что закрытые robots.txt, внешние hosts, формы, JavaScript и файлы не обходятся.</span>
-            <HelpTip label="Что сохраняется">Только структурные сигналы: URL-дерево, title/meta, H1–H6, признаки цен, FAQ и ошибки. Чужой HTML не становится facts, keywords или текстом сайта.</HelpTip>
+            <HelpTip label="Что сохраняется" topicId="research">Только структура: адреса страниц, заголовки, краткие описания, признаки цен, вопросы и ответы и ошибки. Чужой HTML не становится данными бизнеса, запросами или текстом сайта.</HelpTip>
           </label>
           <button className="btn" type="submit" disabled={busy || !projectId || !crawlAcknowledged || !domainRoot.trim()}>{busy ? "Запуск…" : "Запустить обход домена"}</button>
         </form>

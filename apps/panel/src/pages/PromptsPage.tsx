@@ -206,7 +206,7 @@ export function PromptsPage() {
         {selected ? (
           <p className="muted">
             Built-in source: {selected.path} · hash {selected.baseline_hash.slice(0, 16)}…
-            <HelpTip label="Baseline prompt">Packed baseline неизменяем в панели. Активная operator revision добавляется после него как ограниченное уточнение и остаётся traceable в AIRun.</HelpTip>
+            <HelpTip label="Базовый шаблон" topicId="ai-preparation">Встроенный базовый шаблон нельзя изменить в панели. Активная версия оператора добавляется к нему как ограниченное уточнение и сохраняется в истории запуска AI.</HelpTip>
           </p>
         ) : <p className="muted">Загрузка каталога…</p>}
       </Surface>

@@ -26,11 +26,33 @@ type WorkflowSummary = {
   published: boolean;
 };
 
+type DeploymentStage = {
+  key: string;
+  title: string;
+  state: "ready" | "blocked" | "prepare" | "approval_required" | "running" | "manual_decision" | "published";
+  detail: string;
+  route: string;
+  manual: string;
+};
+
+type DeploymentPlan = { stages: DeploymentStage[]; next_stage: DeploymentStage | null; read_only: true };
+
+const stageStatus: Record<DeploymentStage["state"], { label: string; tone: "ok" | "warn" | "accent" }> = {
+  ready: { label: "подготовлено", tone: "ok" },
+  blocked: { label: "нужны данные", tone: "warn" },
+  prepare: { label: "нужно подготовить", tone: "warn" },
+  approval_required: { label: "нужно решение", tone: "warn" },
+  running: { label: "выполняется", tone: "accent" },
+  manual_decision: { label: "требуется решение", tone: "warn" },
+  published: { label: "выпуск записан", tone: "ok" },
+};
+
 export function ProjectOverviewPage() {
   const { projectId = "" } = useParams();
   const { token } = useAuth();
   const [project, setProject] = useState<Project | null>(null);
   const [summary, setSummary] = useState<WorkflowSummary | null>(null);
+  const [plan, setPlan] = useState<DeploymentPlan | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -38,14 +60,17 @@ export function ProjectOverviewPage() {
     let active = true;
     setProject(null);
     setSummary(null);
+    setPlan(null);
     setError(null);
     void Promise.all([
       api<Project>(`/api/v1/projects/${projectId}`, {}, token),
       api<WorkflowSummary>(`/api/v1/projects/${projectId}/workflow-summary`, {}, token),
-    ]).then(([nextProject, nextSummary]) => {
+      api<DeploymentPlan>(`/api/v1/projects/${projectId}/deployment-plan`, {}, token),
+    ]).then(([nextProject, nextSummary, nextPlan]) => {
       if (active) {
         setProject(nextProject);
         setSummary(nextSummary);
+        setPlan(nextPlan);
       }
     }).catch((cause) => {
       if (active) setError(cause instanceof Error ? cause.message : "Не удалось загрузить состояние проекта");
@@ -53,45 +78,8 @@ export function ProjectOverviewPage() {
     return () => { active = false; };
   }, [projectId, token]);
 
-  const steps = summary ? [
-    {
-      title: "Подтвердить факты",
-      observed: summary.facts_confirmed,
-      detail: summary.facts_confirmed ? "Есть подтверждённая версия фактов проекта." : "Проверьте контакты, legal и допустимые утверждения.",
-      href: `/projects/${projectId}/facts`,
-    },
-    {
-      title: "Подготовить семантику и географию",
-      observed: summary.keyword_count > 0 && summary.geo_count > 0 && summary.approved_collection_count > 0,
-      detail: `Ключи: ${summary.keyword_count} · география: ${summary.geo_count} · одобренные коллекции: ${summary.approved_collection_count}`,
-      href: `/projects/${projectId}`,
-    },
-    {
-      title: "Одобрить единую структуру сайта",
-      observed: summary.approved_structure_count > 0,
-      detail: `Одобренных версий структуры: ${summary.approved_structure_count}. Для городского поддомена нужны собственные facts.`,
-      href: `/projects/${projectId}/site-structure`,
-    },
-    {
-      title: "Одобрить планы и применить прошедшие QA страницы",
-      observed: summary.approved_plan_count > 0 && summary.applied_draft_count > 0,
-      detail: `Одобренных PagePlans: ${summary.approved_plan_count} · применённых PageDrafts: ${summary.applied_draft_count}`,
-      href: `/projects/${projectId}/pages`,
-    },
-    {
-      title: "Проверить candidate и private preview",
-      observed: summary.ready_candidate_count > 0 || summary.published,
-      detail: `Готовых сборок: ${summary.ready_candidate_count} · в очереди/работе: ${summary.running_candidate_count}. Legal review и публикация — отдельные решения.`,
-      href: `/projects/${projectId}/releases`,
-    },
-    {
-      title: "Проверить публичный release и лиды",
-      observed: summary.published,
-      detail: summary.published ? "В БД отмечен опубликованный release. Внешние DNS/TLS и форму проверьте отдельно." : "Публикация требует явного подтверждения после всех серверных проверок.",
-      href: `/projects/${projectId}/releases`,
-    },
-  ] : [];
-  const nextStep = steps.find((step) => !step.observed);
+  const nextStage = plan?.next_stage || null;
+  const nextStageStatus = nextStage ? stageStatus[nextStage.state] : null;
 
   return (
     <ProjectWorkspaceLayout projectId={projectId}>
@@ -100,8 +88,8 @@ export function ProjectOverviewPage() {
         description="Наблюдаемые артефакты и следующий ручной шаг. Обзор не изменяет данные и не заменяет серверные QA, legal и release gates."
       />
       {error && <p className="error" role="alert">{error}</p>}
-      {(!project || !summary) && !error ? <p className="muted" aria-live="polite">Загрузка проекта…</p> : null}
-      {project && summary && <>
+      {(!project || !summary || !plan) && !error ? <p className="muted" aria-live="polite">Загрузка проекта…</p> : null}
+      {project && summary && plan && <>
         <Surface title="Состояние проекта">
           <div className="detail-grid">
             <div><strong>Домен</strong><span className="muted">{project.domain || "не настроен"}</span></div>
@@ -111,16 +99,28 @@ export function ProjectOverviewPage() {
           </div>
           <p className="muted">Счётчики показывают наличие артефактов, а не пригодность конкретной версии к публикации. При изменении facts, структуры, прав на media или legal-политики проверяйте новый candidate.</p>
         </Surface>
-        <Surface title="Этапы работы">
-          {steps.map((step) => <div className="surface" key={step.title}>
-            <div className="row"><StatusPill tone={step.observed ? "ok" : "warn"}>{step.observed ? "есть артефакт" : "нужен шаг"}</StatusPill><strong>{step.title}</strong></div>
-            <p className="muted">{step.detail}</p>
-            <Link className="btn btn-ghost" to={step.href}>Открыть этап</Link>
-          </div>)}
+        <Surface title="План развёртывания">
+          <p className="muted">Это только подсказка по сохранённым артефактам. Она не создаёт черновики, не одобряет данные, не публикует сайт и не подтверждает внешнюю инфраструктуру.</p>
+          {plan.stages.map((stage) => {
+            const status = stageStatus[stage.state];
+            return <div className="surface" key={stage.key}>
+              <div className="row"><StatusPill tone={status.tone}>{status.label}</StatusPill><strong>{stage.title}</strong></div>
+              <p>{stage.detail}</p>
+              <p className="muted"><strong>Нужно вручную:</strong> {stage.manual}</p>
+              <Link className="btn btn-ghost" to={stage.route}>Открыть этап</Link>
+            </div>;
+          })}
         </Surface>
         <Surface title="Следующее действие">
-          <p>{nextStep ? nextStep.title : "Основные артефакты записаны. Проверьте выпуск и входящие лиды."}</p>
-          <div className="row"><Link className="btn" to={nextStep?.href || "/leads"}>{nextStep ? "Перейти к этапу" : "Открыть лиды"}</Link><Link className="btn btn-ghost" to={`/projects/${project.id}/activity`}>Открыть историю действий</Link></div>
+          {nextStage ? <>
+            <div className="row"><StatusPill tone={nextStageStatus?.tone}>{nextStageStatus?.label}</StatusPill><strong>{nextStage.title}</strong></div>
+            <p>{nextStage.detail}</p>
+            <p className="muted">{nextStage.manual}</p>
+            <div className="row"><Link className="btn" to={nextStage.route}>Перейти к этапу</Link><Link className="btn btn-ghost" to={`/help?topic=project-workflow&project=${project.id}`}>Открыть справку по процессу</Link><Link className="btn btn-ghost" to={`/projects/${project.id}/activity`}>Открыть историю действий</Link></div>
+          </> : <>
+            <p>Основные артефакты записаны. Отдельно проверьте выпуск, внешний сайт и приём заявок.</p>
+            <div className="row"><Link className="btn" to={`/projects/${project.id}/releases`}>Открыть выпуск</Link><Link className="btn btn-ghost" to={`/help?topic=project-workflow&project=${project.id}`}>Открыть справку по процессу</Link><Link className="btn btn-ghost" to={`/projects/${project.id}/activity`}>Открыть историю действий</Link></div>
+          </>}
         </Surface>
       </>}
     </ProjectWorkspaceLayout>

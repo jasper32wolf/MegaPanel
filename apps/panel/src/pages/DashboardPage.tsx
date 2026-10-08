@@ -108,7 +108,7 @@ export function DashboardPage() {
           <StatusPill tone={readiness?.status === "ok" ? "ok" : "danger"}>PostgreSQL / Redis: {readiness?.status || "недоступны"}</StatusPill>
           {health ? <span className="muted">v{health.version} · {health.env}</span> : null}
           <span className="muted">Последняя сводка: {formatMoment(summary?.observed_at)}</span>
-          <HelpTip label="Readiness">Readiness проверяет доступность PostgreSQL и Redis. Она не подтверждает TLS, Caddy, restore drill или внешний production hostname.</HelpTip>
+          <HelpTip label="Готовность системы" topicId="system-and-recovery">Проверка готовности показывает доступность PostgreSQL и Redis. Она не подтверждает DNS, TLS, Caddy, проверку восстановления или внешний адрес сайта.</HelpTip>
         </div>
       </Surface>
       <Surface title="Внимание оператора">
@@ -128,7 +128,7 @@ export function DashboardPage() {
           <StatusPill tone={deliveryTone}>Ожидают обработки: {summary?.delivery_pending ?? "—"}</StatusPill>
           <StatusPill tone={summary?.delivery_dead_letter ? "danger" : "ok"}>Dead letter: {summary?.delivery_dead_letter ?? "—"}</StatusPill>
           <span className="muted">Самая ранняя ожидающая: {formatMoment(summary?.delivery_oldest_at)}</span>
-          <HelpTip label="Dead letter">Delivery попадает сюда после исчерпания попыток или отсутствия корректного получателя. Откройте inbox, исправьте конфигурацию и повторите доставку вручную.</HelpTip>
+          <HelpTip label="Недоставленная заявка" topicId="leads-and-delivery">Задача попадает сюда после исчерпания попыток или отсутствия корректного получателя. Откройте входящие заявки, исправьте настройку и повторите доставку вручную.</HelpTip>
         </div>
         <Link className="btn btn-ghost" to="/leads">Открыть inbox лидов</Link>
       </Surface>

@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 from app.api.deps import AuthContext
-from app.api.v1.projects import project_workflow_summary
+from app.api.v1.projects import project_deployment_plan, project_workflow_summary
 from fastapi import HTTPException
 
 
@@ -97,3 +97,69 @@ def test_workflow_summary_does_not_count_foreign_site_as_published(foreign_tenan
     assert result["published"] is False
     assert result["facts_confirmed"] is False
     assert result["ready_candidate_count"] == 0
+
+
+def test_deployment_plan_is_redacted_read_only_guidance_for_an_empty_project():
+    tenant_id, project_id = uuid4(), uuid4()
+    project = SimpleNamespace(
+        id=project_id, tenant_id=tenant_id, site_id=None, current_fact_revision_id=None
+    )
+    db = SummaryDatabase(project, None, [0] * 8)
+    auth = AuthContext(user=SimpleNamespace(id=uuid4()), tenant_id=tenant_id, role="manager")
+
+    result = asyncio.run(project_deployment_plan(project_id, auth, db))
+
+    assert result["read_only"] is True
+    assert [stage["key"] for stage in result["stages"]] == [
+        "facts",
+        "research",
+        "structure",
+        "pages",
+        "candidate",
+        "publish",
+    ]
+    assert result["next_stage"] == result["stages"][0]
+    assert all(
+        set(stage) == {"key", "title", "state", "detail", "route", "manual"}
+        for stage in result["stages"]
+    )
+    assert all(str(project_id) in stage["route"] for stage in result["stages"])
+    serialized = str(result)
+    assert "build_hash" not in serialized
+    assert "tenant_id" not in serialized
+    assert "current_fact_revision_id" not in serialized
+    assert len(db.statements) == 10
+
+
+def test_deployment_plan_keeps_ready_candidate_distinct_from_published_release():
+    tenant_id, project_id, site_id = uuid4(), uuid4(), uuid4()
+    project = SimpleNamespace(
+        id=project_id, tenant_id=tenant_id, site_id=site_id, current_fact_revision_id=uuid4()
+    )
+    site = SimpleNamespace(
+        tenant_id=tenant_id, project_id=project_id, publish_state="draft", build_hash="a" * 64
+    )
+    db = SummaryDatabase(project, site, [1, 1, 1, 1, 1, 1, 1, 0])
+    auth = AuthContext(user=SimpleNamespace(id=uuid4()), tenant_id=tenant_id, role="manager")
+
+    result = asyncio.run(project_deployment_plan(project_id, auth, db))
+    by_key = {stage["key"]: stage for stage in result["stages"]}
+
+    assert by_key["candidate"]["state"] == "ready"
+    assert "не является публикацией" in by_key["candidate"]["manual"]
+    assert by_key["publish"]["state"] == "manual_decision"
+    assert result["next_stage"] == by_key["publish"]
+
+
+def test_deployment_plan_rejects_other_tenant_before_artifact_reads():
+    project = SimpleNamespace(
+        id=uuid4(), tenant_id=uuid4(), site_id=None, current_fact_revision_id=None
+    )
+    db = SummaryDatabase(project, None, [])
+    auth = AuthContext(user=SimpleNamespace(id=uuid4()), tenant_id=uuid4(), role="manager")
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(project_deployment_plan(project.id, auth, db))
+
+    assert error.value.status_code == 403
+    assert len(db.statements) == 1

@@ -611,6 +611,125 @@ async def project_workflow_summary(
     }
 
 
+@router.get("/{project_id}/deployment-plan")
+async def project_deployment_plan(
+    project_id: UUID,
+    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Return a redacted, read-only operator checklist without bypassing workflow gates."""
+    project = await _project_or_404(db, project_id, auth)
+    summary = await project_workflow_summary(project_id, auth, db)
+    prefix = f"/projects/{project.id}"
+    research_ready = all(
+        (
+            summary["keyword_count"],
+            summary["geo_count"],
+            summary["approved_collection_count"],
+        )
+    )
+
+    def stage(
+        key: str,
+        title: str,
+        state: str,
+        detail: str,
+        route: str,
+        *,
+        manual: str,
+    ) -> dict:
+        return {
+            "key": key,
+            "title": title,
+            "state": state,
+            "detail": detail,
+            "route": route,
+            "manual": manual,
+        }
+
+    stages = [
+        stage(
+            "facts",
+            "Данные бизнеса",
+            "ready" if summary["facts_confirmed"] else "blocked",
+            "Подтверждённая версия данных есть."
+            if summary["facts_confirmed"]
+            else "Подтвердите данные бизнеса, прежде чем планировать страницы.",
+            f"{prefix}/facts",
+            manual="Подтверждение данных всегда принимает оператор.",
+        ),
+        stage(
+            "research",
+            "Запросы и география",
+            "ready" if research_ready else "prepare",
+            "Подготовлены запросы, география и одобренная коллекция."
+            if research_ready
+            else "Выберите запросы и географию, затем отдельно одобрите семантическую коллекцию.",
+            f"{prefix}#research",
+            manual="Импорт и исследование не создают страницы автоматически.",
+        ),
+        stage(
+            "structure",
+            "Структура сайта",
+            "ready" if summary["approved_structure_count"] else "approval_required",
+            "Есть одобренная структура сайта."
+            if summary["approved_structure_count"]
+            else "Подготовьте структуру и примите отдельное решение о её одобрении.",
+            f"{prefix}/site-structure",
+            manual="AI может предложить структуру, но не может одобрить её.",
+        ),
+        stage(
+            "pages",
+            "Планы и черновики страниц",
+            "ready"
+            if summary["approved_plan_count"] and summary["applied_draft_count"]
+            else "approval_required",
+            "Есть одобренные планы и применённые проверенные черновики."
+            if summary["approved_plan_count"] and summary["applied_draft_count"]
+            else "Одобрите планы страниц, проверьте черновики и отдельно примените их к проекту.",
+            f"{prefix}",
+            manual="Применение черновика меняет проект, но не публикует сайт.",
+        ),
+        stage(
+            "candidate",
+            "Пробная сборка и закрытый предпросмотр",
+            "running"
+            if summary["running_candidate_count"]
+            else "ready"
+            if summary["ready_candidate_count"]
+            else "prepare",
+            "Сборка выполняется в очереди."
+            if summary["running_candidate_count"]
+            else "Есть готовая пробная сборка для закрытого предпросмотра."
+            if summary["ready_candidate_count"]
+            else "Создайте пробную сборку после применения проверенных черновиков.",
+            f"{prefix}/releases",
+            manual="Готовая сборка не является публикацией и требует отдельной проверки.",
+        ),
+        stage(
+            "publish",
+            "Выпуск и внешняя проверка",
+            "published" if summary["published"] else "manual_decision",
+            "В БД отмечен опубликованный выпуск; внешний сайт и заявки проверяются отдельно."
+            if summary["published"]
+            else (
+                "Публикация доступна только после server-side gate "
+                "и явного подтверждения оператора."
+            ),
+            f"{prefix}/releases",
+            manual=(
+                "Панель не подтверждает внешние DNS, TLS, приём заявок "
+                "или восстановление автоматически."
+            ),
+        ),
+    ]
+    next_stage = next(
+        (item for item in stages if item["state"] not in {"ready", "published"}),
+        None,
+    )
+    return {"stages": stages, "next_stage": next_stage, "read_only": True}
+
+
 @router.get("/{project_id}/activity")
 async def project_activity(
     project_id: UUID,

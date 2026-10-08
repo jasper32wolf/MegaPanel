@@ -789,3 +789,103 @@ textarea:focus-visible {
     padding: var(--space-6);
   }
 }
+
+/* —— Project navigation and operator help —— */
+.project-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+}
+
+.project-nav-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.project-nav-label {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.help-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-3);
+}
+
+.help-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface) 88%, var(--accent));
+}
+
+.help-card h3,
+.help-card p {
+  margin: 0;
+}
+
+.help-glossary {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.help-glossary div {
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.help-glossary dt {
+  font-weight: 700;
+}
+
+.help-glossary dd {
+  margin: var(--space-1) 0 0;
+  color: var(--muted);
+}
+
+.workflow-stage {
+  display: grid;
+  gap: var(--space-3);
+  margin-bottom: var(--space-6);
+  scroll-margin-top: var(--space-4);
+}
+
+.workflow-stage-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: 0 var(--space-1);
+}
+
+.workflow-stage-heading strong {
+  color: var(--accent);
+}
+
+.workflow-stage-heading span {
+  color: var(--muted);
+}
+
+.workflow-stage-heading a {
+  margin-left: auto;
+}
+
+@media (max-width: 720px) {
+  .workflow-stage-heading a {
+    flex-basis: 100%;
+    margin-left: 0;
+  }
+}

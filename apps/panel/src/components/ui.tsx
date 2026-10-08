@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 
 export function PageHeader({
   title,
@@ -61,9 +62,11 @@ export function StatusPill({
 
 export function HelpTip({
   label,
+  topicId,
   children,
 }: {
   label: string;
+  topicId?: string;
   children: ReactNode;
 }) {
   return (
@@ -72,6 +75,7 @@ export function HelpTip({
       <div role="note">
         <strong>{label}</strong>
         <div>{children}</div>
+        {topicId ? <Link to={`/help?topic=${topicId}`}>Открыть подробную инструкцию</Link> : null}
       </div>
     </details>
   );

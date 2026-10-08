@@ -59,10 +59,26 @@ def _actual_cost(
     ) / 1_000_000
 
 
+def _architecture_context_summary(snapshot: dict[str, Any]) -> dict[str, int]:
+    return {
+        "project_profile": 1,
+        "confirmed_public_facts": len(snapshot["confirmed_facts"]),
+        "selected_keywords": len(snapshot["selected_keywords"]),
+        "validated_geo": len(snapshot["validated_geo"]),
+        "approved_competitor_evidence": len(snapshot["approved_competitor_evidence"]),
+        "existing_page_plans": len(snapshot["existing_page_plans"]),
+        "allowed_kits": len(snapshot["allowed_kits"]),
+        "operator_constraints": len(snapshot["operator_constraints"]),
+        "regenerate_page_ids": len(snapshot["regenerate_page_ids"]),
+    }
+
+
 def _proposal_out(run: AIRun) -> ArchitectureProposalOut:
     return ArchitectureProposalOut(
         run_id=run.id,
         status=run.status,
+        provider_id=run.provider_id,
+        model_id=run.model_id,
         pages=[PageProposal.model_validate(item) for item in run.output.get("pages", [])],
         prompt_id=run.prompt_id,
         prompt_version=run.prompt_version,
@@ -409,6 +425,7 @@ async def _prepare_architecture_context(
         "geo_snapshot": geo_snapshot,
         "catalogs": catalogs,
         "snapshot": snapshot,
+        "context_summary": _architecture_context_summary(snapshot),
         "user_prompt": user_prompt,
         "estimated_cost": estimated_cost,
         "quote_snapshot_hash": _hash_snapshot(
@@ -458,6 +475,7 @@ async def quote_architecture(
         input_snapshot_hash=context["quote_snapshot_hash"],
         pricing_source=context["pricing"]["source"],
         pricing_observed_at=context["pricing"]["observed_at"],
+        context_summary=context["context_summary"],
     )
 
 

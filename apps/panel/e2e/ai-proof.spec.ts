@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
 
 const provider = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -78,7 +78,7 @@ test("оператор обновляет ограниченный список 
   await expect(page.getByRole("heading", { name: "AI-провайдеры" })).toBeVisible();
   await expect(page.getByText("••••6789")).toBeVisible();
 
-  await page.getByRole("button", { name: "Обновить модели" }).click();
+  await page.getByRole("button", { name: "Запросить список моделей у провайдера" }).click();
   await expect(page.getByText("Доступные модели (2)")).toBeVisible();
   await expect(page.getByText("mock-small", { exact: true })).toBeVisible();
   await expect(page.getByText("mock-structured", { exact: true })).toBeVisible();
@@ -124,7 +124,7 @@ test("ошибка discovery не раскрывает секрет и оста�
   );
 
   await page.getByRole("link", { name: "Провайдеры" }).click();
-  await page.getByRole("button", { name: "Обновить модели" }).click();
+  await page.getByRole("button", { name: "Запросить список моделей у провайдера" }).click();
   await expect(page.getByRole("alert").filter({ hasText: "Model discovery unavailable" })).toBeVisible();
   await expect(page.getByText("sk-live-never-render-this-secret", { exact: true })).not.toBeVisible();
 });
@@ -279,16 +279,43 @@ test("project overview points to the next manual step without leaking facts", as
         ready_candidate_count: 0, running_candidate_count: 0, published: false,
       }) });
     }
+    if (path === `/api/v1/projects/${projectId}/deployment-plan`) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+        read_only: true,
+        stages: [
+          { key: "facts", title: "Данные бизнеса", state: "ready", detail: "Подтверждённая версия данных есть.", route: `/projects/${projectId}/facts`, manual: "Подтверждение данных всегда принимает оператор." },
+          { key: "structure", title: "Структура сайта", state: "approval_required", detail: "Подготовьте структуру и примите отдельное решение о её одобрении.", route: `/projects/${projectId}/site-structure`, manual: "AI может предложить структуру, но не может одобрить её." },
+        ],
+        next_stage: { key: "structure", title: "Структура сайта", state: "approval_required", detail: "Подготовьте структуру и примите отдельное решение о её одобрении.", route: `/projects/${projectId}/site-structure`, manual: "AI может предложить структуру, но не может одобрить её." },
+      }) });
+    }
     return route.fulfill({ status: 404, contentType: "application/json", body: '{"detail":"not used by proof"}' });
   });
 
   await page.goto(`/projects/${projectId}/overview`);
   await expect(page.getByRole("heading", { name: "Overview proof" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Следующее действие" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Следующее действие" }).locator("..").getByText("Одобрить единую структуру сайта")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Следующее действие" }).locator("..").getByText("Структура сайта")).toBeVisible();
   await expect(page.getByRole("link", { name: "Перейти к этапу" })).toHaveAttribute("href", `/projects/${projectId}/site-structure`);
+  await expect(page.getByRole("link", { name: "Открыть справку по процессу" })).toHaveAttribute("href", `/help?topic=project-workflow&project=${projectId}`);
   await expect(page.getByText("private-recipient@example.test")).toHaveCount(0);
   expect(mutationRequests).toEqual([]);
+});
+
+test("operator help finds a local article and keeps publication manual", async ({ page }) => {
+  await mockAuth(page);
+
+  await page.goto("/help");
+  await expect(page.getByRole("heading", { name: "Справка оператора" })).toBeVisible();
+  await page.getByLabel("Поиск по справке и терминам").fill("публикация");
+  await expect(page.getByRole("heading", { name: "Пробная сборка, предпросмотр и выпуск" })).toBeVisible();
+  await page.getByRole("article").filter({ hasText: "Пробная сборка, предпросмотр и выпуск" }).getByRole("button", { name: "Открыть инструкцию" }).click();
+  await expect(page.getByRole("heading", { name: "Что не происходит автоматически" })).toBeVisible();
+  await expect(page.getByText(/не публикует сайт сама/i)).toBeVisible();
+  await expect(page.getByRole("link", { name: "Открыть рабочий процесс проекта" })).toHaveAttribute("href", "/projects");
+  const projectId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  await page.goto(`/help?topic=candidate-and-publish&project=${projectId}`);
+  await expect(page.getByRole("link", { name: "Открыть рабочий процесс проекта" })).toHaveAttribute("href", `/projects/${projectId}/releases`);
 });
 
 test("operator batches only approved PageDraft snapshots without apply or publish", async ({ page }) => {
@@ -331,6 +358,13 @@ test("operator batches only approved PageDraft snapshots without apply or publis
 
   await page.goto(`/projects/${projectId}`);
   await expect(page.getByRole("heading", { name: "Batch proof" })).toBeVisible();
+  await expect(page.locator("#data")).toHaveAttribute("aria-label", "Исходные данные");
+  await expect(page.locator("#research")).toHaveAttribute("aria-label", "Запросы, география и исследование");
+  await expect(page.locator("#plans")).toHaveAttribute("aria-label", "Структура и планирование страниц");
+  await expect(page.locator("#ai")).toHaveAttribute("aria-label", "Подготовка контента");
+  await expect(page.locator("#qa")).toHaveAttribute("aria-label", "Проверка и наблюдение");
+  await expect(page.locator("#release")).toHaveAttribute("aria-label", "Пробная сборка и выпуск");
+  await expect(page.locator("#bukvarix")).toBeVisible();
   await page.getByLabel("В пакет черновиков: /first/ · v1").check();
   await page.getByLabel("В пакет черновиков: /second/ · v1").check();
   await page.getByText("Подтверждаю создание только PageDraft для выбранных планов.").click();
@@ -692,7 +726,7 @@ test("prompt history показывает stale evidence и блокирует �
     }),
   );
 
-  await page.getByRole("link", { name: "Системные prompts" }).click();
+  await page.getByRole("link", { name: "Шаблоны запросов AI" }).click();
   await expect(page.getByRole("heading", { name: "Системные prompts" })).toBeVisible();
   await expect(page.getByText("Сохранённая evaluation относится к предыдущей версии fixture.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Активировать" })).toBeDisabled();
@@ -748,6 +782,45 @@ test("releases center renders immutable index-promotion provenance without mutat
   expect(mutationRequests).toEqual([]);
 });
 
+test("AI workspace раскрывает безопасный состав контекста до подтверждённого запроса", async ({ page }) => {
+  await mockAuth(page);
+  await mockProviderList(page);
+  const projectId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const proposalBodies: Record<string, unknown>[] = [];
+  const json = (route: Route, body: unknown) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+  await page.route("**/api/v1/projects", (route) => json(route, [{ id: projectId, name: "AI proof project", domain: null, site_id: null, current_fact_revision_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc" }]));
+  await page.route("**/api/v1/ai/runs**", (route) => json(route, []));
+  await page.route("**/api/v1/ai/projects/*/architecture/quote", (route) => json(route, {
+    provider_id: "mock_gateway", model_id: "mock-small", estimated_cost_usd: 0.004, max_cost_usd: 0.05,
+    input_snapshot_hash: "d".repeat(64), pricing_source: "fixture", pricing_observed_at: "2026-10-08T12:00:00Z",
+    context_summary: { project_profile: 1, confirmed_public_facts: 2, selected_keywords: 3, validated_geo: 1, approved_competitor_evidence: 0, existing_page_plans: 1, allowed_kits: 2, operator_constraints: 0, regenerate_page_ids: 0 },
+  }));
+  await page.route("**/api/v1/ai/projects/*/architecture", (route) => {
+    proposalBodies.push(route.request().postDataJSON() as Record<string, unknown>);
+    return json(route, {
+      run_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", status: "pending_approval", provider_id: "mock_gateway", model_id: "mock-small",
+      pages: [], prompt_id: "architecture/propose-site-map", prompt_version: "1", prompt_hash: "a".repeat(64), input_snapshot_hash: "d".repeat(64),
+      estimated_cost_usd: 0.004, max_cost_usd: 0.05, error_code: null, requires_operator_approval: true,
+    });
+  });
+
+  await page.getByRole("link", { name: "AI-предложения" }).click();
+  const proposalForm = page.locator("form");
+  await proposalForm.getByLabel("Проект").selectOption(projectId);
+  await proposalForm.getByLabel("Model ID").fill("mock-small");
+  await proposalForm.getByRole("button", { name: "Рассчитать стоимость до запроса" }).click();
+  await expect(page.getByRole("heading", { name: "Оценка и состав внешнего запроса" })).toBeVisible();
+  await expect(page.getByText("Провайдер: mock_gateway", { exact: false })).toBeVisible();
+  await expect(page.getByText("Подтверждённые публичные данные: 2")).toBeVisible();
+  await expect(page.getByText(/Секреты, приватные получатели заявок.*не отправляются/)).toBeVisible();
+  await proposalForm.getByRole("checkbox").check();
+  await proposalForm.getByRole("button", { name: "Подтвердить оценку и создать предложение" }).click();
+  await expect(page.getByText("mock_gateway / mock-small")).toBeVisible();
+  await expect(page.getByText(/не импортирует структуру.*не публикует сайт/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Одобрить предложение без импорта" })).toBeVisible();
+  expect(proposalBodies).toEqual([expect.objectContaining({ confirm_external_processing: true, confirm_provider_budget: true, quote_snapshot_hash: "d".repeat(64) })]);
+});
+
 test("AI workspace показывает queued, running и pending approval через polling", async ({ page }) => {
   await mockAuth(page);
   await mockProviderList(page);
@@ -782,7 +855,7 @@ test("AI workspace показывает queued, running и pending approval че
     });
   });
 
-  await page.getByRole("link", { name: "AI workspace" }).click();
+  await page.getByRole("link", { name: "AI-предложения" }).click();
   await expect(page.getByRole("heading", { name: "AI workspace" })).toBeVisible();
   await expect(page.getByText("queued", { exact: true })).toBeVisible();
   await expect.poll(() => runRequests, { timeout: 7000 }).toBeGreaterThanOrEqual(4);

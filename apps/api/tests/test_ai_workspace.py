@@ -5,7 +5,13 @@ from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
-from app.api.v1.ai_workspace import _summary_out, _validate_proposal, list_ai_runs
+from app.api.v1.ai_workspace import (
+    _architecture_context_summary,
+    _proposal_out,
+    _summary_out,
+    _validate_proposal,
+    list_ai_runs,
+)
 from app.main import app
 from fastapi import HTTPException
 
@@ -125,6 +131,63 @@ def test_run_history_response_excludes_input_output_and_secrets() -> None:
     assert "output" not in payload
     assert "encrypted_api_key" not in payload
     assert "secret-value" not in str(payload)
+
+
+def test_architecture_context_summary_reports_only_safe_categories_and_counts() -> None:
+    summary = _architecture_context_summary(
+        {
+            "project": {"name": "Private project"},
+            "confirmed_facts": [{"value": "private phone"}],
+            "selected_keywords": [{"phrase": "service"}, {"phrase": "repair"}],
+            "validated_geo": [{"name": "city"}],
+            "approved_competitor_evidence": [{"content": "private note"}],
+            "existing_page_plans": [{"slug": "/secret"}],
+            "allowed_kits": [{"key": "kit-a"}],
+            "operator_constraints": ["private constraint"],
+            "regenerate_page_ids": ["private-id"],
+        }
+    )
+
+    assert summary == {
+        "project_profile": 1,
+        "confirmed_public_facts": 1,
+        "selected_keywords": 2,
+        "validated_geo": 1,
+        "approved_competitor_evidence": 1,
+        "existing_page_plans": 1,
+        "allowed_kits": 1,
+        "operator_constraints": 1,
+        "regenerate_page_ids": 1,
+    }
+    assert "private phone" not in str(summary)
+    assert "private note" not in str(summary)
+
+
+def test_architecture_proposal_exposes_provider_and_model_without_snapshot_contents() -> None:
+    run = SimpleNamespace(
+        id=uuid4(),
+        status="pending_approval",
+        provider_id="controlled-provider",
+        model_id="controlled-model",
+        output={"pages": [page_proposal()]},
+        prompt_id="architecture/propose-site-map",
+        prompt_version="1.0.0",
+        prompt_hash="a" * 64,
+        input_snapshot_hash="b" * 64,
+        input_snapshot={
+            "spend_policy": {"estimated_cost_usd": 0.01, "max_cost_usd": 0.02},
+            "secret": "never-return",
+        },
+        error_code=None,
+    )
+
+    payload = _proposal_out(run).model_dump(mode="json")
+
+    assert payload["provider_id"] == "controlled-provider"
+    assert payload["model_id"] == "controlled-model"
+    assert payload["pages"][0]["slug"] == "/"
+    assert "never-return" not in str(payload)
+    assert "input_snapshot" not in payload
 
 
 def test_run_history_filters_on_tenant_project_action_and_status() -> None:

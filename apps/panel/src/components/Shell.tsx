@@ -4,43 +4,44 @@ import { useAuth } from "../lib/auth";
 
 const groups = [
   {
-    label: "Работа",
+    label: "Главная и проекты",
     links: [
-      { to: "/", end: true, label: "Обзор" },
+      { to: "/", end: true, label: "Главная" },
       { to: "/projects", label: "Проекты" },
-      { to: "/sites", label: "Сайты" },
-      { to: "/keywords", label: "Семантика" },
-      { to: "/competitors", label: "Конкуренты" },
+      { to: "/sites", label: "Реестр сайтов" },
+    ],
+  },
+  {
+    label: "Заявки",
+    links: [{ to: "/leads", label: "Заявки" }],
+  },
+  {
+    label: "Материалы для сайтов",
+    links: [
+      { to: "/keywords", label: "Запросы и семантика" },
       { to: "/geo", label: "География" },
-      { to: "/projects", label: "Новый проект" },
-      { to: "/leads", label: "Лиды" },
-    ],
-  },
-  {
-    label: "AI",
-    links: [
-      { to: "/ai", label: "AI workspace" },
-      { to: "/ai/providers", label: "Провайдеры" },
-      { to: "/ai/prompts", label: "Системные prompts" },
-    ],
-  },
-  {
-    label: "Публикация",
-    links: [
+      { to: "/competitors", label: "Исследование конкурентов" },
       { to: "/domains", label: "Домены" },
-      { to: "/blocks", label: "Блоки" },
+      { to: "/blocks", label: "Блоки сайта" },
       { to: "/media", label: "Медиатека" },
-      { to: "/bulk", label: "Контакты" },
+      { to: "/bulk", label: "Массовое обновление контактов" },
+    ],
+  },
+  {
+    label: "Подготовка с AI",
+    links: [
+      { to: "/ai", label: "AI-предложения" },
+      { to: "/ai/providers", label: "Провайдеры AI" },
+      { to: "/ai/prompts", label: "Шаблоны запросов AI" },
     ],
   },
   {
     label: "Система",
     links: [
-      { to: "/ops", label: "Статус" },
-      { to: "/system", label: "Обновления" },
+      { to: "/ops", label: "Статус системы" },
+      { to: "/system", label: "Обновления и восстановление" },
+      { to: "/audit", label: "Журнал аудита" },
       { to: "/settings", label: "Настройки" },
-      { to: "/audit", label: "Audit" },
-      { to: "/help", label: "Справка" },
     ],
   },
 ] as const;
@@ -81,6 +82,7 @@ export function Shell({ children }: { children: ReactNode }) {
           </div>
         ))}
         <div className="nav-footer">
+          <NavLink to="/help">Помощь оператору</NavLink>
           <button className="btn btn-nav" type="button" onClick={logout}>
             Выйти
           </button>
