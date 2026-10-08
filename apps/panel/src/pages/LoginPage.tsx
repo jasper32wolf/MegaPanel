@@ -78,7 +78,7 @@ export function LoginPage() {
               autoComplete="one-time-code"
             />
           </label>
-          {error ? <p className="error">{error}</p> : null}
+          {error ? <p className="error" role="alert">{error}</p> : null}
           <button className="btn" type="submit" disabled={loading}>
             {loading ? "Вход…" : "Войти"}
           </button>

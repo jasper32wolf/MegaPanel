@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, useAuth } from "../lib/auth";
-import { ConfirmDialog, PageHeader, StatusPill, Surface } from "../components/ui";
+import { AsyncFeedback, ConfirmDialog, PageHeader, StatusPill, Surface } from "../components/ui";
 
 type Operator = {
   id: string;
@@ -128,7 +128,7 @@ export function SettingsPage() {
   return (
     <div>
       <PageHeader title="Настройки" description="Управляйте защитой единственного оператора. Секреты окружения и пароли никогда не выводятся в панели." />
-      {error && <p className="error">{error}</p>}
+      <AsyncFeedback error={error} />
       <Surface title="Оператор">
         <div className="detail-grid"><div><strong>Email</strong><p>{operator?.email || "—"}</p></div><div><strong>Доступ</strong><p>{operator ? "единственный оператор" : "—"}</p></div><div><strong>Двухфакторная защита</strong><p><StatusPill tone={operator?.mfa_enabled ? "ok" : "warn"}>{operator?.mfa_enabled ? "включена" : "не включена"}</StatusPill></p></div></div>
       </Surface>

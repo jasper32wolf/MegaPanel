@@ -15,8 +15,7 @@ const asset = {
   availability: "eligible",
 };
 
-test("manager records a route-mocked rejected media review without replacement", async ({ page }) => {
-  let current: Record<string, unknown> | null = null;
+async function mockMediaAuth(page: import("@playwright/test").Page) {
   await page.route("**/api/v1/security/me", (route) =>
     route.fulfill({ status: 401, contentType: "application/json", body: '{"detail":"not authenticated"}' }),
   );
@@ -26,6 +25,25 @@ test("manager records a route-mocked rejected media review without replacement",
   await page.route("**/api/v1/auth/refresh", (route) =>
     route.fulfill({ status: 401, contentType: "application/json", body: '{"detail":"not authenticated"}' }),
   );
+}
+
+async function loginToMedia(page: import("@playwright/test").Page) {
+  await page.goto("/login");
+  await page.getByLabel("Email").fill("manager@example.test");
+  await page.getByLabel("Пароль").fill("controlled-e2e-password");
+  await page.getByRole("button", { name: "Войти" }).click();
+  const skip = page.getByRole("link", { name: "Перейти к основному содержимому" });
+  await skip.focus();
+  await expect(skip).toBeFocused();
+  await skip.press("Enter");
+  await expect(page.locator("#main-content")).toBeFocused();
+  await page.getByRole("link", { name: "Медиатека" }).click();
+  await expect(page.locator("#main-content")).toBeFocused();
+}
+
+test("manager records a route-mocked rejected media review without replacement", async ({ page }) => {
+  let current: Record<string, unknown> | null = null;
+  await mockMediaAuth(page);
   await page.route("**/api/v1/media", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([asset]) }),
   );
@@ -67,17 +85,19 @@ test("manager records a route-mocked rejected media review without replacement",
     });
   });
 
-  await page.goto("/login");
-  await page.getByLabel("Email").fill("manager@example.test");
-  await page.getByLabel("Пароль").fill("controlled-e2e-password");
-  await page.getByRole("button", { name: "Войти" }).click();
-  await page.getByRole("link", { name: "Медиатека" }).click();
-  await page.getByRole("button", { name: "Записать решение проверки" }).click();
-  await page.getByLabel("Решение").selectOption("rejected");
-  await page.getByLabel(/Причина/).fill("License evidence is incomplete");
-  await page.getByLabel(/Инструкция по ручной замене/).fill("Upload a licensed replacement manually");
-  await page.getByLabel(/Доказательство/).fill("Review ticket MR-1");
-  await page.getByRole("button", { name: "Сохранить решение" }).click();
+  await loginToMedia(page);
+  const trigger = page.getByRole("button", { name: "Записать решение проверки" });
+  await trigger.click();
+  const dialog = page.getByRole("dialog", { name: "Решение проверки медиа" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("Медиа 11111111 · image/webp");
+  await expect(dialog).toContainText("SHA-256 aaaaaaaaaaaaaaaa");
+  await expect(dialog).toHaveAttribute("aria-describedby");
+  await dialog.getByLabel("Решение").selectOption("rejected");
+  await dialog.getByLabel(/Причина/).fill("License evidence is incomplete");
+  await dialog.getByLabel(/Инструкция по ручной замене/).fill("Upload a licensed replacement manually");
+  await dialog.getByLabel(/Доказательство/).fill("Review ticket MR-1");
+  await dialog.getByRole("button", { name: "Сохранить решение" }).click();
 
   await expect.poll(() => current).toMatchObject({
     decision: "rejected",
@@ -85,6 +105,38 @@ test("manager records a route-mocked rejected media review without replacement",
     manual_replacement_guidance: "Upload a licensed replacement manually",
     evidence: "Review ticket MR-1",
   });
+  await expect(dialog).toBeHidden();
+  await expect(trigger).toBeFocused();
+  await expect(page.getByRole("status")).toContainText("Решение проверки сохранено.");
   await expect(page.getByText("проверка отклонена")).toBeVisible();
   await expect(page.getByText("Ручная замена: Upload a licensed replacement manually", { exact: true })).toBeVisible();
+  const historySummary = page.locator("summary", { hasText: "История проверок" });
+  await trigger.press("Tab");
+  await expect(historySummary).toBeFocused();
+  await expect(historySummary).toHaveCSS("outline-style", "solid");
+  await expect(historySummary).toHaveCSS("outline-width", "3px");
+});
+
+test("media review keeps validation feedback in the open dialog", async ({ page }) => {
+  await mockMediaAuth(page);
+  await page.route("**/api/v1/media", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([asset]) }),
+  );
+  await page.route("**/api/v1/media/*/review-decisions", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ asset_id: asset.id, stored_sha256: asset.hashes.stored_sha256, current: null, items: [] }),
+    }),
+  );
+
+  await loginToMedia(page);
+  await page.getByRole("button", { name: "Записать решение проверки" }).click();
+  const dialog = page.getByRole("dialog", { name: "Решение проверки медиа" });
+  await dialog.getByLabel("Решение").selectOption("rejected");
+  await dialog.getByLabel(/Причина/).fill("Причина без инструкции");
+  await dialog.getByLabel(/Инструкция по ручной замене/).fill(" ");
+  await dialog.getByRole("button", { name: "Сохранить решение" }).click();
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("alert")).toContainText("Для отклонения укажите причину");
 });

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, useAuth } from "../lib/auth";
-import { PageHeader, StatusPill, Surface } from "../components/ui";
+import { AsyncFeedback, PageHeader, StatusPill, Surface } from "../components/ui";
 
 type Kit = {
   key: string;
@@ -85,8 +85,7 @@ body{margin:0;font-family:system-ui,sans-serif;background:var(--sp-bg,#fff);colo
           data ? <StatusPill tone="accent">lib {data.library_version}</StatusPill> : undefined
         }
       />
-      {error && <p className="error">{error}</p>}
-      {syncMsg && <p className="muted">{syncMsg}</p>}
+      <AsyncFeedback error={error} message={syncMsg} />
 
       <div className="kit-grid">
         {(data?.kits || []).map((kit) => (

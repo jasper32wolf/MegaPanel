@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 export function PageHeader({
   title,
@@ -94,6 +94,21 @@ export function InlineAlert({
   );
 }
 
+export function AsyncFeedback({
+  error,
+  message,
+}: {
+  error?: string | null;
+  message?: string | null;
+}) {
+  return (
+    <>
+      {error ? <p className="error" role="alert">{error}</p> : null}
+      {message ? <p className="success" role="status">{message}</p> : null}
+    </>
+  );
+}
+
 export function EmptyState({ title, hint }: { title: string; hint?: string }) {
   return (
     <div className="empty">
@@ -150,15 +165,34 @@ export function ConfirmDialog({
   onConfirm: (value: string) => void;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
+  const settledRef = useRef(false);
+  const titleId = useId();
+  const descriptionId = useId();
   const [value, setValue] = useState("");
   const confirmationValid = requiredValue
     ? value.trim() === requiredValue
     : value.trim().length >= inputMinLength;
 
+  function restoreFocus() {
+    const opener = openerRef.current;
+    openerRef.current = null;
+    if (opener?.isConnected && !opener.hasAttribute("disabled")) opener.focus();
+  }
+
+  function cancel() {
+    settledRef.current = true;
+    const dialog = dialogRef.current;
+    if (dialog?.open) dialog.close();
+    onCancel();
+  }
+
   useEffect(() => {
     const dialog = dialogRef.current;
     if (!dialog) return;
     if (open && !dialog.open) {
+      openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      settledRef.current = false;
       setValue("");
       dialog.showModal();
     }
@@ -169,13 +203,17 @@ export function ConfirmDialog({
     <dialog
       ref={dialogRef}
       className="confirm-dialog"
-      aria-labelledby="confirm-dialog-title"
+      aria-labelledby={titleId}
+      aria-describedby={descriptionId}
       onCancel={(event) => {
         event.preventDefault();
-        onCancel();
+        cancel();
       }}
       onClose={() => {
-        if (open) onCancel();
+        const needsCancel = open && !settledRef.current;
+        settledRef.current = false;
+        restoreFocus();
+        if (needsCancel) onCancel();
       }}
     >
       <form
@@ -183,11 +221,12 @@ export function ConfirmDialog({
         onSubmit={(event) => {
           event.preventDefault();
           if (!confirmationValid) return;
+          settledRef.current = true;
           onConfirm(value.trim());
         }}
       >
-        <h2 id="confirm-dialog-title">{title}</h2>
-        <p>{description}</p>
+        <h2 id={titleId}>{title}</h2>
+        <p id={descriptionId}>{description}</p>
         {inputLabel ? (
           <label className="field">
             {inputLabel}
@@ -202,7 +241,7 @@ export function ConfirmDialog({
           </label>
         ) : null}
         <div className="row confirm-dialog-actions">
-          <button className="btn btn-ghost" type="button" onClick={onCancel}>
+          <button className="btn btn-ghost" type="button" onClick={cancel}>
             Отмена
           </button>
           <button

@@ -1,5 +1,5 @@
-import { NavLink } from "react-router-dom";
-import type { ReactNode } from "react";
+import { NavLink, useLocation } from "react-router-dom";
+import { useEffect, useRef, type ReactNode } from "react";
 import { useAuth } from "../lib/auth";
 
 const groups = [
@@ -47,8 +47,21 @@ const groups = [
 
 export function Shell({ children }: { children: ReactNode }) {
   const { logout } = useAuth();
+  const location = useLocation();
+  const mainRef = useRef<HTMLElement>(null);
+  const previousRoute = useRef(`${location.pathname}${location.search}`);
+
+  useEffect(() => {
+    const nextRoute = `${location.pathname}${location.search}`;
+    if (nextRoute === previousRoute.current) return;
+    previousRoute.current = nextRoute;
+    if (location.hash) return;
+    mainRef.current?.focus();
+  }, [location.hash, location.pathname, location.search]);
+
   return (
     <div className="shell">
+      <a className="skip-link" href="#main-content">Перейти к основному содержимому</a>
       <aside className="nav">
         <div className="nav-brand">
           <img className="nav-mark" src="/site-panel-mark.svg" width="40" height="40" alt="" />
@@ -73,7 +86,7 @@ export function Shell({ children }: { children: ReactNode }) {
           </button>
         </div>
       </aside>
-      <main className="main">{children}</main>
+      <main ref={mainRef} id="main-content" className="main" tabIndex={-1}>{children}</main>
     </div>
   );
 }

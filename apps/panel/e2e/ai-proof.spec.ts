@@ -511,14 +511,20 @@ test("rollback requires exact hash phrase and never publishes", async ({ page })
   });
 
   await page.goto(`/projects/${projectId}/releases`);
-  await page.getByRole("button", { name: "Откатить на выбранный hash" }).click();
+  const rollbackTrigger = page.getByRole("button", { name: "Откатить на выбранный hash" });
+  await rollbackTrigger.click();
   const dialog = page.getByRole("dialog");
+  await expect(dialog).toHaveAttribute("aria-labelledby");
+  await expect(dialog).toHaveAttribute("aria-describedby");
+  const descriptionId = await dialog.getAttribute("aria-describedby");
+  await expect(page.locator(`#${descriptionId}`)).toContainText("Текущий release");
   const confirm = dialog.getByRole("button", { name: "Выполнить откат" });
   await dialog.getByLabel(`Введите: ROLLBACK ${buildHash}`).fill("ROLLBACK wrong");
   await expect(confirm).toBeDisabled();
   expect(mutationRequests).toEqual([]);
   await page.keyboard.press("Escape");
   await expect(dialog).not.toBeVisible();
+  await expect(rollbackTrigger).toBeFocused();
   expect(mutationRequests).toEqual([]);
   await page.getByRole("button", { name: "Откатить на выбранный hash" }).click();
   await expect(dialog).toBeVisible();
