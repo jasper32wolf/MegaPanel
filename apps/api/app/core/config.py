@@ -63,6 +63,8 @@ class Settings(BaseSettings):
 
     access_token_ttl_minutes: int = 15
     refresh_token_ttl_days: int = 14
+    trusted_proxy_cidrs: str = ""
+    geoip_city_db_path: str = ""
 
     # LLM
     llm_default_provider: str = "deepseek"

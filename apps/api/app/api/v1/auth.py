@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import re
 import secrets
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from app.api.deps import AuthContext, get_current_user, require_single_operator
 from app.core.config import get_settings
-from app.core.rate_limit import auth_limiter, client_ip
+from app.core.rate_limit import auth_limiter, client_ip, session_client_ip
 from app.core.security import (
     ACCESS_COOKIE_NAME,
     CSRF_COOKIE_NAME,
@@ -21,6 +22,8 @@ from app.db.session import get_db
 from app.models import AuthSession, User
 from app.schemas.common import LoginRequest
 from app.services.audit import append_audit
+from app.services.geoip import get_geoip_resolver
+from app.services.leads import get_encryptor
 from app.services.mfa import verify_totp
 from app.services.token_blacklist import blacklist_jti
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -83,11 +86,11 @@ def _clear_session_cookies(response: Response) -> None:
     response.delete_cookie(CSRF_COOKIE_NAME, path="/")
 
 
-def _device_label(request: Request) -> str | None:
+def _browser_name(request: Request) -> str | None:
     user_agent = request.headers.get("User-Agent", "")
     if not user_agent:
         return None
-    browser = (
+    return (
         "Edge"
         if "Edg/" in user_agent
         else "Firefox"
@@ -98,6 +101,13 @@ def _device_label(request: Request) -> str | None:
         if "Safari/" in user_agent
         else "Browser"
     )
+
+
+def _device_label(request: Request) -> str | None:
+    browser = _browser_name(request)
+    if not browser:
+        return None
+    user_agent = request.headers.get("User-Agent", "")
     platform = (
         "Windows"
         if "Windows" in user_agent
@@ -112,12 +122,36 @@ def _device_label(request: Request) -> str | None:
     return f"{browser} on {platform}"[:128]
 
 
+def _preferred_language(request: Request) -> str | None:
+    candidate = request.headers.get("Accept-Language", "").split(",", maxsplit=1)[0]
+    language = candidate.split(";", maxsplit=1)[0].strip()
+    return language if re.fullmatch(r"[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})?", language) else None
+
+
+def _session_context(request: Request) -> dict[str, str | None]:
+    ip_address = session_client_ip(request)
+    location = get_geoip_resolver(get_settings().geoip_city_db_path).lookup(ip_address)
+    encryptor = get_encryptor()
+    return {
+        "browser_name": _browser_name(request),
+        "language": _preferred_language(request),
+        "ip_address_enc": encryptor.encrypt(ip_address) if ip_address else None,
+        "country_enc": encryptor.encrypt(location.country) if location.country else None,
+        "city_enc": encryptor.encrypt(location.city) if location.city else None,
+    }
+
+
 def _new_session(
     user: User,
     refresh: str,
     *,
     family_id: UUID | None = None,
     device_label: str | None = None,
+    browser_name: str | None = None,
+    language: str | None = None,
+    ip_address_enc: str | None = None,
+    country_enc: str | None = None,
+    city_enc: str | None = None,
 ) -> AuthSession:
     payload = decode_token(refresh)
     if payload.get("type") != "refresh":
@@ -128,6 +162,11 @@ def _new_session(
         refresh_jti_hash=sha256_hex(_refresh_jti(payload)),
         family_id=family_id or uuid4(),
         device_label=device_label,
+        browser_name=browser_name,
+        language=language,
+        ip_address_enc=ip_address_enc,
+        country_enc=country_enc,
+        city_enc=city_enc,
         expires_at=_expires_at(payload),
     )
     if family_id is None:
@@ -153,7 +192,8 @@ async def login(
             raise HTTPException(status_code=401, detail="TOTP required or invalid")
 
     refresh = create_refresh_token(user.id)
-    session = _new_session(user, refresh, device_label=_device_label(request))
+    context = _session_context(request)
+    session = _new_session(user, refresh, device_label=_device_label(request), **context)
     db.add(session)
     await db.flush()
     access = create_access_token(user.id, user.tenant_id, user.role, session.id)
@@ -229,6 +269,11 @@ async def refresh(
         new_refresh,
         family_id=session.family_id,
         device_label=session.device_label,
+        browser_name=session.browser_name,
+        language=session.language,
+        ip_address_enc=session.ip_address_enc,
+        country_enc=session.country_enc,
+        city_enc=session.city_enc,
     )
     db.add(replacement)
     await db.flush()

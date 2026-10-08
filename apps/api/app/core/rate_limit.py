@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import time
 from collections import defaultdict, deque
 
@@ -65,6 +66,37 @@ def client_ip(request: Request) -> str:
     if request.client:
         return request.client.host
     return "unknown"
+
+
+def session_client_ip(request: Request) -> str | None:
+    peer = _parse_ip(request.client.host) if request.client else None
+    trusted_networks = _trusted_proxy_networks()
+    if peer and any(peer in network for network in trusted_networks):
+        forwarded = request.headers.get("X-Forwarded-For", "")
+        candidate = _parse_ip(forwarded.rsplit(",", maxsplit=1)[-1].strip())
+        if candidate and candidate.is_global:
+            return str(candidate)
+    if peer and peer.is_global:
+        return str(peer)
+    return None
+
+
+def _parse_ip(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    try:
+        return ipaddress.ip_address(value)
+    except ValueError:
+        return None
+
+
+def _trusted_proxy_networks() -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]:
+    networks = []
+    for value in get_settings().trusted_proxy_cidrs.split(","):
+        try:
+            if value.strip():
+                networks.append(ipaddress.ip_network(value.strip(), strict=False))
+        except ValueError:
+            continue
+    return tuple(networks)
 
 
 def rate_limit_key(prefix: str, value: str) -> str:

@@ -14,6 +14,10 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 
+def request_with_headers(headers: list[tuple[bytes, bytes]]) -> Request:
+    return Request({"type": "http", "headers": headers, "client": ("198.51.100.7", 443)})
+
+
 class QueryResult:
     def __init__(self, value: object) -> None:
         self.value = value
@@ -159,3 +163,59 @@ def test_refresh_rotation_preserves_family_and_safe_device_label(monkeypatch):
     assert session.family_id == session.id
     assert replacement.family_id == session.family_id
     assert replacement.device_label == "Chrome on Windows"
+
+
+def test_session_context_keeps_only_bounded_browser_language_and_encrypted_location(monkeypatch):
+    request = request_with_headers(
+        [
+            (b"user-agent", b"Mozilla/5.0 Chrome/123.0"),
+            (b"accept-language", b"ru-RU,ru;q=0.9,en;q=0.8"),
+        ]
+    )
+    location = SimpleNamespace(country="Russia", city="Kazan")
+    monkeypatch.setattr(auth, "session_client_ip", lambda _request: "8.8.8.8")
+    monkeypatch.setattr(
+        auth,
+        "get_geoip_resolver",
+        lambda _path: SimpleNamespace(lookup=lambda _ip: location),
+    )
+
+    context = auth._session_context(request)
+
+    assert context["browser_name"] == "Chrome"
+    assert context["language"] == "ru-RU"
+    assert context["ip_address_enc"] != "8.8.8.8"
+    assert auth.get_encryptor().decrypt(context["ip_address_enc"]) == "8.8.8.8"
+    assert auth.get_encryptor().decrypt(context["country_enc"]) == "Russia"
+    assert auth.get_encryptor().decrypt(context["city_enc"]) == "Kazan"
+
+
+def test_new_session_copies_the_original_environment_snapshot_on_rotation(monkeypatch):
+    user = SimpleNamespace(id=uuid4())
+    monkeypatch.setattr(auth.settings, "app_secret_key", "test-session-key-" + "x" * 32)
+    first = auth._new_session(
+        user,
+        create_refresh_token(user.id),
+        browser_name="Firefox",
+        language="en-US",
+        ip_address_enc="encrypted-ip",
+        country_enc="encrypted-country",
+        city_enc="encrypted-city",
+    )
+    replacement = auth._new_session(
+        user,
+        create_refresh_token(user.id),
+        family_id=first.family_id,
+        browser_name=first.browser_name,
+        language=first.language,
+        ip_address_enc=first.ip_address_enc,
+        country_enc=first.country_enc,
+        city_enc=first.city_enc,
+    )
+
+    assert replacement.family_id == first.family_id
+    assert replacement.browser_name == "Firefox"
+    assert replacement.language == "en-US"
+    assert replacement.ip_address_enc == "encrypted-ip"
+    assert replacement.country_enc == "encrypted-country"
+    assert replacement.city_enc == "encrypted-city"

@@ -56,6 +56,7 @@ services:
       - sites_data:/app/dist
       - uploads_data:/app/uploads
       - dsar_data:/app/dsar
+      - ${GEOIP_HOST_DIR:-/opt/site-panel/shared/geoip}:/app/geoip:ro
     env_file: ../../.env
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:?POSTGRES_USER is required}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required}

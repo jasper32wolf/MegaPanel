@@ -79,6 +79,25 @@ def test_client_ip_uses_the_proxy_appended_address():
     assert rate_limit.client_ip(request) == "203.0.113.10"
 
 
+def test_session_client_ip_accepts_forwarded_value_only_from_a_trusted_proxy(monkeypatch):
+    monkeypatch.setattr(
+        rate_limit,
+        "get_settings",
+        lambda: SimpleNamespace(trusted_proxy_cidrs="172.20.0.0/16"),
+    )
+    trusted_request = SimpleNamespace(
+        headers={"X-Forwarded-For": "forged, 8.8.8.8"},
+        client=SimpleNamespace(host="172.20.0.2"),
+    )
+    untrusted_request = SimpleNamespace(
+        headers={"X-Forwarded-For": "8.8.8.8"},
+        client=SimpleNamespace(host="1.1.1.1"),
+    )
+
+    assert rate_limit.session_client_ip(trusted_request) == "8.8.8.8"
+    assert rate_limit.session_client_ip(untrusted_request) == "1.1.1.1"
+
+
 def test_public_lead_requires_site_token_and_idempotency_key():
     with pytest.raises(ValidationError, match="form_ts"):
         PublicLeadIn(

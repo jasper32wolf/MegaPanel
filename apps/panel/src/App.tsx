@@ -130,6 +130,11 @@ const SettingsPage = lazy(() =>
     default: Page,
   })),
 );
+const SessionHistoryPage = lazy(() =>
+  import("./pages/SessionHistoryPage").then(({ SessionHistoryPage: Page }) => ({
+    default: Page,
+  })),
+);
 const SitesPage = lazy(() =>
   import("./pages/SitesPage").then(({ SitesPage: Page }) => ({ default: Page })),
 );
@@ -196,6 +201,7 @@ export default function App() {
                   <Route path="/leads" element={<LeadsPage />} />
                   <Route path="/ops" element={<OpsPage />} />
                   <Route path="/settings" element={<SettingsPage />} />
+                  <Route path="/settings/sessions" element={<SessionHistoryPage />} />
                   <Route path="/audit" element={<AuditPage />} />
                   <Route path="/system" element={<SystemOperationsPage />} />
                   <Route path="/ai" element={<AIWorkspacePage />} />

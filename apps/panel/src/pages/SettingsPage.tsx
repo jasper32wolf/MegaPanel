@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
 import { api, useAuth } from "../lib/auth";
 import { AsyncFeedback, ConfirmDialog, PageHeader, StatusPill, Surface } from "../components/ui";
 
@@ -12,9 +13,30 @@ type Operator = {
 type Health = { status: string; version: string; env: string };
 type Readiness = { status: string };
 type TotpSetup = { secret: string; otpauth_url: string; pending: boolean };
-type Session = { id: string; family_id: string; device_label: string | null; current: boolean; created_at: string | null; expires_at: string; revoked_at: string | null };
-type SessionSummary = { active: Session[]; recent: Session[]; history_total: number };
-type SessionHistory = { items: Session[]; total: number; offset: number; limit: number };
+type Session = {
+  id: string;
+  device_label: string | null;
+  browser_name: string | null;
+  language: string | null;
+  ip_address: string | null;
+  country: string | null;
+  city: string | null;
+  current: boolean;
+  can_revoke: boolean;
+  status: "current" | "active" | "revoked" | "expired";
+  created_at: string | null;
+  expires_at: string;
+  revoked_at: string | null;
+};
+type SessionSummary = { items: Session[]; total: number; older_total: number };
+
+function sessionTone(status: Session["status"]) {
+  return status === "current" ? "ok" : status === "active" ? "accent" : status === "revoked" ? "danger" : "default";
+}
+
+function sessionLabel(status: Session["status"]) {
+  return status === "current" ? "текущая" : status === "active" ? "активна" : status === "revoked" ? "отозвана" : "истекла";
+}
 
 export function SettingsPage() {
   const { token } = useAuth();
@@ -22,10 +44,7 @@ export function SettingsPage() {
   const [health, setHealth] = useState<Health | null>(null);
   const [readiness, setReadiness] = useState<Readiness | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
-  const [historyTotal, setHistoryTotal] = useState(0);
-  const [history, setHistory] = useState<Session[] | null>(null);
-  const [historyOffset, setHistoryOffset] = useState(0);
-  const [historyLoading, setHistoryLoading] = useState(false);
+  const [olderSessionTotal, setOlderSessionTotal] = useState(0);
   const [setup, setSetup] = useState<TotpSetup | null>(null);
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -42,10 +61,8 @@ export function SettingsPage() {
     setOperator(me);
     setHealth(apiHealth);
     setReadiness(apiReadiness);
-    setSessions([...sessionSummary.active, ...sessionSummary.recent]);
-    setHistoryTotal(sessionSummary.history_total);
-    setHistory(null);
-    setHistoryOffset(0);
+    setSessions(sessionSummary.items.slice(0, 10));
+    setOlderSessionTotal(sessionSummary.older_total);
   }
 
   useEffect(() => {
@@ -65,20 +82,6 @@ export function SettingsPage() {
     }
   }
 
-  async function loadSessionHistory(offset = 0) {
-    setHistoryLoading(true);
-    setError(null);
-    try {
-      const result = await api<SessionHistory>(`/api/v1/security/sessions/history?limit=25&offset=${offset}`, {}, token);
-      setHistory(result.items);
-      setHistoryOffset(result.offset);
-      setHistoryTotal(result.total);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Не удалось загрузить историю сессий");
-    } finally {
-      setHistoryLoading(false);
-    }
-  }
 
   async function beginTotp() {
     setBusy("setup");
@@ -138,29 +141,27 @@ export function SettingsPage() {
         {operator?.mfa_enabled && <form onSubmit={disableTotp} className="stack"><p className="muted" style={{ margin: 0 }}>Чтобы отключить TOTP, подтвердите текущий одноразовый код. Это действие записывается в audit log.</p><label className="field">Текущий код<input value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 8))} inputMode="numeric" autoComplete="one-time-code" required /></label><button className="btn btn-ghost" type="submit" disabled={busy !== null || code.length < 6}>{busy === "disable" ? "Отключение…" : "Отключить TOTP"}</button></form>}
       </Surface>
       <Surface title="Сессии">
-        <p className="muted">Показываются все активные device sessions и максимум десять завершённых device families. Refresh rotations не создают отдельные видимые сессии. Отзыв другой family прекращает обновление токена на этом устройстве; уже выданный access token может действовать до 15 минут.</p>
+        <p className="muted">Показаны не более десяти последних сессий. Каждая строка — одна device family: обновление refresh token не создаёт дубликат. IP и место фиксируются при входе локальной GeoIP-базой и могут быть не определены или неточны.</p>
         <div className="table-wrap">
           <table className="table">
-            <thead><tr><th>Устройство</th><th>Создана</th><th>Истекает</th><th>Состояние</th><th></th></tr></thead>
+            <thead><tr><th>Браузер и устройство</th><th>Язык</th><th>IP</th><th>Страна и город</th><th>Последняя активность</th><th>Состояние</th><th></th></tr></thead>
             <tbody>
               {sessions.map((session) => (
                 <tr key={session.id}>
-                  <td>{session.device_label || "Неизвестное / прежняя сессия"}</td>
+                  <td><strong>{session.browser_name || "Не определено"}</strong><p className="muted">{session.device_label || "Прежняя сессия"}</p></td>
+                  <td>{session.language || "Не определён"}</td>
+                  <td>{session.ip_address || "Не определён"}</td>
+                  <td>{[session.country, session.city].filter(Boolean).join(" · ") || "Не определены"}</td>
                   <td className="muted">{session.created_at?.slice(0, 19) || "—"}</td>
-                  <td className="muted">{session.expires_at.slice(0, 19)}</td>
-                  <td><StatusPill tone={session.revoked_at ? "danger" : session.current ? "ok" : "accent"}>{session.revoked_at ? "отозвана" : session.current ? "текущая" : "активна"}</StatusPill></td>
-                  <td>{!session.current && !session.revoked_at ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => setSessionToRevoke(session)}>{busy === `session:${session.id}` ? "Отзыв…" : "Отозвать"}</button> : null}</td>
+                  <td><StatusPill tone={sessionTone(session.status)}>{sessionLabel(session.status)}</StatusPill></td>
+                  <td>{session.can_revoke ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => setSessionToRevoke(session)}>{busy === `session:${session.id}` ? "Отзыв…" : "Отозвать"}</button> : null}</td>
                 </tr>
               ))}
-              {sessions.length === 0 ? <tr><td colSpan={5} className="muted">Активных или недавних device sessions нет</td></tr> : null}
+              {sessions.length === 0 ? <tr><td colSpan={7} className="muted">Сессий пока нет</td></tr> : null}
             </tbody>
           </table>
         </div>
-        {historyTotal > 10 ? <button className="btn btn-ghost" type="button" disabled={historyLoading} onClick={() => void loadSessionHistory()}>{historyLoading ? "Загрузка истории…" : `Открыть историю (${historyTotal})`}</button> : null}
-        {history ? <>
-          <div className="table-wrap"><table className="table"><thead><tr><th colSpan={3}>История завершённых сессий</th></tr></thead><tbody>{history.map((session) => <tr key={session.id}><td className="muted">{session.created_at?.slice(0, 19) || "—"}</td><td className="muted">{session.expires_at.slice(0, 19)}</td><td><StatusPill tone={session.revoked_at ? "danger" : "default"}>{session.revoked_at ? "отозвана" : "истекла"}</StatusPill></td></tr>)}{history.length === 0 ? <tr><td colSpan={3} className="muted">Более ранних сессий нет</td></tr> : null}</tbody></table></div>
-          <div className="row"><span className="muted">Показано {history.length ? historyOffset + 1 : 0}–{Math.min(historyOffset + history.length, historyTotal)} из {historyTotal}</span><button className="btn btn-ghost" type="button" disabled={historyLoading || historyOffset === 0} onClick={() => void loadSessionHistory(Math.max(0, historyOffset - 25))}>Назад</button><button className="btn btn-ghost" type="button" disabled={historyLoading || historyOffset + history.length >= historyTotal} onClick={() => void loadSessionHistory(historyOffset + 25)}>Далее</button></div>
-        </> : null}
+        {olderSessionTotal > 0 ? <Link className="btn btn-ghost" to="/settings/sessions">{`Открыть журнал прошлых сессий (${olderSessionTotal})`}</Link> : null}
       </Surface>
       <Surface title="Системная диагностика"><div className="row"><StatusPill tone={health?.status === "ok" ? "ok" : "danger"}>API: {health?.status || "недоступен"}</StatusPill><StatusPill tone={readiness?.status === "ok" ? "ok" : "danger"}>PostgreSQL / Redis: {readiness?.status || "недоступны"}</StatusPill><span className="muted">Версия: {health?.version || "—"}</span><span className="muted">Режим: {health?.env || "—"}</span></div><p className="muted" style={{ marginBottom: 0 }}>Резервные копии и внешние сервисы проверяются только на сервере; панель не показывает и не хранит их секреты.</p></Surface>
       <ConfirmDialog
