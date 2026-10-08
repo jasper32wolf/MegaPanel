@@ -8,7 +8,16 @@ from uuid import UUID
 from app.api.deps import AuthContext, require_roles
 from app.api.v1.system import require_system_operator
 from app.db.session import get_db
-from app.models import AlertIncident, Lead, OperationalEvent, Site, WebhookDelivery, WorkerHeartbeat
+from app.models import (
+    AlertDelivery,
+    AlertIncident,
+    Lead,
+    Notification,
+    OperationalEvent,
+    Site,
+    WebhookDelivery,
+    WorkerHeartbeat,
+)
 from app.models.leads import LeadDeliveryAggregate, LeadRoutingPolicy
 from app.models.project import PageDraft, PagePlan, Project
 from app.models.publish import Domain, SiteBuild
@@ -25,10 +34,83 @@ from app.services.operations import (
     serialize_operational_event,
     transition_incident,
 )
+from app.services.operator_alerts import alert_channel_status, create_operator_alert
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+ALERT_CATEGORIES = frozenset({"security", "site", "system"})
+
+
+def _serialize_notification(
+    notification: Notification,
+    deliveries: list[AlertDelivery],
+    subject_label: str | None = None,
+) -> dict:
+    return {
+        "id": str(notification.id),
+        "category": notification.category,
+        "signal_code": notification.signal_code,
+        "subject_kind": notification.subject_kind,
+        "subject_key": notification.subject_key,
+        "subject_label": subject_label,
+        "priority": notification.priority,
+        "title": notification.title,
+        "body": notification.body,
+        "read": notification.read,
+        "created_at": notification.created_at.isoformat() if notification.created_at else None,
+        "deliveries": {delivery.channel: delivery.status for delivery in deliveries},
+    }
+
+
+async def _notification_projection(
+    db: AsyncSession, notifications: list[Notification]
+) -> list[dict]:
+    if not notifications:
+        return []
+    rows = list(
+        (
+            await db.execute(
+                select(AlertDelivery).where(
+                    AlertDelivery.notification_id.in_(
+                        [notification.id for notification in notifications]
+                    )
+                )
+            )
+        ).scalars()
+    )
+    by_notification: dict[UUID, list[AlertDelivery]] = {}
+    for delivery in rows:
+        by_notification.setdefault(delivery.notification_id, []).append(delivery)
+    subject_ids: dict[str, set[UUID]] = {"domain": set(), "site": set()}
+    for notification in notifications:
+        if notification.subject_kind not in subject_ids or not notification.subject_key:
+            continue
+        try:
+            subject_ids[notification.subject_kind].add(UUID(notification.subject_key))
+        except ValueError:
+            continue
+    labels: dict[tuple[str, str], str] = {}
+    if subject_ids["domain"]:
+        domains = list(
+            await db.execute(select(Domain).where(Domain.id.in_(subject_ids["domain"]))).scalars()
+        )
+        labels.update({("domain", str(domain.id)): domain.hostname for domain in domains})
+    if subject_ids["site"]:
+        sites = list(
+            await db.execute(select(Site).where(Site.id.in_(subject_ids["site"]))).scalars()
+        )
+        labels.update({("site", str(site.id)): site.domain for site in sites})
+    return [
+        _serialize_notification(
+            notification,
+            by_notification.get(notification.id, []),
+            labels.get((notification.subject_kind or "", notification.subject_key or "")),
+        )
+        for notification in notifications
+    ]
+
 
 router = APIRouter()
 
@@ -442,6 +524,97 @@ async def update_incident(
     )
     await db.commit()
     return _serialize_incident(incident)
+
+
+@router.get("/alerts")
+async def list_operator_alerts(
+    category: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    if category is not None and category not in ALERT_CATEGORIES:
+        raise HTTPException(status_code=422, detail="Unsupported alert category")
+    limit = max(1, min(limit, 100))
+    offset = max(0, offset)
+    filters = [*_tenant_predicate(Notification, auth)]
+    if category:
+        filters.append(Notification.category == category)
+    total = await db.scalar(select(func.count()).select_from(Notification).where(*filters)) or 0
+    unread = (
+        await db.scalar(
+            select(func.count())
+            .select_from(Notification)
+            .where(*filters, Notification.read.is_(False))
+        )
+        or 0
+    )
+    notifications = list(
+        (
+            await db.execute(
+                select(Notification)
+                .where(*filters)
+                .order_by(Notification.created_at.desc(), Notification.id.desc())
+                .offset(offset)
+                .limit(limit)
+            )
+        ).scalars()
+    )
+    return {
+        "items": await _notification_projection(db, notifications),
+        "total": total,
+        "unread": unread,
+        "channels": alert_channel_status(),
+    }
+
+
+@router.post("/alerts/{notification_id}/read")
+async def mark_operator_alert_read(
+    notification_id: UUID,
+    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    notification = (
+        await db.execute(
+            select(Notification).where(Notification.id == notification_id).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if notification is None:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    if auth.role != "superadmin" and notification.tenant_id != auth.tenant_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    notification.read = True
+    await db.commit()
+    return (await _notification_projection(db, [notification]))[0]
+
+
+@router.post("/alerts/test")
+async def send_test_operator_alert(
+    auth: AuthContext = Depends(require_roles("superadmin")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    if not auth.tenant_id:
+        raise HTTPException(status_code=403, detail="Tenant required")
+    notification = create_operator_alert(
+        db,
+        tenant_id=auth.tenant_id,
+        category="system",
+        signal_code="operator-alert-test",
+        title="Проверка оповещений",
+        body="Это проверочное сообщение панели. Оно не меняет состояние сайтов или инфраструктуры.",
+        subject_kind="system",
+        user_id=auth.user.id,
+    )
+    await append_audit(
+        db,
+        action="operator_alert.test",
+        payload={"notification_id": str(notification.id)},
+        tenant_id=auth.tenant_id,
+        actor_id=auth.user.id,
+    )
+    await db.commit()
+    return (await _notification_projection(db, [notification]))[0]
 
 
 @router.get("/events")

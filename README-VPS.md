@@ -1502,6 +1502,36 @@ Installer требует разные `PANEL_DOMAIN` и `API_DOMAIN`. Панел
 4. Настроить безопасное атомарное обновление базы по условиям DB-IP Lite и добавить требуемое attribution. После обновления перезапустить API только через утверждённый maintenance/release путь.
 5. В staging проверить новый вход: страна/город должны быть правдоподобными, а IP/локация не должны появиться в telemetry, audit payload, браузерном storage или неаутентифицированном API.
 
+### Как включить email и Telegram-оповещения?
+
+Оповещения фиксируются в панели независимо от внешней доставки. Email приходит на адрес единственного активного оператора из его учётной записи; Telegram отправляется только в один приватный chat ID, заданный на VPS. Панель никогда не показывает SMTP-пароль, bot token, chat ID или адрес доставки.
+
+1. Убедитесь, что SMTP уже настроен в `/opt/site-panel/shared/.env`: должны быть как минимум `SMTP_HOST` и `SMTP_FROM_EMAIL`. Для проверки адреса откройте панель → **Настройки** → **Оператор**; менять SMTP-пароль через панель нельзя.
+2. В Telegram откройте официальный аккаунт `@BotFather`, выполните `/newbot`, задайте имя и username бота. Сохраните выданный token только в менеджере паролей. Не вставляйте его в Git, чат, CI, скриншоты или командную строку.
+3. Откройте диалог с созданным ботом и отправьте ему `/start`.
+4. На VPS, в интерактивном терминале, получите свой chat ID без сохранения token в shell history или process arguments. Вставьте этот однострочный Python-код, затем введите token только в скрытом prompt:
+
+   ```bash
+   python3 -c 'import getpass,json,urllib.request; t=getpass.getpass("Telegram bot token: "); r=json.load(urllib.request.urlopen("https://api.telegram.org/bot"+t+"/getUpdates",timeout=10)); print([u.get("message",{}).get("chat",{}).get("id") for u in r.get("result",[]) if u.get("message",{}).get("text")=="/start"])'
+   ```
+
+   Команда должна вывести список с вашим числовым chat ID. Если список пуст, вернитесь к шагу 3, убедитесь, что `/start` отправлен именно этому боту, и повторите команду. Не отправляйте вывод вместе с token: для панели достаточно ID из вывода.
+5. Откройте VPS-файл `/opt/site-panel/shared/.env` в защищённом редакторе и добавьте значения, заменив placeholders без кавычек:
+
+   ```dotenv
+   OPERATOR_ALERTS_ENABLED=true
+   OPERATOR_ALERT_DELIVERY_INTERVAL_SECONDS=300
+   SITE_MONITOR_INTERVAL_MINUTES=5
+   SITE_MONITOR_TIMEOUT_SECONDS=5
+   TELEGRAM_BOT_TOKEN=<token_из_BotFather>
+   TELEGRAM_CHAT_ID=<ваш_числовой_chat_ID>
+   ```
+
+   Устанавливайте права файла `0600`; не коммитьте этот файл. `TELEGRAM_BOT_TOKEN` и `TELEGRAM_CHAT_ID` должны быть заданы вместе, иначе API не стартует с неполной конфигурацией.
+6. Доставьте изменения штатно: commit/push в `main` → GitHub CI → production deploy только после зелёной проверки. Не делайте ручной `git pull`, не запускайте отдельный deploy-command и не отправляйте этот commit в verification-ветку вместо `main`.
+7. После успешного deploy откройте панель → **Настройки** → **Оповещения** → **Открыть оповещения** → **Отправить проверочное оповещение**. Подтвердите native dialog. В inbox появится тестовая запись, а email/Telegram должны получить по одному сообщению; интерфейс покажет только статус доставки, не секреты.
+8. Проверьте мониторинг опубликованного домена: worker раз в пять минут выполняет DNS, TLS/SNI и HTTPS-probe главной страницы. Он открывает incident и сообщает о восстановлении, но никогда не публикует, не откатывает и не восстанавливает сайт автоматически.
+
 ### Где лежат backup credentials?
 
 В `/opt/site-panel/shared/backup.env` и `/opt/site-panel/shared/restic-password`, mode `0600`. Эти файлы должны быть защищены как production secrets.

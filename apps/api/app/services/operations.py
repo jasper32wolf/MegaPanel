@@ -152,7 +152,7 @@ async def list_verification_projection(db: AsyncSession) -> list[dict]:
     ]
 
 
-EVENT_TYPES = frozenset({"delivery", "qa", "release", "system", "worker"})
+EVENT_TYPES = frozenset({"delivery", "qa", "release", "security", "site", "system", "worker"})
 SEVERITIES = frozenset({"info", "warning", "critical"})
 OUTCOMES = frozenset({"success", "warning", "failure", "recovered"})
 SIGNALS = {
@@ -161,6 +161,16 @@ SIGNALS = {
     "release-failure": "critical",
     "system-operation-failed": "warning",
     "worker-heartbeat-stale": "warning",
+    "security-login": "info",
+    "security-new-location": "warning",
+    "security-session-reuse": "critical",
+    "security-sensitive-change": "warning",
+    "site-dns-failure": "critical",
+    "site-tls-failure": "critical",
+    "site-tls-expiring": "warning",
+    "site-unreachable": "critical",
+    "site-http-error": "critical",
+    "site-integrity-failure": "critical",
 }
 SNOOZE_MINUTES = frozenset({60, 240, 1440})
 
@@ -179,6 +189,8 @@ def _serialize_incident(incident: AlertIncident) -> dict:
     return {
         "id": str(incident.id),
         "signal_code": incident.signal_code,
+        "subject_kind": getattr(incident, "subject_kind", "system"),
+        "subject_key": getattr(incident, "subject_key", ""),
         "severity": incident.severity,
         "status": incident.status,
         "occurrence_count": incident.occurrence_count,
@@ -237,10 +249,16 @@ async def observe_alert(
     tenant_id: UUID,
     signal_code: str,
     active: bool,
+    subject_kind: str = "system",
+    subject_key: str = "",
 ) -> AlertIncident | None:
     severity = SIGNALS.get(signal_code)
     if severity is None:
         raise ValueError("Unsupported operational signal")
+    if not re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", subject_kind):
+        raise ValueError("Unsupported alert subject")
+    if len(subject_key) > 64:
+        raise ValueError("Alert subject key is too long")
     now = datetime.now(UTC)
     if active and _postgres_dialect(db):
         statement = (
@@ -249,13 +267,20 @@ async def observe_alert(
                 id=uuid4(),
                 tenant_id=tenant_id,
                 signal_code=signal_code,
+                subject_kind=subject_kind,
+                subject_key=subject_key,
                 severity=severity,
                 status="open",
                 occurrence_count=1,
                 opened_at=now,
             )
             .on_conflict_do_update(
-                index_elements=[AlertIncident.tenant_id, AlertIncident.signal_code],
+                index_elements=[
+                    AlertIncident.tenant_id,
+                    AlertIncident.signal_code,
+                    AlertIncident.subject_kind,
+                    AlertIncident.subject_key,
+                ],
                 index_where=AlertIncident.status.in_(("open", "acknowledged")),
                 set_={"occurrence_count": AlertIncident.occurrence_count + 1},
             )
@@ -269,6 +294,8 @@ async def observe_alert(
             .where(
                 AlertIncident.tenant_id == tenant_id,
                 AlertIncident.signal_code == signal_code,
+                AlertIncident.subject_kind == subject_kind,
+                AlertIncident.subject_key == subject_key,
                 AlertIncident.status.in_(("open", "acknowledged")),
             )
             .with_for_update()
@@ -279,6 +306,8 @@ async def observe_alert(
             incident = AlertIncident(
                 tenant_id=tenant_id,
                 signal_code=signal_code,
+                subject_kind=subject_kind,
+                subject_key=subject_key,
                 severity=severity,
                 status="open",
                 occurrence_count=1,

@@ -9,6 +9,7 @@ from app.models import AuditLog, AuthSession
 from app.services.audit import append_audit, verify_audit_chain
 from app.services.leads import get_encryptor
 from app.services.mfa import generate_totp_secret, provisioning_uri, verify_totp
+from app.services.operator_alerts import create_operator_alert
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select, update
@@ -61,6 +62,21 @@ async def totp_confirm(
     auth.user.totp_secret = pending
     auth.user.totp_pending = None
     auth.user.mfa_enabled = True
+    if auth.tenant_id:
+        create_operator_alert(
+            db,
+            tenant_id=auth.tenant_id,
+            category="security",
+            signal_code="security-sensitive-change",
+            title="Двухфакторная защита включена",
+            body=(
+                "Настройка MFA оператора изменилась. Проверьте журнал аудита, "
+                "если действие выполнили не вы."
+            ),
+            subject_kind="user",
+            subject_key=str(auth.user.id),
+            user_id=auth.user.id,
+        )
     await append_audit(
         db,
         action="mfa.totp_confirm",
@@ -83,6 +99,21 @@ async def totp_disable(
     auth.user.totp_secret = None
     auth.user.totp_pending = None
     auth.user.mfa_enabled = False
+    if auth.tenant_id:
+        create_operator_alert(
+            db,
+            tenant_id=auth.tenant_id,
+            category="security",
+            signal_code="security-sensitive-change",
+            title="Двухфакторная защита отключена",
+            body=(
+                "Настройка MFA оператора изменилась. Немедленно проверьте журнал аудита, "
+                "если действие выполнили не вы."
+            ),
+            subject_kind="user",
+            subject_key=str(auth.user.id),
+            user_id=auth.user.id,
+        )
     await append_audit(
         db,
         action="mfa.totp_disable",
@@ -260,6 +291,18 @@ async def revoke_session(
     )
     for item in active_members:
         item.revoked_at = now
+    if auth.tenant_id:
+        create_operator_alert(
+            db,
+            tenant_id=auth.tenant_id,
+            category="security",
+            signal_code="security-sensitive-change",
+            title="Отозвана другая сессия",
+            body="Другая device family оператора больше не сможет обновить доступ.",
+            subject_kind="session_family",
+            subject_key=str(target.family_id),
+            user_id=auth.user.id,
+        )
     await append_audit(
         db,
         action="user.session_family_revoke",

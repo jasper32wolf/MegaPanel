@@ -83,6 +83,7 @@ from app.services.indexnow import new_indexnow_key
 from app.services.leads import get_blind, get_encryptor
 from app.services.metrics import record_qa_verdict, record_release_transition
 from app.services.operations import observe_alert, record_operational_event
+from app.services.operator_alerts import create_operator_alert
 from app.services.qa import run_page_qa
 from app.services.release_gate import (
     evaluate_build_release_gate,
@@ -3857,6 +3858,17 @@ async def publish_project_build(
         manifest=manifest,
         metadata_by_slug=metadata_by_slug,
     )
+    create_operator_alert(
+        db,
+        tenant_id=project.tenant_id,
+        category="security",
+        signal_code="security-sensitive-change",
+        title="Опубликована новая версия сайта",
+        body="Активная версия сайта изменена после прохождения обязательных release gates.",
+        subject_kind="site",
+        subject_key=str(site.id),
+        user_id=auth.user.id,
+    )
     await append_audit(
         db,
         action="project.build.publish",
@@ -3973,6 +3985,20 @@ async def rollback_project_build(
         project=project,
         manifest=manifest,
         metadata_by_slug=metadata_by_slug,
+    )
+    create_operator_alert(
+        db,
+        tenant_id=project.tenant_id,
+        category="security",
+        signal_code="security-sensitive-change",
+        title="Выполнен откат версии сайта",
+        body=(
+            "Активная версия сайта изменена только после обязательного подтверждения "
+            "и release gates."
+        ),
+        subject_kind="site",
+        subject_key=str(site.id),
+        user_id=auth.user.id,
     )
     await append_audit(
         db,

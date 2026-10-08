@@ -29,6 +29,13 @@ type Session = {
   revoked_at: string | null;
 };
 type SessionSummary = { items: Session[]; total: number; older_total: number };
+type AlertChannels = { enabled: boolean; email: boolean; telegram: boolean };
+type AlertSummary = { channels: AlertChannels };
+
+function alertChannelLabel(configured: boolean) {
+  return configured ? "готов" : "не настроен";
+}
+
 
 function sessionTone(status: Session["status"]) {
   return status === "current" ? "ok" : status === "active" ? "accent" : status === "revoked" ? "danger" : "default";
@@ -45,6 +52,7 @@ export function SettingsPage() {
   const [readiness, setReadiness] = useState<Readiness | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [olderSessionTotal, setOlderSessionTotal] = useState(0);
+  const [alertChannels, setAlertChannels] = useState<AlertChannels | null>(null);
   const [setup, setSetup] = useState<TotpSetup | null>(null);
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -52,17 +60,19 @@ export function SettingsPage() {
   const [sessionToRevoke, setSessionToRevoke] = useState<Session | null>(null);
 
   async function load() {
-    const [me, apiHealth, apiReadiness, sessionSummary] = await Promise.all([
+    const [me, apiHealth, apiReadiness, sessionSummary, alertSummary] = await Promise.all([
       api<Operator>("/api/v1/security/me", {}, token),
       api<Health>("/api/v1/health/live", {}, token),
       api<Readiness>("/api/v1/health/ready", {}, token).catch(() => null),
       api<SessionSummary>("/api/v1/security/sessions", {}, token),
+      api<AlertSummary>("/api/v1/panel/alerts?limit=1", {}, token),
     ]);
     setOperator(me);
     setHealth(apiHealth);
     setReadiness(apiReadiness);
     setSessions(sessionSummary.items.slice(0, 10));
     setOlderSessionTotal(sessionSummary.older_total);
+    setAlertChannels(alertSummary.channels);
   }
 
   useEffect(() => {
@@ -139,6 +149,11 @@ export function SettingsPage() {
         {!operator?.mfa_enabled && !setup && <div className="stack"><p className="muted" style={{ margin: 0 }}>Подключите приложение-аутентификатор до публикации рабочих сайтов. После подтверждения код потребуется при каждом новом входе.</p><button className="btn" type="button" disabled={busy !== null} onClick={beginTotp}>{busy === "setup" ? "Подготовка…" : "Настроить TOTP"}</button></div>}
         {setup && <form onSubmit={confirmTotp} className="stack"><p className="muted" style={{ margin: 0 }}>Добавьте этот ключ в приложение-аутентификатор. Он показывается только до подтверждения, не передавайте его третьим лицам.</p><label className="field">Секретный ключ<input value={setup.secret} readOnly /></label><label className="field">Одноразовый код<input value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 8))} inputMode="numeric" autoComplete="one-time-code" required /></label><div className="row"><button className="btn" type="submit" disabled={busy !== null || code.length < 6}>{busy === "confirm" ? "Проверка…" : "Подтвердить"}</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => { setSetup(null); setCode(""); }}>Отмена</button></div></form>}
         {operator?.mfa_enabled && <form onSubmit={disableTotp} className="stack"><p className="muted" style={{ margin: 0 }}>Чтобы отключить TOTP, подтвердите текущий одноразовый код. Это действие записывается в audit log.</p><label className="field">Текущий код<input value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 8))} inputMode="numeric" autoComplete="one-time-code" required /></label><button className="btn btn-ghost" type="submit" disabled={busy !== null || code.length < 6}>{busy === "disable" ? "Отключение…" : "Отключить TOTP"}</button></form>}
+      </Surface>
+      <Surface title="Оповещения">
+        <div className="row"><StatusPill tone={alertChannels?.enabled ? "ok" : "warn"}>Оповещения: {alertChannels?.enabled ? "включены" : "выключены"}</StatusPill><StatusPill tone={alertChannels?.email ? "ok" : "warn"}>Email: {alertChannelLabel(Boolean(alertChannels?.email))}</StatusPill><StatusPill tone={alertChannels?.telegram ? "ok" : "warn"}>Telegram: {alertChannelLabel(Boolean(alertChannels?.telegram))}</StatusPill></div>
+        <p className="muted">Секреты SMTP и Telegram не показываются в панели. Проверочное сообщение, история и состояние доставки доступны в разделе «Оповещения».</p>
+        <Link className="btn btn-ghost" to="/alerts">Открыть оповещения</Link>
       </Surface>
       <Surface title="Сессии">
         <p className="muted">Показаны не более десяти последних сессий. Каждая строка — одна device family: обновление refresh token не создаёт дубликат. IP и место фиксируются при входе локальной GeoIP-базой и могут быть не определены или неточны. Источник геоданных: <a href="https://db-ip.com" target="_blank" rel="noreferrer">DB-IP Lite</a> · CC BY 4.0.</p>

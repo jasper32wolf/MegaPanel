@@ -53,6 +53,7 @@ test("settings shows only ten session snapshots and opens older-session log", as
     if (url.pathname === "/api/v1/health/live") return route.fulfill({ status: 200, body: JSON.stringify({ status: "ok", version: "test", env: "test" }) });
     if (url.pathname === "/api/v1/health/ready") return route.fulfill({ status: 200, body: JSON.stringify({ status: "ok" }) });
     if (url.pathname === "/api/v1/security/sessions") return route.fulfill({ status: 200, body: JSON.stringify({ items: visible, total: 12, older_total: 2 }) });
+    if (url.pathname === "/api/v1/panel/alerts") return route.fulfill({ status: 200, body: JSON.stringify({ items: [], total: 0, unread: 0, channels: { enabled: true, email: true, telegram: true } }) });
     if (url.pathname === "/api/v1/security/sessions/history") {
       historyRequests.push(url.search);
       return route.fulfill({ status: 200, body: JSON.stringify({ items: older, total: 2, offset: 0, limit: 25 }) });

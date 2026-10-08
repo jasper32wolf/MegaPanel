@@ -78,6 +78,10 @@ def test_totp_confirmation_only_enables_a_verified_pending_secret(monkeypatch):
         return None
 
     monkeypatch.setattr(security_ops, "append_audit", append_audit)
+    alerts: list[dict] = []
+    monkeypatch.setattr(
+        security_ops, "create_operator_alert", lambda *_args, **kwargs: alerts.append(kwargs)
+    )
     monkeypatch.setattr(
         security_ops,
         "verify_totp",
@@ -94,6 +98,7 @@ def test_totp_confirmation_only_enables_a_verified_pending_secret(monkeypatch):
     assert user.totp_secret == "pending-secret"
     assert user.totp_pending is None
     assert user.mfa_enabled is True
+    assert alerts[0]["signal_code"] == "security-sensitive-change"
     assert database.commits == 1
 
 
@@ -260,10 +265,15 @@ def test_session_revoke_marks_only_a_noncurrent_session(monkeypatch):
         return None
 
     monkeypatch.setattr(security_ops, "append_audit", append_audit)
+    alerts: list[dict] = []
+    monkeypatch.setattr(
+        security_ops, "create_operator_alert", lambda *_args, **kwargs: alerts.append(kwargs)
+    )
 
     result = asyncio.run(
         security_ops.revoke_session(target.id, auth_context(user, uuid4()), database)
     )
+    assert alerts[0]["subject_kind"] == "session_family"
 
     assert result == {"id": str(target.id), "revoked": True}
     assert target.revoked_at is not None

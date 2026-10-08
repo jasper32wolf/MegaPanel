@@ -26,6 +26,7 @@ from app.services.competitor_crawl import recover_legacy_competitor_crawls, run_
 from app.services.index_schedule import prepare_due_index_schedule_batches
 from app.services.intent_generation import validate_intent_page_proposal
 from app.services.operations import auto_resolve_inactive_incidents
+from app.services.operator_alerts import process_due_alert_deliveries
 from app.services.scheduler import (
     claim_execution,
     complete_execution,
@@ -34,6 +35,8 @@ from app.services.scheduler import (
     recover_expired_scheduler_leases,
 )
 from app.services.site_build_queue import expire_stale_site_builds
+from app.services.site_integrity import verify_published_release_integrity
+from app.services.site_monitor import monitor_published_domains
 from app.services.telemetry_retention import rollup_and_purge
 from app.services.webhook_delivery import due_delivery_ids, process_delivery, recover_expired_leases
 from app.services.worker_heartbeat import record_worker_heartbeat
@@ -81,6 +84,39 @@ async def webhook_delivery_sweep_task(ctx: dict) -> dict:
     except Exception as exc:  # noqa: BLE001
         logger.error("webhook_delivery_sweep_failed", error=str(exc))
         return {"error": str(exc)}
+
+
+async def operator_alert_delivery_sweep_task(ctx: dict) -> dict:
+    try:
+        async with open_db_session() as session:
+            processed = await process_due_alert_deliveries(session)
+        logger.info("operator_alert_delivery_sweep", processed=processed)
+        return {"processed": processed}
+    except Exception:  # noqa: BLE001
+        logger.exception("operator_alert_delivery_sweep_failed")
+        return {"status": "failed", "error_code": "worker_sweep_failed"}
+
+
+async def site_monitor_sweep_task(ctx: dict) -> dict:
+    try:
+        async with open_db_session() as session:
+            monitored = await monitor_published_domains(session)
+        logger.info("site_monitor_sweep", monitored=monitored)
+        return {"monitored": monitored}
+    except Exception:  # noqa: BLE001
+        logger.exception("site_monitor_sweep_failed")
+        return {"status": "failed", "error_code": "worker_sweep_failed"}
+
+
+async def site_integrity_sweep_task(ctx: dict) -> dict:
+    try:
+        async with open_db_session() as session:
+            checked = await verify_published_release_integrity(session)
+        logger.info("site_integrity_sweep", checked=checked)
+        return {"checked": checked}
+    except Exception:  # noqa: BLE001
+        logger.exception("site_integrity_sweep_failed")
+        return {"status": "failed", "error_code": "worker_sweep_failed"}
 
 
 async def bukvarix_keyword_task(ctx: dict, run_id: str) -> dict:
@@ -482,6 +518,9 @@ class WorkerSettings:
         worker_heartbeat_task,
         webhook_delivery_task,
         webhook_delivery_sweep_task,
+        operator_alert_delivery_sweep_task,
+        site_monitor_sweep_task,
+        site_integrity_sweep_task,
         architecture_proposal_task,
         intent_page_proposal_task,
         bukvarix_keyword_task,
@@ -501,6 +540,18 @@ class WorkerSettings:
             run_at_startup=True,
         ),
         cron(webhook_delivery_sweep_task, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}),
+        cron(
+            operator_alert_delivery_sweep_task,
+            minute=set(range(0, 60, settings.operator_alert_delivery_interval_seconds // 60)),
+        ),
+        cron(
+            site_monitor_sweep_task,
+            minute=set(range(0, 60, settings.site_monitor_interval_minutes)),
+        ),
+        cron(
+            site_integrity_sweep_task,
+            minute=set(range(0, 60, settings.site_monitor_interval_minutes)),
+        ),
         cron(bukvarix_keyword_sweep_task, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}),
         cron(index_schedule_sweep_task, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}),
         cron(candidate_build_sweep_task, minute=set(range(60)), run_at_startup=True),

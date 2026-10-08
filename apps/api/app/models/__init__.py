@@ -98,6 +98,7 @@ class Site(Base):
     publish_state: Mapped[str] = mapped_column(String(32), default="draft")
     build_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     previous_build_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    integrity_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
     niche: Mapped[str | None] = mapped_column(String(128), nullable=True)
     indexnow_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -260,7 +261,12 @@ from app.models.leads import (  # noqa: E402
     WebhookDeliveryAttempt,
 )
 from app.models.operational_verification import OperationalVerification  # noqa: E402
-from app.models.operations import AlertIncident, OperationalEvent  # noqa: E402
+from app.models.operations import (  # noqa: E402
+    AlertDelivery,
+    AlertDeliveryAttempt,
+    AlertIncident,
+    OperationalEvent,
+)
 from app.models.ops import (  # noqa: E402
     ContentDecayEvent,
     FootprintAudit,
@@ -320,6 +326,8 @@ from app.models.worker_heartbeat import WorkerHeartbeat  # noqa: E402
 __all__ = [
     "AIRun",
     "AIProviderConnection",
+    "AlertDelivery",
+    "AlertDeliveryAttempt",
     "AlertIncident",
     "AnalyticsDailyAggregate",
     "AnalyticsEvent",

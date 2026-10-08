@@ -25,6 +25,7 @@ from app.services.audit import append_audit
 from app.services.geoip import get_geoip_resolver
 from app.services.leads import get_encryptor
 from app.services.mfa import verify_totp
+from app.services.operator_alerts import create_operator_alert
 from app.services.token_blacklist import blacklist_jti
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import select, update
@@ -165,6 +166,19 @@ def _has_session_context(session: AuthSession) -> bool:
     )
 
 
+def _decrypt_context_value(value: str | None) -> str | None:
+    if not value:
+        return None
+    try:
+        return get_encryptor().decrypt(value)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _location_key(country_enc: str | None, city_enc: str | None) -> tuple[str | None, str | None]:
+    return (_decrypt_context_value(country_enc), _decrypt_context_value(city_enc))
+
+
 def _new_session(
     user: User,
     refresh: str,
@@ -215,11 +229,52 @@ async def login(
         if not body.totp_code or not verify_totp(user.totp_secret, body.totp_code):
             raise HTTPException(status_code=401, detail="TOTP required or invalid")
 
+    previous_session = (
+        await db.execute(
+            select(AuthSession)
+            .where(AuthSession.user_id == user.id)
+            .order_by(AuthSession.created_at.desc(), AuthSession.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
     refresh = create_refresh_token(user.id)
     context = _session_context(request)
     session = _new_session(user, refresh, device_label=_device_label(request), **context)
     db.add(session)
     await db.flush()
+    if user.tenant_id:
+        create_operator_alert(
+            db,
+            tenant_id=user.tenant_id,
+            category="security",
+            signal_code="security-login",
+            title="Выполнен вход в панель",
+            body="Создана новая сессия оператора. Проверьте раздел сессий, если это были не вы.",
+            subject_kind="user",
+            subject_key=str(user.id),
+            user_id=user.id,
+        )
+        if previous_session is not None:
+            previous_location = _location_key(
+                previous_session.country_enc, previous_session.city_enc
+            )
+            current_location = _location_key(context["country_enc"], context["city_enc"])
+            if (
+                all(previous_location)
+                and all(current_location)
+                and previous_location != current_location
+            ):
+                create_operator_alert(
+                    db,
+                    tenant_id=user.tenant_id,
+                    category="security",
+                    signal_code="security-new-location",
+                    title="Вход выполнен из нового места",
+                    body="Страна или город новой сессии отличаются от последней известной сессии.",
+                    subject_kind="user",
+                    subject_key=str(user.id),
+                    user_id=user.id,
+                )
     access = create_access_token(user.id, user.tenant_id, user.role, session.id)
     await append_audit(
         db,

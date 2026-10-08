@@ -1,6 +1,6 @@
 import { NavLink, useLocation } from "react-router-dom";
-import { useEffect, useRef, type ReactNode } from "react";
-import { useAuth } from "../lib/auth";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { api, useAuth } from "../lib/auth";
 
 const groups = [
   {
@@ -39,6 +39,7 @@ const groups = [
     label: "Система",
     links: [
       { to: "/ops", label: "Статус системы" },
+      { to: "/alerts", label: "Оповещения" },
       { to: "/system", label: "Обновления и восстановление" },
       { to: "/audit", label: "Журнал аудита" },
       { to: "/settings", label: "Настройки" },
@@ -49,6 +50,7 @@ const groups = [
 export function Shell({ children }: { children: ReactNode }) {
   const { logout } = useAuth();
   const location = useLocation();
+  const [unreadAlerts, setUnreadAlerts] = useState(0);
   const mainRef = useRef<HTMLElement>(null);
   const previousRoute = useRef(`${location.pathname}${location.search}`);
 
@@ -59,6 +61,16 @@ export function Shell({ children }: { children: ReactNode }) {
     if (location.hash) return;
     mainRef.current?.focus();
   }, [location.hash, location.pathname, location.search]);
+
+  useEffect(() => {
+    let active = true;
+    const loadUnread = () => api<{ unread: number }>("/api/v1/panel/alerts?limit=1")
+      .then((summary) => { if (active) setUnreadAlerts(summary.unread); })
+      .catch(() => { if (active) setUnreadAlerts(0); });
+    void loadUnread();
+    const timer = window.setInterval(() => void loadUnread(), 30_000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, []);
 
   return (
     <div className="shell">
@@ -76,7 +88,7 @@ export function Shell({ children }: { children: ReactNode }) {
             <div className="nav-group-label">{g.label}</div>
             {g.links.map((l) => (
               <NavLink key={l.to} to={l.to} end={"end" in l ? l.end : false}>
-                {l.label}
+                {l.to === "/alerts" && unreadAlerts > 0 ? `${l.label} (${unreadAlerts})` : l.label}
               </NavLink>
             ))}
           </div>

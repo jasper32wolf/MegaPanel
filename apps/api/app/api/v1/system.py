@@ -26,6 +26,7 @@ from app.services.github_control import (
     GitHubControlError,
     operation_status,
 )
+from app.services.operator_alerts import create_operator_alert
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -206,6 +207,23 @@ async def github_workflow_run_webhook(
             workflow_run_id=run.run_id,
         )
     )
+    create_operator_alert(
+        db,
+        tenant_id=operation.tenant_id,
+        category="system",
+        signal_code=(
+            "system-operation-failed" if next_status != "success" else "system-operation-succeeded"
+        ),
+        title=(
+            "Системная операция завершилась с ошибкой"
+            if next_status != "success"
+            else "Системная операция завершена"
+        ),
+        body="Откройте историю системных операций для подтверждённого результата workflow.",
+        subject_kind="system_operation",
+        subject_key=str(operation.id),
+        user_id=operation.actor_id,
+    )
     await append_audit(
         db,
         action="system.operation.status",
@@ -330,6 +348,19 @@ async def _create_operation(
     db.add(operation)
     try:
         await db.flush()
+        create_operator_alert(
+            db,
+            tenant_id=auth.tenant_id,
+            category="system",
+            signal_code="system-operation-requested",
+            title="Запрошена системная операция",
+            body=(
+                "Операция deploy или recovery ожидает защищённого выполнения через GitHub Actions."
+            ),
+            subject_kind="system_operation",
+            subject_key=str(operation.id),
+            user_id=auth.user.id,
+        )
         await append_audit(
             db,
             action=f"system.{kind}.request",
@@ -366,6 +397,17 @@ async def _dispatch_failure(
     operation.status = "failure"
     operation.error_code = error.code
     operation.completed_at = datetime.now(UTC)
+    create_operator_alert(
+        db,
+        tenant_id=operation.tenant_id,
+        category="system",
+        signal_code="system-operation-failed",
+        title="Системная операция не запущена",
+        body="Проверьте защищённую историю системных операций и GitHub Actions.",
+        subject_kind="system_operation",
+        subject_key=str(operation.id),
+        user_id=auth.user.id,
+    )
     await append_audit(
         db,
         action="system.operation.status",

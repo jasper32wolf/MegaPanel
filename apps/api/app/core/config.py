@@ -53,6 +53,14 @@ class Settings(BaseSettings):
     smtp_use_ssl: bool = False
     smtp_starttls: bool = True
 
+    # Operator alerts. Telegram credentials stay only in the VPS environment.
+    operator_alerts_enabled: bool = True
+    operator_alert_delivery_interval_seconds: int = Field(default=300, ge=60, le=3600)
+    site_monitor_interval_minutes: int = Field(default=5, ge=1, le=60)
+    site_monitor_timeout_seconds: float = Field(default=5.0, gt=0, le=15)
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+
     # Optional server-owned CAPTCHA integration. Site/secret keys remain in the VPS environment.
     captcha_provider: Literal[
         "disabled", "cloudflare_turnstile", "hcaptcha", "google_recaptcha"
@@ -89,6 +97,10 @@ class Settings(BaseSettings):
         return bool(self.smtp_host and self.smtp_from_email)
 
     @property
+    def telegram_configured(self) -> bool:
+        return bool(self.telegram_bot_token and self.telegram_chat_id)
+
+    @property
     def captcha_enabled(self) -> bool:
         return self.captcha_mode == "always" and self.captcha_provider != "disabled"
 
@@ -110,6 +122,12 @@ class Settings(BaseSettings):
                 raise ValueError("SMTP_FROM_EMAIL must be a valid email address")
             if self.smtp_use_ssl and self.smtp_starttls:
                 raise ValueError("SMTP_USE_SSL and SMTP_STARTTLS cannot both be enabled")
+        if bool(self.telegram_bot_token) != bool(self.telegram_chat_id):
+            raise ValueError("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be configured together")
+        if self.telegram_chat_id and len(self.telegram_chat_id) > 64:
+            raise ValueError("TELEGRAM_CHAT_ID is invalid")
+        if self.operator_alert_delivery_interval_seconds % 60:
+            raise ValueError("OPERATOR_ALERT_DELIVERY_INTERVAL_SECONDS must be a whole minute")
         if self.captcha_mode == "disabled" and self.captcha_provider != "disabled":
             raise ValueError("CAPTCHA_PROVIDER requires CAPTCHA_MODE=always")
         if self.captcha_enabled and not (self.captcha_site_key and self.captcha_secret):

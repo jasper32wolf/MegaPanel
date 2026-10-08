@@ -16,6 +16,9 @@ const AIWorkspacePage = lazy(() =>
 const AuditPage = lazy(() =>
   import("./pages/AuditPage").then(({ AuditPage: Page }) => ({ default: Page })),
 );
+const AlertsPage = lazy(() =>
+  import("./pages/AlertsPage").then(({ AlertsPage: Page }) => ({ default: Page })),
+);
 const BlocksPage = lazy(() =>
   import("./pages/BlocksPage").then(({ BlocksPage: Page }) => ({ default: Page })),
 );
@@ -200,6 +203,7 @@ export default function App() {
                   <Route path="/bulk" element={<BulkPage />} />
                   <Route path="/leads" element={<LeadsPage />} />
                   <Route path="/ops" element={<OpsPage />} />
+                  <Route path="/alerts" element={<AlertsPage />} />
                   <Route path="/settings" element={<SettingsPage />} />
                   <Route path="/settings/sessions" element={<SessionHistoryPage />} />
                   <Route path="/audit" element={<AuditPage />} />

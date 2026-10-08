@@ -148,6 +148,7 @@ def test_signed_callback_updates_only_rest_verified_operation(monkeypatch):
     monkeypatch.setattr(system, "get_settings", lambda: Settings())
     monkeypatch.setattr(system, "_github", lambda: Control())
     monkeypatch.setattr(system, "append_audit", audit)
+    monkeypatch.setattr(system, "create_operator_alert", lambda *_args, **_kwargs: None)
     app.dependency_overrides[system.get_db] = get_fake_db
     try:
         body = _payload()
