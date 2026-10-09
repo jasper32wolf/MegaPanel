@@ -115,7 +115,11 @@ def upgrade() -> None:
         _enable_rls(table)
     op.create_index("ix_alert_deliveries_notification_id", "alert_deliveries", ["notification_id"])
     op.create_index("ix_alert_deliveries_status", "alert_deliveries", ["status"])
-    op.create_index("ix_alert_delivery_attempts_delivery_id", "alert_delivery_attempts", ["delivery_id"])
+    op.create_index(
+        "ix_alert_delivery_attempts_delivery_id",
+        "alert_delivery_attempts",
+        ["delivery_id"],
+    )
 
 
 def downgrade() -> None:
