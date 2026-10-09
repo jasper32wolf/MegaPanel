@@ -30,7 +30,10 @@ type Session = {
 };
 type SessionSummary = { items: Session[]; total: number; older_total: number };
 type AlertChannels = { enabled: boolean; email: boolean; telegram: boolean };
-type AlertSummary = { channels: AlertChannels };
+type AlertSettings = {
+  channels: AlertChannels;
+  recipient: { configured: boolean; masked_email: string | null };
+};
 
 function alertChannelLabel(configured: boolean) {
   return configured ? "готов" : "не настроен";
@@ -53,6 +56,8 @@ export function SettingsPage() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [olderSessionTotal, setOlderSessionTotal] = useState(0);
   const [alertChannels, setAlertChannels] = useState<AlertChannels | null>(null);
+  const [alertRecipient, setAlertRecipient] = useState<{ configured: boolean; masked_email: string | null } | null>(null);
+  const [recipientEmail, setRecipientEmail] = useState("");
   const [setup, setSetup] = useState<TotpSetup | null>(null);
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -60,24 +65,44 @@ export function SettingsPage() {
   const [sessionToRevoke, setSessionToRevoke] = useState<Session | null>(null);
 
   async function load() {
-    const [me, apiHealth, apiReadiness, sessionSummary, alertSummary] = await Promise.all([
+    const [me, apiHealth, apiReadiness, sessionSummary, alertSettings] = await Promise.all([
       api<Operator>("/api/v1/security/me", {}, token),
       api<Health>("/api/v1/health/live", {}, token),
       api<Readiness>("/api/v1/health/ready", {}, token).catch(() => null),
       api<SessionSummary>("/api/v1/security/sessions", {}, token),
-      api<AlertSummary>("/api/v1/panel/alerts?limit=1", {}, token),
+      api<AlertSettings>("/api/v1/panel/alert-settings", {}, token),
     ]);
     setOperator(me);
     setHealth(apiHealth);
     setReadiness(apiReadiness);
     setSessions(sessionSummary.items.slice(0, 10));
     setOlderSessionTotal(sessionSummary.older_total);
-    setAlertChannels(alertSummary.channels);
+    setAlertChannels(alertSettings.channels);
+    setAlertRecipient(alertSettings.recipient);
   }
 
   useEffect(() => {
     load().catch((cause) => setError(cause instanceof Error ? cause.message : "Не удалось загрузить настройки"));
   }, [token]);
+
+  async function saveAlertRecipient(event: FormEvent) {
+    event.preventDefault();
+    setBusy("alert-recipient");
+    setError(null);
+    try {
+      await api(
+        "/api/v1/panel/alert-settings/recipient",
+        { method: "PUT", body: JSON.stringify({ email: recipientEmail }) },
+        token,
+      );
+      setRecipientEmail("");
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Не удалось сохранить адрес получателя");
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function revokeSession(session: Session) {
     setBusy(`session:${session.id}`);
@@ -151,8 +176,10 @@ export function SettingsPage() {
         {operator?.mfa_enabled && <form onSubmit={disableTotp} className="stack"><p className="muted" style={{ margin: 0 }}>Чтобы отключить TOTP, подтвердите текущий одноразовый код. Это действие записывается в audit log.</p><label className="field">Текущий код<input value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 8))} inputMode="numeric" autoComplete="one-time-code" required /></label><button className="btn btn-ghost" type="submit" disabled={busy !== null || code.length < 6}>{busy === "disable" ? "Отключение…" : "Отключить TOTP"}</button></form>}
       </Surface>
       <Surface title="Оповещения">
-        <div className="row"><StatusPill tone={alertChannels?.enabled ? "ok" : "warn"}>Оповещения: {alertChannels?.enabled ? "включены" : "выключены"}</StatusPill><StatusPill tone={alertChannels?.email ? "ok" : "warn"}>Email: {alertChannelLabel(Boolean(alertChannels?.email))}</StatusPill><StatusPill tone={alertChannels?.telegram ? "ok" : "warn"}>Telegram: {alertChannelLabel(Boolean(alertChannels?.telegram))}</StatusPill></div>
-        <p className="muted">Секреты SMTP и Telegram не показываются в панели. Проверочное сообщение, история и состояние доставки доступны в разделе «Оповещения».</p>
+        <div className="row"><StatusPill tone={alertChannels?.enabled ? "ok" : "warn"}>Оповещения: {alertChannels?.enabled ? "включены" : "выключены"}</StatusPill><StatusPill tone={alertChannels?.email ? "ok" : "warn"}>SMTP: {alertChannelLabel(Boolean(alertChannels?.email))}</StatusPill><StatusPill tone={alertChannels?.telegram ? "ok" : "warn"}>Telegram: {alertChannelLabel(Boolean(alertChannels?.telegram))}</StatusPill><StatusPill tone={alertRecipient?.configured ? "ok" : "warn"}>Получатель: {alertRecipient?.configured ? "настроен" : "не указан"}</StatusPill></div>
+        <p className="muted">Адрес получателя задаётся только здесь, в панели, и хранится зашифрованно. Текущий: {alertRecipient?.masked_email || "не указан"}. SMTP и Telegram-секреты остаются только на VPS и в панели не показываются.</p>
+        <form className="stack" onSubmit={saveAlertRecipient}><label className="field">Email для оповещений<input type="email" value={recipientEmail} onChange={(event) => setRecipientEmail(event.target.value)} autoComplete="email" placeholder="alerts@example.com" required /></label><button className="btn" type="submit" disabled={busy !== null || !recipientEmail}>{busy === "alert-recipient" ? "Сохранение…" : alertRecipient?.configured ? "Заменить адрес" : "Сохранить адрес"}</button></form>
+        <p className="muted">Этот адрес используется только для получения security, site и system alerts; он не обязан совпадать с email входа в панель.</p>
         <Link className="btn btn-ghost" to="/alerts">Открыть оповещения</Link>
       </Surface>
       <Surface title="Сессии">

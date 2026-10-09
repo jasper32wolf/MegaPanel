@@ -41,6 +41,31 @@ function session(id: string, index: number) {
   };
 }
 
+test("settings saves a separate encrypted alert recipient", async ({ page }) => {
+  await mockAuth(page);
+  let recipient = { configured: false, masked_email: null as string | null };
+  await page.route("**/api/v1/**", (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.pathname === "/api/v1/security/me" || url.pathname === "/api/v1/auth/refresh") return route.fulfill({ status: 200, body: JSON.stringify({ email: "login@example.test", mfa_enabled: false, mfa_pending: false }) });
+    if (url.pathname === "/api/v1/health/live") return route.fulfill({ status: 200, body: JSON.stringify({ status: "ok", version: "test", env: "test" }) });
+    if (url.pathname === "/api/v1/health/ready") return route.fulfill({ status: 200, body: JSON.stringify({ status: "ok" }) });
+    if (url.pathname === "/api/v1/security/sessions") return route.fulfill({ status: 200, body: JSON.stringify({ items: [], total: 0, older_total: 0 }) });
+    if (url.pathname === "/api/v1/panel/alert-settings/recipient" && request.method() === "PUT") {
+      recipient = { configured: true, masked_email: "a***@example.test" };
+      return route.fulfill({ status: 200, body: JSON.stringify(recipient) });
+    }
+    if (url.pathname === "/api/v1/panel/alert-settings") return route.fulfill({ status: 200, body: JSON.stringify({ channels: { enabled: true, email: true, telegram: false }, recipient }) });
+    return route.fulfill({ status: 404, body: '{"detail":"not used by proof"}' });
+  });
+
+  await page.goto("/settings");
+  await page.getByLabel("Email для оповещений").fill("alerts@example.test");
+  await page.getByRole("button", { name: "Сохранить адрес" }).click();
+  await expect(page.getByText(/Текущий: a\*\*\*@example\.test/)).toBeVisible();
+  await expect(page.getByText("login@example.test", { exact: true })).toBeVisible();
+});
+
 test("settings shows only ten session snapshots and opens older-session log", async ({ page }) => {
   await mockAuth(page);
   const visible = Array.from({ length: 10 }, (_, index) => session(`10000000-0000-4000-8000-0000000000${String(index).padStart(2, "0")}`, index));
@@ -53,7 +78,7 @@ test("settings shows only ten session snapshots and opens older-session log", as
     if (url.pathname === "/api/v1/health/live") return route.fulfill({ status: 200, body: JSON.stringify({ status: "ok", version: "test", env: "test" }) });
     if (url.pathname === "/api/v1/health/ready") return route.fulfill({ status: 200, body: JSON.stringify({ status: "ok" }) });
     if (url.pathname === "/api/v1/security/sessions") return route.fulfill({ status: 200, body: JSON.stringify({ items: visible, total: 12, older_total: 2 }) });
-    if (url.pathname === "/api/v1/panel/alerts") return route.fulfill({ status: 200, body: JSON.stringify({ items: [], total: 0, unread: 0, channels: { enabled: true, email: true, telegram: true } }) });
+    if (url.pathname === "/api/v1/panel/alert-settings") return route.fulfill({ status: 200, body: JSON.stringify({ channels: { enabled: true, email: true, telegram: true }, recipient: { configured: true, masked_email: "a***@example.test" } }) });
     if (url.pathname === "/api/v1/security/sessions/history") {
       historyRequests.push(url.search);
       return route.fulfill({ status: 200, body: JSON.stringify({ items: older, total: 2, offset: 0, limit: 25 }) });

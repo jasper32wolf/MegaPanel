@@ -34,9 +34,15 @@ from app.services.operations import (
     serialize_operational_event,
     transition_incident,
 )
-from app.services.operator_alerts import alert_channel_status, create_operator_alert
+from app.services.operator_alerts import (
+    alert_channel_status,
+    alert_recipient_status,
+    clear_alert_recipient,
+    create_operator_alert,
+    set_alert_recipient,
+)
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, EmailStr, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -113,6 +119,10 @@ async def _notification_projection(
 
 
 router = APIRouter()
+
+
+class AlertRecipientIn(BaseModel):
+    email: EmailStr
 
 
 class IncidentActionIn(BaseModel):
@@ -526,6 +536,58 @@ async def update_incident(
     return _serialize_incident(incident)
 
 
+@router.get("/alert-settings")
+async def get_operator_alert_settings(
+    auth: AuthContext = Depends(require_roles("superadmin")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    if not auth.tenant_id:
+        raise HTTPException(status_code=403, detail="Tenant required")
+    return {
+        "channels": alert_channel_status(),
+        "recipient": await alert_recipient_status(db, auth.tenant_id),
+    }
+
+
+@router.put("/alert-settings/recipient")
+async def update_operator_alert_recipient(
+    body: AlertRecipientIn,
+    auth: AuthContext = Depends(require_roles("superadmin")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    if not auth.tenant_id:
+        raise HTTPException(status_code=403, detail="Tenant required")
+    await set_alert_recipient(db, tenant_id=auth.tenant_id, email=str(body.email))
+    await append_audit(
+        db,
+        action="operator_alert.recipient.update",
+        payload={"configured": True},
+        tenant_id=auth.tenant_id,
+        actor_id=auth.user.id,
+    )
+    await db.commit()
+    return await alert_recipient_status(db, auth.tenant_id)
+
+
+@router.delete("/alert-settings/recipient")
+async def delete_operator_alert_recipient(
+    auth: AuthContext = Depends(require_roles("superadmin")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    if not auth.tenant_id:
+        raise HTTPException(status_code=403, detail="Tenant required")
+    removed = await clear_alert_recipient(db, tenant_id=auth.tenant_id)
+    await append_audit(
+        db,
+        action="operator_alert.recipient.clear",
+        payload={"configured": False},
+        tenant_id=auth.tenant_id,
+        actor_id=auth.user.id,
+    )
+    await db.commit()
+    return {"removed": removed}
+
+
 @router.get("/alerts")
 async def list_operator_alerts(
     category: str | None = None,
@@ -596,6 +658,9 @@ async def send_test_operator_alert(
 ) -> dict:
     if not auth.tenant_id:
         raise HTTPException(status_code=403, detail="Tenant required")
+    recipient = await alert_recipient_status(db, auth.tenant_id)
+    if not recipient["configured"]:
+        raise HTTPException(status_code=409, detail="Alert recipient is not configured")
     notification = create_operator_alert(
         db,
         tenant_id=auth.tenant_id,

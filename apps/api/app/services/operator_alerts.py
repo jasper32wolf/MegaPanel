@@ -9,7 +9,8 @@ from uuid import UUID, uuid4
 
 import httpx
 from app.core.config import get_settings
-from app.models import AlertDelivery, AlertDeliveryAttempt, Notification, User
+from app.models import AlertDelivery, AlertDeliveryAttempt, Notification, OperatorAlertRecipient
+from app.services.leads import get_encryptor
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -96,15 +97,61 @@ def create_operator_alert(
 
 
 async def _operator_email(db: AsyncSession, tenant_id: UUID) -> str | None:
-    user = (
+    recipient = (
         await db.execute(
-            select(User)
-            .where(User.tenant_id == tenant_id, User.role == "superadmin", User.is_active.is_(True))
-            .order_by(User.created_at, User.id)
-            .limit(1)
+            select(OperatorAlertRecipient).where(OperatorAlertRecipient.tenant_id == tenant_id)
         )
     ).scalar_one_or_none()
-    return user.email if user else None
+    if recipient is None:
+        return None
+    try:
+        return get_encryptor().decrypt(recipient.recipient_enc)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def mask_email(value: str) -> str:
+    local, _, domain = value.partition("@")
+    if not local or not domain:
+        return "настроен"
+    return f"{local[:1]}***@{domain}"
+
+
+async def alert_recipient_status(db: AsyncSession, tenant_id: UUID) -> dict[str, str | bool | None]:
+    recipient = await _operator_email(db, tenant_id)
+    return {
+        "configured": bool(recipient),
+        "masked_email": mask_email(recipient) if recipient else None,
+    }
+
+
+async def set_alert_recipient(db: AsyncSession, *, tenant_id: UUID, email: str) -> None:
+    recipient = (
+        await db.execute(
+            select(OperatorAlertRecipient)
+            .where(OperatorAlertRecipient.tenant_id == tenant_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    encrypted = get_encryptor().encrypt(email)
+    if recipient is None:
+        db.add(OperatorAlertRecipient(tenant_id=tenant_id, recipient_enc=encrypted))
+    else:
+        recipient.recipient_enc = encrypted
+
+
+async def clear_alert_recipient(db: AsyncSession, *, tenant_id: UUID) -> bool:
+    recipient = (
+        await db.execute(
+            select(OperatorAlertRecipient)
+            .where(OperatorAlertRecipient.tenant_id == tenant_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if recipient is None:
+        return False
+    await db.delete(recipient)
+    return True
 
 
 def _send_email(recipient: str, title: str, body: str) -> None:

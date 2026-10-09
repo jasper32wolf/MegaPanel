@@ -74,6 +74,11 @@ def test_operator_alerts_never_queue_channels_when_disabled(monkeypatch):
     assert len(database.added) == 1
 
 
+def test_operator_alert_recipient_is_masked_without_disclosure():
+    assert operator_alerts.mask_email("alerts@example.test") == "a***@example.test"
+    assert operator_alerts.mask_email("invalid") == "настроен"
+
+
 def test_telegram_credentials_must_be_configured_together():
     with pytest.raises(ValueError, match="TELEGRAM_BOT_TOKEN"):
         Settings(telegram_bot_token="token")

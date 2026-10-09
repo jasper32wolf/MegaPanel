@@ -23,6 +23,7 @@ test("operator alert inbox shows channel status, read action and explicit test d
     const request = route.request();
     const url = new URL(request.url());
     if (url.pathname === "/api/v1/security/me" || url.pathname === "/api/v1/auth/refresh") return route.fulfill({ status: 200, body: "{}" });
+    if (url.pathname === "/api/v1/panel/alert-settings") return route.fulfill({ status: 200, body: JSON.stringify({ channels: { enabled: true, email: true, telegram: true }, recipient: { configured: true, masked_email: "a***@example.test" } }) });
     if (url.pathname === "/api/v1/panel/alerts/test" && request.method() === "POST") {
       testCreated = true;
       return route.fulfill({ status: 200, body: "{}" });

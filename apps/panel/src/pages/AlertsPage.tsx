@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api, useAuth } from "../lib/auth";
 import { AsyncFeedback, ConfirmDialog, PageHeader, StatusPill, Surface } from "../components/ui";
 
@@ -17,11 +18,16 @@ type Alert = {
   created_at: string | null;
   deliveries: Partial<Record<"email" | "telegram", DeliveryStatus>>;
 };
+type AlertChannels = { enabled: boolean; email: boolean; telegram: boolean };
 type AlertSummary = {
   items: Alert[];
   total: number;
   unread: number;
-  channels: { enabled: boolean; email: boolean; telegram: boolean };
+  channels: AlertChannels;
+};
+type AlertSettings = {
+  channels: AlertChannels;
+  recipient: { configured: boolean; masked_email: string | null };
 };
 
 function tone(status: DeliveryStatus | undefined) {
@@ -38,6 +44,7 @@ function categoryLabel(category: Alert["category"]) {
 export function AlertsPage() {
   const { token } = useAuth();
   const [summary, setSummary] = useState<AlertSummary | null>(null);
+  const [alertSettings, setAlertSettings] = useState<AlertSettings | null>(null);
   const [category, setCategory] = useState<"" | Alert["category"]>("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -45,7 +52,12 @@ export function AlertsPage() {
 
   async function load() {
     const query = category ? `?category=${category}` : "";
-    setSummary(await api<AlertSummary>(`/api/v1/panel/alerts${query}`, {}, token));
+    const [nextSummary, nextSettings] = await Promise.all([
+      api<AlertSummary>(`/api/v1/panel/alerts${query}`, {}, token),
+      api<AlertSettings>("/api/v1/panel/alert-settings", {}, token),
+    ]);
+    setSummary(nextSummary);
+    setAlertSettings(nextSettings);
   }
 
   useEffect(() => {
@@ -80,7 +92,8 @@ export function AlertsPage() {
     }
   }
 
-  const channels = summary?.channels;
+  const channels = alertSettings?.channels || summary?.channels;
+  const recipientConfigured = Boolean(alertSettings?.recipient.configured);
   return (
     <div>
       <PageHeader
@@ -94,9 +107,11 @@ export function AlertsPage() {
           <StatusPill tone={channels?.enabled ? "ok" : "warn"}>Оповещения: {channels?.enabled ? "включены" : "выключены"}</StatusPill>
           <StatusPill tone={channels?.email ? "ok" : "warn"}>Email: {channels?.email ? "готов" : "не настроен"}</StatusPill>
           <StatusPill tone={channels?.telegram ? "ok" : "warn"}>Telegram: {channels?.telegram ? "готов" : "не настроен"}</StatusPill>
+          <StatusPill tone={recipientConfigured ? "ok" : "warn"}>Получатель: {recipientConfigured ? "настроен" : "не указан"}</StatusPill>
         </div>
-        <p className="muted">Адрес получателя, SMTP-параметры, Telegram bot token и chat ID не выводятся в панели.</p>
-        <button className="btn" type="button" disabled={busy !== null || !channels?.enabled} onClick={() => setConfirmTest(true)}>{busy === "test" ? "Отправка…" : "Отправить проверочное оповещение"}</button>
+        <p className="muted">Получатель задаётся в настройках панели: {alertSettings?.recipient.masked_email || "не указан"}. SMTP-параметры, Telegram bot token и chat ID не выводятся в панели.</p>
+        {!recipientConfigured && <Link className="btn btn-ghost" to="/settings">Указать email получателя</Link>}
+        <button className="btn" type="button" disabled={busy !== null || !channels?.enabled || !recipientConfigured} onClick={() => setConfirmTest(true)}>{busy === "test" ? "Отправка…" : "Отправить проверочное оповещение"}</button>
       </Surface>
       <Surface title={`Входящие (${summary?.unread ?? 0} непрочитанных)`}>
         <div className="row" role="group" aria-label="Фильтр оповещений">
