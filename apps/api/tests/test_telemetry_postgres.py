@@ -72,8 +72,11 @@ def test_rollup_retention_withdrawal_and_utc_boundaries():
                         )
                         db.add(
                             _event(
-                                tenant_id, site_id, day=yesterday,
-                                session=session, path="/repeat/",
+                                tenant_id,
+                                site_id,
+                                day=yesterday,
+                                session=session,
+                                path="/repeat/",
                             )
                         )
                         db.add(
@@ -85,20 +88,29 @@ def test_rollup_retention_withdrawal_and_utc_boundaries():
                 for index in range(5):
                     db.add(
                         _event(
-                            tenant_id, site_id, day=yesterday,
-                            session=f"boundary-session-{index:04d}", path="/" + "a" * 511,
+                            tenant_id,
+                            site_id,
+                            day=yesterday,
+                            session=f"boundary-session-{index:04d}",
+                            path="/" + "a" * 511,
                         )
                     )
                 db.add(
                     _event(
-                        tenant_id, site_id, day=yesterday,
-                        session="invalid-length-session", path="/" + "a" * 512,
+                        tenant_id,
+                        site_id,
+                        day=yesterday,
+                        session="invalid-length-session",
+                        path="/" + "a" * 512,
                     )
                 )
                 db.add(
                     _event(
-                        tenant_id, site_id, day=yesterday,
-                        session="invalid-query-session", path="/private/?phone=123",
+                        tenant_id,
+                        site_id,
+                        day=yesterday,
+                        session="invalid-query-session",
+                        path="/private/?phone=123",
                     )
                 )
                 db.add(
@@ -112,9 +124,7 @@ def test_rollup_retention_withdrawal_and_utc_boundaries():
                         created_at=old,
                     )
                 )
-                db.add(
-                    _event(tenant_id, uuid4(), day=old, session=sessions[0], path="/orphan/")
-                )
+                db.add(_event(tenant_id, uuid4(), day=old, session=sessions[0], path="/orphan/"))
                 await db.commit()
 
             async with isolated_db_session() as db:

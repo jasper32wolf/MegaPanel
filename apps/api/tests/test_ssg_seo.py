@@ -137,8 +137,7 @@ def test_ssg_renders_frozen_verified_author_and_person_schema(tmp_path: Path):
                     "name": "Иван Петров",
                     "role": "Руководитель сервисной службы",
                     "biography": (
-                        "Иван проверяет качество сервисных работ и отвечает "
-                        "за их организацию."
+                        "Иван проверяет качество сервисных работ и отвечает за их организацию."
                     ),
                     "expertise": ["Диагностика оборудования"],
                     "evidence": ["Внутренний приказ о назначении"],
@@ -306,9 +305,9 @@ def test_html_sitemap_lists_only_index_eligible_pages(tmp_path: Path):
         ],
     )
     SiteBuilder(tmp_path).build(site)
-    html = (
-        tmp_path / str(site.site_id) / "current" / "sitemap" / "index.html"
-    ).read_text(encoding="utf-8")
+    html = (tmp_path / str(site.site_id) / "current" / "sitemap" / "index.html").read_text(
+        encoding="utf-8"
+    )
 
     assert 'href="https://example.test/"' in html
     assert "https://example.test/draft/" not in html

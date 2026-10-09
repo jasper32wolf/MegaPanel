@@ -93,7 +93,7 @@ def test_queue_and_worker_receive_only_durable_run_ids():
     worker = worker_source.read_text(encoding="utf-8")
 
     assert 'enqueue_job("bukvarix_keyword_task", str(run_id))' in queue
-    assert "fetch_public_free_keywords(seed[\"phrase\"])" in queue
+    assert 'fetch_public_free_keywords(seed["phrase"])' in queue
     assert "bukvarix_keyword_sweep_task" in worker
     assert "bukvarix_keyword_task" in worker
     assert "candidate_build_task" not in queue

@@ -109,9 +109,7 @@ class IndexPromotionSchedule(Base):
 
 class IndexPromotionScheduleItem(Base):
     __tablename__ = "index_promotion_schedule_items"
-    __table_args__ = (
-        UniqueConstraint("schedule_id", "slug", name="uq_index_schedule_item_slug"),
-    )
+    __table_args__ = (UniqueConstraint("schedule_id", "slug", name="uq_index_schedule_item_slug"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     schedule_id: Mapped[uuid.UUID] = mapped_column(

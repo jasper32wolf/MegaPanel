@@ -55,7 +55,7 @@ def test_intent_generation_worker_and_queue_accept_only_durable_run_ids():
     worker = (root / "app" / "worker.py").read_text(encoding="utf-8")
     decision = (root / "app" / "api" / "v1" / "ai_workspace.py").read_text(encoding="utf-8")
 
-    assert 'enqueue_job(task_name, str(run_id))' in queue
+    assert "enqueue_job(task_name, str(run_id))" in queue
     assert '"intent_page_proposal_task"' in queue
     assert "intent_page_proposal_task" in worker
     assert "content.intent-page-proposal" in decision
@@ -72,9 +72,12 @@ def test_intent_generation_routes_use_a_quote_queue_approval_and_materialization
     assert {"post"}.issubset(paths[f"{base}/quote"])
     assert {"post"}.issubset(paths[base])
     assert "get" in paths["/api/v1/projects/{project_id}/intent-generation-runs"]
-    assert "post" in paths[
-        "/api/v1/projects/{project_id}/intent-generation-runs/{run_id}/materialize-page-draft"
-    ]
+    assert (
+        "post"
+        in paths[
+            "/api/v1/projects/{project_id}/intent-generation-runs/{run_id}/materialize-page-draft"
+        ]
+    )
 
 
 def test_intent_proposal_accepts_only_frozen_ids_visible_text_and_declared_slots():

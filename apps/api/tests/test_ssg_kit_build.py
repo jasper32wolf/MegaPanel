@@ -119,9 +119,9 @@ def test_ssg_kit_build_contains_core_blocks(tmp_path: Path, kit_key: str):
     assert changed["build_hash"] != result["build_hash"]
     changed_root = Path(changed["release_path"])
     assert (changed_root / "index.html").read_text(encoding="utf-8") == html
-    assert "privacy@example.test" in (
-        changed_root / "privacy" / "index.html"
-    ).read_text(encoding="utf-8")
+    assert "privacy@example.test" in (changed_root / "privacy" / "index.html").read_text(
+        encoding="utf-8"
+    )
 
     policy_context = {
         **context,

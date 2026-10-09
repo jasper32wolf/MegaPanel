@@ -899,9 +899,7 @@ def test_rollback_restores_target_snapshot_and_archives_newer_only_pages(monkeyp
     response = asyncio.run(
         rollback_project_build(
             project_id,
-            BuildRollbackRequest(
-                build_hash="a" * 64, confirmation_text=f"ROLLBACK {'a' * 64}"
-            ),
+            BuildRollbackRequest(build_hash="a" * 64, confirmation_text=f"ROLLBACK {'a' * 64}"),
             auth,
             db,
         )
@@ -1250,9 +1248,7 @@ def test_rollback_caddy_failure_restores_release_without_projection_mutation(mon
         asyncio.run(
             rollback_project_build(
                 project_id,
-                BuildRollbackRequest(
-                build_hash="a" * 64, confirmation_text=f"ROLLBACK {'a' * 64}"
-            ),
+                BuildRollbackRequest(build_hash="a" * 64, confirmation_text=f"ROLLBACK {'a' * 64}"),
                 object(),
                 db,
             )

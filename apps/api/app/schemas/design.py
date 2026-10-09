@@ -105,9 +105,7 @@ class DesignProfileIn(BaseModel):
             if any(token in lowered for token in prohibited_text):
                 raise ValueError("Design guidance cannot contain code, markup, or URLs")
             crawler_terms = ("cloaking", "скрыт", "user-agent", "ip-адрес", "поисков")
-            contains_bot_word = bool(
-                re.search(r"\b(?:бот\w*|bot\w*)\b", lowered)
-            )
+            contains_bot_word = bool(re.search(r"\b(?:бот\w*|bot\w*)\b", lowered))
             if contains_bot_word or any(term in lowered for term in crawler_terms):
                 raise ValueError(
                     "Design policy cannot contain crawler-specific or hidden-content behavior"

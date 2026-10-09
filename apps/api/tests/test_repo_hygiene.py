@@ -68,9 +68,7 @@ def test_git_ignore_keeps_local_agent_state_private(path: str, ignored: bool):
 def test_docker_and_release_archives_exclude_agent_directories():
     root = SCRIPT.parents[1]
     dockerignore = (root / ".dockerignore").read_text(encoding="utf-8")
-    workflow = (root / ".github/workflows/deploy-production.yml").read_text(
-        encoding="utf-8"
-    )
+    workflow = (root / ".github/workflows/deploy-production.yml").read_text(encoding="utf-8")
     for directory in (".claude", ".cursor", ".kilo", ".roo", ".agents"):
         assert directory in dockerignore.splitlines()
         assert f"--exclude={directory} " in workflow

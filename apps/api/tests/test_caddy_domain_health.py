@@ -26,10 +26,12 @@ def test_caddy_site_vhost_proxies_only_public_telemetry_posts():
     client = CaddyClient(base_url="http://127.0.0.1:9")
     route = client._telemetry_proxy_route()
 
-    assert route["match"] == [{
-        "path": ["/api/v1/telemetry/collect", "/api/v1/telemetry/revoke"],
-        "method": ["POST"],
-    }]
+    assert route["match"] == [
+        {
+            "path": ["/api/v1/telemetry/collect", "/api/v1/telemetry/revoke"],
+            "method": ["POST"],
+        }
+    ]
     assert route["handle"][0]["upstreams"] == [{"dial": "api:8000"}]
     assert route["terminal"] is True
 

@@ -65,9 +65,12 @@ def test_secure_telemetry_route_and_ssg_script_are_consent_gated():
         root.parents[1] / "packages" / "ssg" / "src" / "site_panel_ssg" / "builder.py"
     ).read_text(encoding="utf-8")
 
-    assert "tenant_id" not in route.split("class TelemetryEventIn", 1)[1].split(
-        "async def _site_from_public_token", 1
-    )[0]
+    assert (
+        "tenant_id"
+        not in route.split("class TelemetryEventIn", 1)[1].split(
+            "async def _site_from_public_token", 1
+        )[0]
+    )
     assert "origin does not match the site" in route
     assert "client_ip" not in route.split("AnalyticsEvent(", 1)[1].split("await db.commit()", 1)[0]
     assert "post" in paths["/api/v1/telemetry/revoke"]
@@ -116,7 +119,10 @@ def test_collection_rejects_gpc_and_replayed_withdrawn_sessions(monkeypatch):
     monkeypatch.setattr(telemetry_api, "session_was_revoked", is_revoked)
     db = FakeDB()
     body = telemetry_api.TelemetryEventIn(
-        token=token, event="page_view", path="/legal/", session_id=session_id,
+        token=token,
+        event="page_view",
+        path="/legal/",
+        session_id=session_id,
         consent_analytics=True,
     )
 
@@ -134,11 +140,13 @@ def test_collection_rejects_gpc_and_replayed_withdrawn_sessions(monkeypatch):
         assert db.events[0].payload == {"session": session_digest(session_id)}
         revoked = True
         assert await telemetry_api.collect_telemetry(body, request(), db) == {
-            "ok": False, "reason": "consent_withdrawn",
+            "ok": False,
+            "reason": "consent_withdrawn",
         }
         assert db.rollbacks == 1 and len(db.events) == 1
         assert await telemetry_api.collect_telemetry(body, request(gpc=True), db) == {
-            "ok": False, "reason": "no_consent",
+            "ok": False,
+            "reason": "no_consent",
         }
         assert db.commits == 1
         with pytest.raises(HTTPException) as error:
@@ -153,12 +161,13 @@ def test_summary_hides_small_counts_and_labels_daily_sessions():
         async def execute(self, statement):
             return SimpleNamespace(all=lambda: [("/small/", 4, 4), ("/popular/", 10, 5)])
 
-    result = asyncio.run(
-        page_view_summary(FakeDB(), tenant_id=uuid4(), site_id=uuid4(), days=30)
-    )
+    result = asyncio.run(page_view_summary(FakeDB(), tenant_id=uuid4(), site_id=uuid4(), days=30))
     assert result[0] == {
-        "path": "/small/", "page_views": None, "consented_session_days": None,
-        "low_sample": True, "traffic_state": "not_enough_data",
+        "path": "/small/",
+        "page_views": None,
+        "consented_session_days": None,
+        "low_sample": True,
+        "traffic_state": "not_enough_data",
     }
     assert result[1]["page_views"] == 10
     assert result[1]["consented_session_days"] == 5
@@ -194,12 +203,16 @@ def test_changed_retention_blocks_frozen_candidate_publication():
     from app.core.config import get_settings
 
     settings = get_settings()
-    build = SimpleNamespace(input_snapshot={"context": {
-        "telemetry_retention": {
-            "raw_days": settings.telemetry_raw_retention_days,
-            "aggregate_days": settings.telemetry_aggregate_retention_days,
+    build = SimpleNamespace(
+        input_snapshot={
+            "context": {
+                "telemetry_retention": {
+                    "raw_days": settings.telemetry_raw_retention_days,
+                    "aggregate_days": settings.telemetry_aggregate_retention_days,
+                }
+            }
         }
-    }})
+    )
     assert _telemetry_retention_blockers(build) == []
     build.input_snapshot["context"]["telemetry_retention"]["raw_days"] += 1
     assert "rebuild the candidate" in _telemetry_retention_blockers(build)[0]
@@ -210,6 +223,4 @@ def test_daily_retention_is_registered_in_the_real_worker():
     from app.worker import WorkerSettings, telemetry_retention_task
 
     assert telemetry_retention_task in WorkerSettings.functions
-    assert any(
-        job.coroutine is telemetry_retention_task for job in WorkerSettings.cron_jobs
-    )
+    assert any(job.coroutine is telemetry_retention_task for job in WorkerSettings.cron_jobs)

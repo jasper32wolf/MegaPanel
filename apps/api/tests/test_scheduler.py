@@ -99,12 +99,8 @@ def test_scheduler_is_uuid_outbox_based_and_cannot_publish():
         encoding="utf-8"
     )
     bukvarix = (api_dir / "app" / "services" / "bukvarix_queue.py").read_text(encoding="utf-8")
-    build_queue = (api_dir / "app" / "services" / "site_build_queue.py").read_text(
-        encoding="utf-8"
-    )
-    crawl = (api_dir / "app" / "services" / "competitor_crawl.py").read_text(
-        encoding="utf-8"
-    )
+    build_queue = (api_dir / "app" / "services" / "site_build_queue.py").read_text(encoding="utf-8")
+    crawl = (api_dir / "app" / "services" / "competitor_crawl.py").read_text(encoding="utf-8")
 
     assert '"scheduler_execute_task", str(job.id), str(wakeup.lease_id)' in scheduler
     assert "job.lease_id != lease_id" in scheduler

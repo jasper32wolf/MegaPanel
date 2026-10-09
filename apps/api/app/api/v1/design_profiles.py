@@ -69,9 +69,7 @@ def _validate_profile_catalog(profile: DesignProfileIn) -> None:
             status_code=422,
             detail="Design profile selected an unknown curated kit",
         )
-    available_blocks = set().union(
-        *(catalog[kit_key] for kit_key in profile.layout.allowed_kits)
-    )
+    available_blocks = set().union(*(catalog[kit_key] for kit_key in profile.layout.allowed_kits))
     if any(block_id not in available_blocks for block_id in profile.layout.required_blocks):
         raise HTTPException(
             status_code=422,
@@ -133,9 +131,7 @@ async def get_effective_design_profile(
     db: AsyncSession = Depends(get_db),
 ) -> EffectiveDesignProfileOut:
     project = await _project_or_404(db, project_id, auth)
-    resolved = await resolve_design_profile(
-        db, tenant_id=project.tenant_id, project_id=project.id
-    )
+    resolved = await resolve_design_profile(db, tenant_id=project.tenant_id, project_id=project.id)
     return EffectiveDesignProfileOut(
         project_id=project.id,
         inherited_from_project_id=resolved.inherited_from_project_id,

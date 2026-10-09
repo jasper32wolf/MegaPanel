@@ -113,17 +113,14 @@ def run_page_qa(*, page_manifest: dict, input_snapshot: dict, existing_texts: li
             }
         )
     intent_generation = input_snapshot.get("intent_generation") or {}
-    semantic_targets = (
-        (input_snapshot.get("semantic_target_snapshot") or {}).get("targets") or []
-    )
+    semantic_targets = (input_snapshot.get("semantic_target_snapshot") or {}).get("targets") or []
     expected_target_ids = {
         str(item.get("project_keyword_id"))
         for item in semantic_targets
         if isinstance(item, dict) and item.get("project_keyword_id")
     }
     actual_target_ids = {
-        str(item)
-        for item in intent_generation.get("semantic_target_project_keyword_ids") or []
+        str(item) for item in intent_generation.get("semantic_target_project_keyword_ids") or []
     }
     if expected_target_ids and not expected_target_ids.issubset(actual_target_ids):
         findings.append(

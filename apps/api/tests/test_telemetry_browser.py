@@ -121,7 +121,11 @@ const setup = (consent, session, gpc = false, failRevoke = false) => {
 """
     )
     result = subprocess.run(
-        ["node", "-"], input=script, text=True, encoding="utf-8",
-        capture_output=True, check=False,
+        ["node", "-"],
+        input=script,
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        check=False,
     )
     assert result.returncode == 0, result.stderr

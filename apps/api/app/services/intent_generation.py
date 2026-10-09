@@ -67,9 +67,7 @@ async def compile_intent_generation_context(
     ).scalar_one_or_none()
     if not facts:
         raise ValueError("PagePlan confirmed facts are unavailable")
-    resolved = await resolve_design_profile(
-        db, tenant_id=project.tenant_id, project_id=project.id
-    )
+    resolved = await resolve_design_profile(db, tenant_id=project.tenant_id, project_id=project.id)
     profile_snapshot = design_snapshot(resolved)
     if not profile_snapshot or not resolved.effective_profile:
         raise ValueError("Approve a design profile before intent generation")

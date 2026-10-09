@@ -96,11 +96,11 @@ def test_author_routes_keep_review_and_media_provenance_boundaries():
     assert "post" in paths[f"{base}/{{revision_id}}/approve"]
     assert "post" in paths[f"{base}/{{revision_id}}/reject"]
 
-    source = (
-        Path(__file__).parents[1] / "app" / "api" / "v1" / "authors.py"
-    ).read_text(encoding="utf-8")
+    source = (Path(__file__).parents[1] / "app" / "api" / "v1" / "authors.py").read_text(
+        encoding="utf-8"
+    )
     assert "_approved_portrait_or_409" in source
     assert "ensure_media_review_allows_use" in source
-    assert "state != \"review\"" in source
+    assert 'state != "review"' in source
     assert "SiteBuild" not in source
     assert "publish" not in source.lower()
