@@ -151,7 +151,7 @@ async def configure_smtp_bz_smtp(
     transport.smtp_password_enc = get_encryptor().encrypt(password.strip())
     if activate:
         transport.transport = "smtp_bz_smtp"
-    transport.revision += 1
+    transport.revision = (transport.revision or 0) + 1
     return transport
 
 
@@ -174,7 +174,7 @@ async def configure_smtp_bz_api(
     transport.api_authorization_enc = get_encryptor().encrypt(authorization.strip())
     if activate:
         transport.transport = "smtp_bz_api"
-    transport.revision += 1
+    transport.revision = (transport.revision or 0) + 1
     return transport
 
 

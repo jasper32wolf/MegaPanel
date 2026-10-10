@@ -155,10 +155,13 @@ def test_panel_uses_bundled_logo_and_favicon():
     shell = (PANEL_ROOT / "src" / "components" / "Shell.tsx").read_text(encoding="utf-8")
     login = (PANEL_ROOT / "src" / "pages" / "LoginPage.tsx").read_text(encoding="utf-8")
 
-    assert (PANEL_ROOT / "public" / "site-panel-mark.svg").is_file()
-    assert 'rel="icon" type="image/svg+xml" href="/site-panel-mark.svg"' in index
-    assert 'src="/site-panel-mark.svg"' in shell
-    assert 'src="/site-panel-mark.svg"' in login
+    assert (PANEL_ROOT / "public" / "Iconka.svg").is_file()
+    assert 'rel="icon" type="image/svg+xml" href="/Iconka.svg"' in index
+    assert 'src="/Iconka.svg"' in shell
+    assert 'src="/Iconka.svg"' in login
+    assert "Mega Panel" in index
+    assert "Mega Panel" in shell
+    assert "Mega Panel" in login
 
 
 def test_production_compose_exposes_only_caddy_http_ports():

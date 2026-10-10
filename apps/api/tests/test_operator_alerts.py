@@ -126,23 +126,22 @@ def test_smtp_bz_sender_is_limited_to_the_verified_domain():
         operator_alerts._validate_smtp_bz_sender("alerts@example.test")
 
 
-def test_smtp_credentials_are_encrypted_before_transport_is_stored(monkeypatch):
-    transport = OperatorAlertTransport(transport="none", revision=1)
-
+def test_first_smtp_configuration_is_encrypted_and_has_a_revision(monkeypatch):
     class Encryptor:
         @staticmethod
         def encrypt(value: str) -> str:
             return f"ciphertext:{value}"
 
-    async def stored_transport(*_args, **_kwargs):
-        return transport
+    async def no_transport(*_args, **_kwargs):
+        return None
 
+    database = FakeDatabase()
     monkeypatch.setattr(operator_alerts, "get_encryptor", lambda: Encryptor())
-    monkeypatch.setattr(operator_alerts, "_transport_for_tenant", stored_transport)
+    monkeypatch.setattr(operator_alerts, "_transport_for_tenant", no_transport)
 
     configured = asyncio.run(
         operator_alerts.configure_smtp_bz_smtp(
-            FakeDatabase(),
+            database,
             tenant_id=uuid4(),
             sender_email="alerts@osco-servis.ru",
             port=587,
@@ -153,10 +152,39 @@ def test_smtp_credentials_are_encrypted_before_transport_is_stored(monkeypatch):
         )
     )
 
+    assert database.added == [configured]
     assert configured.transport == "smtp_bz_smtp"
+    assert configured.revision == 1
     assert configured.smtp_username_enc == "ciphertext:smtp-login"
     assert configured.smtp_password_enc == "ciphertext:smtp-password"
     assert "smtp-password" not in str(operator_alerts._transport_status(configured))
+
+
+def test_first_api_configuration_has_a_revision(monkeypatch):
+    class Encryptor:
+        @staticmethod
+        def encrypt(value: str) -> str:
+            return f"ciphertext:{value}"
+
+    async def no_transport(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(operator_alerts, "get_encryptor", lambda: Encryptor())
+    monkeypatch.setattr(operator_alerts, "_transport_for_tenant", no_transport)
+
+    configured = asyncio.run(
+        operator_alerts.configure_smtp_bz_api(
+            FakeDatabase(),
+            tenant_id=uuid4(),
+            sender_email="alerts@osco-servis.ru",
+            authorization="API Authorization",
+            activate=False,
+        )
+    )
+
+    assert configured.revision == 1
+    assert configured.api_authorization_enc == "ciphertext:API Authorization"
+    assert "API Authorization" not in str(operator_alerts._transport_status(configured))
 
 
 def test_changed_transport_terminalizes_an_old_delivery(monkeypatch):
