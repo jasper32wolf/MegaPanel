@@ -76,8 +76,9 @@ export function OpsPage() {
     action: "acknowledge" | "resolve" | "snooze",
     snoozeMinutes?: 60 | 240 | 1440,
   ) {
+    let updated: Incident;
     try {
-      await api(`/api/v1/panel/incidents/${incident.id}`, {
+      updated = await api<Incident>(`/api/v1/panel/incidents/${incident.id}`, {
         method: "PATCH",
         body: JSON.stringify({ action, ...(snoozeMinutes ? { snooze_minutes: snoozeMinutes } : {}) }),
       }, token);
@@ -85,8 +86,10 @@ export function OpsPage() {
       setError(cause instanceof Error ? cause.message : "Решение по инциденту не сохранено");
       return;
     }
+    setIncidents((current) => current.map((item) => item.id === updated.id ? updated : item));
     try {
       await load();
+      setIncidents((current) => current.map((item) => item.id === updated.id ? updated : item));
     } catch (cause) {
       setError(`Решение по инциденту сохранено, но статус не обновился. ${cause instanceof Error ? cause.message : "Повторите загрузку позже."}`);
     }

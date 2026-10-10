@@ -103,7 +103,7 @@ test("Ops snoozes one persisted incident without external delivery", async ({ pa
     if (url.pathname.endsWith("/incidents") && request.method() === "GET") return route.fulfill({ status: 200, body: JSON.stringify([{ ...incident, snoozed_until: snoozedUntil }]) });
     if (url.pathname.endsWith(`/incidents/${incident.id}`) && request.method() === "PATCH") {
       mutations.push({ path: url.pathname, body: request.postDataJSON() });
-      snoozedUntil = "2026-10-09T13:00:00Z";
+      snoozedUntil = "2099-10-09T13:00:00Z";
       return route.fulfill({ status: 200, body: JSON.stringify({ ...incident, snoozed_until: snoozedUntil }) });
     }
     return route.fulfill({ status: 404, body: '{"detail":"not used by proof"}' });
