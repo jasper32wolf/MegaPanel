@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from app.api.v1.panel import _serialize_notification
 from app.core.config import Settings
 from app.models import AlertDelivery, OperatorAlertTransport
 from app.services import operator_alerts, site_integrity, site_monitor
@@ -294,6 +295,32 @@ def test_api_timeout_is_not_retried_after_an_ambiguous_send(monkeypatch):
 def test_operator_alert_recipient_is_masked_without_disclosure():
     assert operator_alerts.mask_email("alerts@example.test") == "a***@example.test"
     assert operator_alerts.mask_email("invalid") == "настроен"
+
+
+def test_alert_projection_exposes_only_safe_delivery_error_code():
+    notification = SimpleNamespace(
+        id=uuid4(),
+        category="security",
+        signal_code="security-login",
+        subject_kind="user",
+        subject_key="operator",
+        priority="high",
+        title="Вход",
+        body="Проверка",
+        read=False,
+        created_at=None,
+    )
+    delivery = SimpleNamespace(
+        channel="smtp_bz_smtp",
+        status="dead_letter",
+        error_code="authentication_failed",
+    )
+
+    payload = _serialize_notification(notification, [delivery])
+
+    assert payload["deliveries"] == {"smtp_bz_smtp": "dead_letter"}
+    assert payload["delivery_errors"] == {"smtp_bz_smtp": "authentication_failed"}
+    assert "password" not in str(payload).lower()
 
 
 def test_telegram_credentials_must_be_configured_together():

@@ -73,6 +73,9 @@ def _serialize_notification(
         "read": notification.read,
         "created_at": notification.created_at.isoformat() if notification.created_at else None,
         "deliveries": {delivery.channel: delivery.status for delivery in deliveries},
+        "delivery_errors": {
+            delivery.channel: delivery.error_code for delivery in deliveries if delivery.error_code
+        },
     }
 
 

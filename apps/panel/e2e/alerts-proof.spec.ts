@@ -52,7 +52,8 @@ test("operator alert inbox shows channel status, read action and explicit test d
         body: "Создана новая сессия оператора.",
         read,
         created_at: "2026-10-09T12:00:00Z",
-        deliveries: { smtp_bz_smtp: "delivered", telegram: "retrying" },
+        deliveries: { smtp_bz_smtp: "dead_letter", telegram: "retrying" },
+        delivery_errors: { smtp_bz_smtp: "authentication_failed" },
       };
       const testAlert = {
         ...securityAlert,
@@ -75,7 +76,7 @@ test("operator alert inbox shows channel status, read action and explicit test d
   await expect(page.getByText("Email: SMTP.bz SMTP", { exact: true })).toBeVisible();
   await expect(page.getByText("Telegram: готов", { exact: true })).toBeVisible();
   await expect(page.getByText("Выполнен вход в панель", { exact: true })).toBeVisible();
-  await expect(page.getByText("Email: delivered", { exact: true })).toBeVisible();
+  await expect(page.getByText("Email: dead_letter · SMTP.bz отклонил логин или пароль (authentication_failed)", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Прочитано" }).click();
   await expect(page.getByText("Входящие (0 непрочитанных)", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Отправить проверочное оповещение" }).click();

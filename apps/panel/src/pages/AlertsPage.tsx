@@ -4,6 +4,7 @@ import { api, useAuth } from "../lib/auth";
 import { AsyncFeedback, ConfirmDialog, PageHeader, StatusPill, Surface } from "../components/ui";
 
 type DeliveryStatus = "queued" | "processing" | "retrying" | "delivered" | "dead_letter";
+type DeliveryChannel = "smtp_bz_smtp" | "smtp_bz_api" | "telegram";
 type Alert = {
   id: string;
   category: "security" | "site" | "system";
@@ -16,7 +17,8 @@ type Alert = {
   body: string;
   read: boolean;
   created_at: string | null;
-  deliveries: Partial<Record<"smtp_bz_smtp" | "smtp_bz_api" | "telegram", DeliveryStatus>>;
+  deliveries: Partial<Record<DeliveryChannel, DeliveryStatus>>;
+  delivery_errors?: Partial<Record<DeliveryChannel, string>>;
 };
 type AlertChannels = { enabled: boolean; email: boolean; telegram: boolean };
 type AlertSummary = {
@@ -48,6 +50,26 @@ function tone(status: DeliveryStatus | undefined) {
 
 function categoryLabel(category: Alert["category"]) {
   return category === "security" ? "Безопасность" : category === "site" ? "Сайты" : "Система";
+}
+
+function deliveryErrorLabel(error: string | undefined) {
+  const labels: Record<string, string> = {
+    authentication_failed: "SMTP.bz отклонил логин или пароль",
+    invalid_config: "неполная конфигурация SMTP.bz",
+    legacy_transport_retired: "устаревший транспорт отключён",
+    outcome_unknown: "SMTP.bz не подтвердил результат отправки",
+    recipient_rejected: "сервис отклонил адрес получателя",
+    sender_rejected: "SMTP.bz отклонил адрес отправителя",
+    timeout: "истекло время ожидания SMTP.bz",
+    tls_failed: "не удалось установить TLS-соединение",
+    transport_changed: "конфигурация доставки была изменена",
+    unavailable: "сервис доставки временно недоступен",
+  };
+  return error ? `${labels[error] || "ошибка доставки"} (${error})` : "";
+}
+
+function deliveryLabel(status: DeliveryStatus | undefined, error: string | undefined) {
+  return `${status || "не настроен"}${error ? ` · ${deliveryErrorLabel(error)}` : ""}`;
 }
 
 export function AlertsPage() {
@@ -131,7 +153,7 @@ export function AlertsPage() {
           <p>{alert.body}</p>
           {alert.subject_label && <p className="muted">Объект: {alert.subject_label}</p>}
           <p className="muted">{alert.created_at ? new Date(alert.created_at).toLocaleString() : "—"} · код: {alert.signal_code || "—"}</p>
-          <div className="row"><StatusPill tone={tone(alert.deliveries.smtp_bz_smtp || alert.deliveries.smtp_bz_api)}>Email: {alert.deliveries.smtp_bz_smtp || alert.deliveries.smtp_bz_api || "не настроен"}</StatusPill><StatusPill tone={tone(alert.deliveries.telegram)}>Telegram: {alert.deliveries.telegram || "не настроен"}</StatusPill>{!alert.read && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void markRead(alert)}>{busy === alert.id ? "Сохранение…" : "Прочитано"}</button>}</div>
+          <div className="row"><StatusPill tone={tone(alert.deliveries.smtp_bz_smtp || alert.deliveries.smtp_bz_api)}>Email: {deliveryLabel(alert.deliveries.smtp_bz_smtp || alert.deliveries.smtp_bz_api, alert.delivery_errors?.smtp_bz_smtp || alert.delivery_errors?.smtp_bz_api)}</StatusPill><StatusPill tone={tone(alert.deliveries.telegram)}>Telegram: {deliveryLabel(alert.deliveries.telegram, alert.delivery_errors?.telegram)}</StatusPill>{!alert.read && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void markRead(alert)}>{busy === alert.id ? "Сохранение…" : "Прочитано"}</button>}</div>
         </article>)}</div>}
       </Surface>
       <ConfirmDialog
