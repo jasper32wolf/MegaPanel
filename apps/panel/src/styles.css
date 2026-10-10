@@ -154,8 +154,8 @@ textarea:focus-visible {
 .nav-mark {
   width: 40px;
   height: 40px;
-  border-radius: 10px;
   flex-shrink: 0;
+  filter: invert(67%) sepia(47%) saturate(621%) hue-rotate(112deg) brightness(91%) contrast(88%);
 }
 
 .nav-brand h1 {
@@ -674,6 +674,7 @@ textarea:focus-visible {
   margin-bottom: var(--space-4);
   position: relative;
   z-index: 1;
+  filter: invert(67%) sepia(47%) saturate(621%) hue-rotate(112deg) brightness(91%) contrast(88%);
 }
 
 .login-hero .brand {

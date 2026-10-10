@@ -77,10 +77,10 @@ export function Shell({ children }: { children: ReactNode }) {
       <a className="skip-link" href="#main-content">Перейти к основному содержимому</a>
       <aside className="nav">
         <div className="nav-brand">
-          <img className="nav-mark" src="/site-panel-mark.svg" width="40" height="40" alt="" />
+          <img className="nav-mark" src="/Iconka.svg" width="40" height="40" alt="" />
           <div>
-            <h1>Site Panel</h1>
-            <small>Programmatic SEO</small>
+            <h1>Mega Panel</h1>
+            <small>Многофункциональная SEO панель</small>
           </div>
         </div>
         {groups.map((g) => (

@@ -15,6 +15,14 @@ async function mockAuth(page: Page) {
   await expect(page).toHaveURL(/\/$/);
 }
 
+test("login page shows the Mega Panel identity", async ({ page }) => {
+  await page.goto("/login");
+
+  await expect(page.getByRole("heading", { name: "Mega Panel" })).toBeVisible();
+  await expect(page.getByText("Многофункциональная SEO панель.", { exact: true })).toBeVisible();
+  await expect(page.locator('img[src="/Iconka.svg"]')).toBeVisible();
+});
+
 test("operator alert inbox shows channel status, read action and explicit test delivery", async ({ page }) => {
   await mockAuth(page);
   let testCreated = false;
@@ -60,6 +68,9 @@ test("operator alert inbox shows channel status, read action and explicit test d
   });
 
   await page.goto("/alerts");
+  await expect(page.getByRole("heading", { name: "Mega Panel" })).toBeVisible();
+  await expect(page.getByText("Многофункциональная SEO панель", { exact: true })).toBeVisible();
+  await expect(page.locator('img[src="/Iconka.svg"]')).toBeVisible();
   await expect(page.getByRole("heading", { name: "Оповещения" })).toBeVisible();
   await expect(page.getByText("Email: SMTP.bz SMTP", { exact: true })).toBeVisible();
   await expect(page.getByText("Telegram: готов", { exact: true })).toBeVisible();

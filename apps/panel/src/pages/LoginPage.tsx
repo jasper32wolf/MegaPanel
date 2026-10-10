@@ -37,10 +37,10 @@ export function LoginPage() {
 
   return (
     <div className="login-wrap">
-      <section className="login-hero" aria-label="Site Panel">
-        <img className="login-mark" src="/site-panel-mark.svg" width="64" height="64" alt="" />
-        <h1 className="brand">Site Panel</h1>
-        <p>Панель одного оператора для создания, публикации и сопровождения сайтов услуг.</p>
+      <section className="login-hero" aria-label="Mega Panel">
+        <img className="login-mark" src="/Iconka.svg" width="64" height="64" alt="" />
+        <h1 className="brand">Mega Panel</h1>
+        <p>Многофункциональная SEO панель.</p>
       </section>
       <div className="login-panel">
         <form className="login-box" onSubmit={onSubmit}>
