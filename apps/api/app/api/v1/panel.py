@@ -37,12 +37,18 @@ from app.services.operations import (
 from app.services.operator_alerts import (
     alert_channel_status,
     alert_recipient_status,
+    alert_transport_status,
     clear_alert_recipient,
+    configure_smtp_bz_api,
+    configure_smtp_bz_smtp,
     create_operator_alert,
+    select_alert_transport,
     set_alert_recipient,
+    test_smtp_bz_api_transport,
+    test_smtp_bz_transport,
 )
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, EmailStr, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -123,6 +129,38 @@ router = APIRouter()
 
 class AlertRecipientIn(BaseModel):
     email: EmailStr
+
+
+class SmtpBzSmtpIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sender_email: EmailStr
+    port: Literal[587, 9587, 465, 9465] = 587
+    tls_mode: Literal["starttls", "implicit_tls"] = "starttls"
+    username: str = Field(min_length=1, max_length=512)
+    password: str = Field(min_length=1, max_length=4096)
+    activate: bool = True
+
+    @model_validator(mode="after")
+    def validate_tls_port(self) -> SmtpBzSmtpIn:
+        ports = {"starttls": {587, 9587}, "implicit_tls": {465, 9465}}
+        if self.port not in ports[self.tls_mode]:
+            raise ValueError("SMTP.bz port does not match the selected TLS mode")
+        return self
+
+
+class SmtpBzApiIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sender_email: EmailStr
+    authorization: str = Field(min_length=1, max_length=4096)
+    activate: bool = False
+
+
+class AlertTransportSelectIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    transport: Literal["none", "smtp_bz_smtp", "smtp_bz_api"]
 
 
 class IncidentActionIn(BaseModel):
@@ -544,8 +582,9 @@ async def get_operator_alert_settings(
     if not auth.tenant_id:
         raise HTTPException(status_code=403, detail="Tenant required")
     return {
-        "channels": alert_channel_status(),
+        "channels": await alert_channel_status(db, auth.tenant_id),
         "recipient": await alert_recipient_status(db, auth.tenant_id),
+        "transport": await alert_transport_status(db, auth.tenant_id),
     }
 
 
@@ -588,6 +627,115 @@ async def delete_operator_alert_recipient(
     return {"removed": removed}
 
 
+@router.put("/alert-settings/transports/smtp-bz-smtp")
+async def update_smtp_bz_smtp_transport(
+    body: SmtpBzSmtpIn,
+    auth: AuthContext = Depends(require_roles("superadmin")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    if not auth.tenant_id:
+        raise HTTPException(status_code=403, detail="Tenant required")
+    try:
+        await configure_smtp_bz_smtp(
+            db,
+            tenant_id=auth.tenant_id,
+            sender_email=str(body.sender_email),
+            port=body.port,
+            tls_mode=body.tls_mode,
+            username=body.username,
+            password=body.password,
+            activate=body.activate,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    await append_audit(
+        db,
+        action="operator_alert.transport.configure",
+        payload={"transport": "smtp_bz_smtp", "activated": body.activate},
+        tenant_id=auth.tenant_id,
+        actor_id=auth.user.id,
+    )
+    await db.commit()
+    return await alert_transport_status(db, auth.tenant_id)
+
+
+@router.put("/alert-settings/transports/smtp-bz-api")
+async def update_smtp_bz_api_transport(
+    body: SmtpBzApiIn,
+    auth: AuthContext = Depends(require_roles("superadmin")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    if not auth.tenant_id:
+        raise HTTPException(status_code=403, detail="Tenant required")
+    await configure_smtp_bz_api(
+        db,
+        tenant_id=auth.tenant_id,
+        sender_email=str(body.sender_email),
+        authorization=body.authorization,
+        activate=body.activate,
+    )
+    await append_audit(
+        db,
+        action="operator_alert.transport.configure",
+        payload={"transport": "smtp_bz_api", "activated": body.activate},
+        tenant_id=auth.tenant_id,
+        actor_id=auth.user.id,
+    )
+    await db.commit()
+    return await alert_transport_status(db, auth.tenant_id)
+
+
+@router.put("/alert-settings/selected-transport")
+async def update_selected_alert_transport(
+    body: AlertTransportSelectIn,
+    auth: AuthContext = Depends(require_roles("superadmin")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    if not auth.tenant_id:
+        raise HTTPException(status_code=403, detail="Tenant required")
+    try:
+        transport = await select_alert_transport(
+            db, tenant_id=auth.tenant_id, transport_name=body.transport
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    await append_audit(
+        db,
+        action="operator_alert.transport.select",
+        payload={"transport": transport.transport, "revision": transport.revision},
+        tenant_id=auth.tenant_id,
+        actor_id=auth.user.id,
+    )
+    await db.commit()
+    return await alert_transport_status(db, auth.tenant_id)
+
+
+@router.post("/alert-settings/test-connection")
+async def test_operator_alert_transport(
+    auth: AuthContext = Depends(require_roles("superadmin")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    if not auth.tenant_id:
+        raise HTTPException(status_code=403, detail="Tenant required")
+    status = (await alert_transport_status(db, auth.tenant_id))["selected"]
+    result = (
+        await test_smtp_bz_transport(db, auth.tenant_id)
+        if status == "smtp_bz_smtp"
+        else await test_smtp_bz_api_transport(db, auth.tenant_id)
+        if status == "smtp_bz_api"
+        else "invalid_config"
+    )
+    await append_audit(
+        db,
+        action="operator_alert.transport.test",
+        payload={"transport": status, "result": result},
+        tenant_id=auth.tenant_id,
+        actor_id=auth.user.id,
+    )
+    await db.commit()
+    return {"result": result}
+
+
 @router.get("/alerts")
 async def list_operator_alerts(
     category: str | None = None,
@@ -627,7 +775,7 @@ async def list_operator_alerts(
         "items": await _notification_projection(db, notifications),
         "total": total,
         "unread": unread,
-        "channels": alert_channel_status(),
+        "channels": await alert_channel_status(db, auth.tenant_id),
     }
 
 
@@ -659,9 +807,12 @@ async def send_test_operator_alert(
     if not auth.tenant_id:
         raise HTTPException(status_code=403, detail="Tenant required")
     recipient = await alert_recipient_status(db, auth.tenant_id)
+    transport = await alert_transport_status(db, auth.tenant_id)
     if not recipient["configured"]:
         raise HTTPException(status_code=409, detail="Alert recipient is not configured")
-    notification = create_operator_alert(
+    if not transport["configured"]:
+        raise HTTPException(status_code=409, detail="Alert transport is not configured")
+    notification = await create_operator_alert(
         db,
         tenant_id=auth.tenant_id,
         category="system",

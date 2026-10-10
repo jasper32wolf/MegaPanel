@@ -785,6 +785,7 @@ def test_publish_projects_selected_snapshot_and_archives_omitted_pages(monkeypat
     monkeypatch.setattr(projects, "SiteBuilder", Builder)
     monkeypatch.setattr(projects, "CaddyClient", Caddy)
     monkeypatch.setattr(projects, "append_audit", AsyncMock())
+    monkeypatch.setattr(projects, "create_operator_alert", AsyncMock())
     auth = SimpleNamespace(user=SimpleNamespace(id=uuid4()))
 
     response = asyncio.run(
@@ -894,6 +895,7 @@ def test_rollback_restores_target_snapshot_and_archives_newer_only_pages(monkeyp
     monkeypatch.setattr(projects, "legal_review_status", lambda _build: {"blockers": []})
     monkeypatch.setattr(projects, "_lead_routing_publish_blockers", AsyncMock(return_value=[]))
     monkeypatch.setattr(projects, "append_audit", AsyncMock())
+    monkeypatch.setattr(projects, "create_operator_alert", AsyncMock())
     auth = SimpleNamespace(user=SimpleNamespace(id=uuid4()))
 
     response = asyncio.run(

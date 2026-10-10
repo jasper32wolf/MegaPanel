@@ -267,6 +267,7 @@ from app.models.operations import (  # noqa: E402
     AlertIncident,
     OperationalEvent,
     OperatorAlertRecipient,
+    OperatorAlertTransport,
 )
 from app.models.ops import (  # noqa: E402
     ContentDecayEvent,
@@ -371,6 +372,7 @@ __all__ = [
     "Notification",
     "OperationalEvent",
     "OperatorAlertRecipient",
+    "OperatorAlertTransport",
     "OperationalVerification",
     "Plugin",
     "Project",

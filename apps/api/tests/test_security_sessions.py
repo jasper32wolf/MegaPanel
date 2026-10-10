@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -80,7 +81,9 @@ def test_totp_confirmation_only_enables_a_verified_pending_secret(monkeypatch):
     monkeypatch.setattr(security_ops, "append_audit", append_audit)
     alerts: list[dict] = []
     monkeypatch.setattr(
-        security_ops, "create_operator_alert", lambda *_args, **kwargs: alerts.append(kwargs)
+        security_ops,
+        "create_operator_alert",
+        AsyncMock(side_effect=lambda *_args, **kwargs: alerts.append(kwargs)),
     )
     monkeypatch.setattr(
         security_ops,
@@ -267,7 +270,9 @@ def test_session_revoke_marks_only_a_noncurrent_session(monkeypatch):
     monkeypatch.setattr(security_ops, "append_audit", append_audit)
     alerts: list[dict] = []
     monkeypatch.setattr(
-        security_ops, "create_operator_alert", lambda *_args, **kwargs: alerts.append(kwargs)
+        security_ops,
+        "create_operator_alert",
+        AsyncMock(side_effect=lambda *_args, **kwargs: alerts.append(kwargs)),
     )
 
     result = asyncio.run(

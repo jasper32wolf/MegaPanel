@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import smtplib
 import ssl
 from datetime import UTC, datetime, timedelta
@@ -9,7 +10,13 @@ from uuid import UUID, uuid4
 
 import httpx
 from app.core.config import get_settings
-from app.models import AlertDelivery, AlertDeliveryAttempt, Notification, OperatorAlertRecipient
+from app.models import (
+    AlertDelivery,
+    AlertDeliveryAttempt,
+    Notification,
+    OperatorAlertRecipient,
+    OperatorAlertTransport,
+)
 from app.services.leads import get_encryptor
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,7 +25,11 @@ MAX_ATTEMPTS = 5
 BACKOFF_SECONDS = (60, 300, 900, 3600, 3600)
 LEASE_SECONDS = 300
 ALERT_CATEGORIES = frozenset({"security", "site", "system"})
-DELIVERY_CHANNELS = frozenset({"email", "telegram"})
+SMTP_BZ_HOST = "connect.smtp.bz"
+SMTP_BZ_API_ROOT = "https://api.smtp.bz/v1"
+SMTP_BZ_SENDER_DOMAIN = "osco-servis.ru"
+SMTP_BZ_SMTP_PORTS = {"starttls": frozenset({587, 9587}), "implicit_tls": frozenset({465, 9465})}
+TRANSPORTS = frozenset({"none", "smtp_bz_smtp", "smtp_bz_api"})
 
 
 def _now() -> datetime:
@@ -29,71 +40,167 @@ def _bounded(value: str, maximum: int) -> str:
     return value[:maximum]
 
 
-def _settings_channels() -> tuple[str, ...]:
-    settings = get_settings()
-    if not settings.operator_alerts_enabled:
-        return ()
-    return tuple(
-        channel
-        for channel, configured in (
-            ("email", settings.smtp_configured),
-            ("telegram", settings.telegram_configured),
+def _decrypt(value: str | None) -> str | None:
+    if not value:
+        return None
+    try:
+        return get_encryptor().decrypt(value)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _transport_ready(transport: OperatorAlertTransport | None) -> bool:
+    if transport is None or transport.transport not in TRANSPORTS:
+        return False
+    if transport.transport == "smtp_bz_smtp":
+        return bool(
+            transport.sender_email
+            and transport.smtp_port in SMTP_BZ_SMTP_PORTS.get(transport.smtp_tls_mode or "", ())
+            and transport.smtp_username_enc
+            and transport.smtp_password_enc
         )
-        if configured
-    )
+    if transport.transport == "smtp_bz_api":
+        return bool(transport.sender_email and transport.api_authorization_enc)
+    return False
 
 
-def alert_channel_status() -> dict[str, bool]:
-    settings = get_settings()
+async def _transport_for_tenant(
+    db: AsyncSession, tenant_id: UUID, *, lock: bool = False
+) -> OperatorAlertTransport | None:
+    statement = select(OperatorAlertTransport).where(OperatorAlertTransport.tenant_id == tenant_id)
+    if lock:
+        statement = statement.with_for_update()
+    return (await db.execute(statement)).scalar_one_or_none()
+
+
+def _transport_status(
+    transport: OperatorAlertTransport | None,
+) -> dict[str, str | bool | int | None]:
     return {
-        "enabled": settings.operator_alerts_enabled,
-        "email": settings.smtp_configured,
-        "telegram": settings.telegram_configured,
+        "selected": transport.transport if transport else "none",
+        "configured": _transport_ready(transport),
+        "smtp_configured": bool(
+            transport
+            and transport.sender_email
+            and transport.smtp_username_enc
+            and transport.smtp_password_enc
+        ),
+        "api_configured": bool(
+            transport and transport.sender_email and transport.api_authorization_enc
+        ),
+        "sender_email": mask_email(transport.sender_email)
+        if transport and transport.sender_email
+        else None,
+        "revision": transport.revision if transport else None,
+        "updated_at": transport.updated_at.isoformat()
+        if transport and transport.updated_at
+        else None,
     }
 
 
-def create_operator_alert(
+async def alert_transport_status(
+    db: AsyncSession, tenant_id: UUID
+) -> dict[str, str | bool | int | None]:
+    return _transport_status(await _transport_for_tenant(db, tenant_id))
+
+
+async def alert_channel_status(
+    db: AsyncSession, tenant_id: UUID
+) -> dict[str, str | bool | int | None]:
+    settings = get_settings()
+    transport = await _transport_for_tenant(db, tenant_id)
+    return {
+        "enabled": settings.operator_alerts_enabled,
+        "email": _transport_ready(transport),
+        "telegram": settings.telegram_configured,
+        "selected_transport": transport.transport if transport else "none",
+    }
+
+
+def _validate_smtp_bz_sender(sender_email: str) -> str:
+    normalized = sender_email.strip().lower()
+    if normalized.rsplit("@", 1)[-1] != SMTP_BZ_SENDER_DOMAIN:
+        raise ValueError("SMTP.bz sender must use the verified osco-servis.ru domain")
+    return normalized
+
+
+async def configure_smtp_bz_smtp(
     db: AsyncSession,
     *,
     tenant_id: UUID,
-    category: str,
-    signal_code: str,
-    title: str,
-    body: str,
-    subject_kind: str | None = None,
-    subject_key: str | None = None,
-    user_id: UUID | None = None,
-) -> Notification:
-    if category not in ALERT_CATEGORIES:
-        raise ValueError("Unsupported alert category")
-    if not signal_code or len(signal_code) > 64:
-        raise ValueError("Invalid alert signal")
-    notification = Notification(
-        id=uuid4(),
-        tenant_id=tenant_id,
-        user_id=user_id,
-        priority="high" if category == "security" else "normal",
-        title=_bounded(title, 255),
-        body=_bounded(body, 1000),
-        group_key=f"{signal_code}:{subject_kind or 'system'}:{subject_key or ''}"[:128],
-        category=category,
-        signal_code=signal_code,
-        subject_kind=_bounded(subject_kind or "system", 32),
-        subject_key=_bounded(subject_key or "", 64),
-    )
-    db.add(notification)
-    for channel in _settings_channels():
-        db.add(
-            AlertDelivery(
-                tenant_id=tenant_id,
-                notification_id=notification.id,
-                channel=channel,
-                status="queued",
-                idempotency_key=f"{notification.id}:{channel}",
-                next_attempt_at=_now(),
-            )
-        )
-    return notification
+    sender_email: str,
+    port: int,
+    tls_mode: str,
+    username: str,
+    password: str,
+    activate: bool,
+) -> OperatorAlertTransport:
+    if tls_mode not in SMTP_BZ_SMTP_PORTS or port not in SMTP_BZ_SMTP_PORTS[tls_mode]:
+        raise ValueError("Unsupported SMTP.bz TLS mode or port")
+    sender_email = _validate_smtp_bz_sender(sender_email)
+    if not username.strip() or not password.strip():
+        raise ValueError("SMTP credentials are required")
+    transport = await _transport_for_tenant(db, tenant_id, lock=True)
+    if transport is None:
+        transport = OperatorAlertTransport(tenant_id=tenant_id)
+        db.add(transport)
+    transport.sender_email = sender_email
+    transport.smtp_port = port
+    transport.smtp_tls_mode = tls_mode
+    transport.smtp_username_enc = get_encryptor().encrypt(username.strip())
+    transport.smtp_password_enc = get_encryptor().encrypt(password.strip())
+    if activate:
+        transport.transport = "smtp_bz_smtp"
+    transport.revision += 1
+    return transport
+
+
+async def configure_smtp_bz_api(
+    db: AsyncSession,
+    *,
+    tenant_id: UUID,
+    sender_email: str,
+    authorization: str,
+    activate: bool,
+) -> OperatorAlertTransport:
+    if not authorization.strip():
+        raise ValueError("SMTP.bz API authorization is required")
+    sender_email = _validate_smtp_bz_sender(sender_email)
+    transport = await _transport_for_tenant(db, tenant_id, lock=True)
+    if transport is None:
+        transport = OperatorAlertTransport(tenant_id=tenant_id)
+        db.add(transport)
+    transport.sender_email = sender_email
+    transport.api_authorization_enc = get_encryptor().encrypt(authorization.strip())
+    if activate:
+        transport.transport = "smtp_bz_api"
+    transport.revision += 1
+    return transport
+
+
+async def select_alert_transport(
+    db: AsyncSession, *, tenant_id: UUID, transport_name: str
+) -> OperatorAlertTransport:
+    if transport_name not in TRANSPORTS:
+        raise ValueError("Unsupported alert transport")
+    transport = await _transport_for_tenant(db, tenant_id, lock=True)
+    if transport is None:
+        raise ValueError("Alert transport is not configured")
+    current = transport.transport
+    transport.transport = transport_name
+    if transport_name != "none" and not _transport_ready(transport):
+        transport.transport = current
+        raise ValueError("Selected alert transport is incomplete")
+    if current != transport_name:
+        transport.revision += 1
+    return transport
+
+
+def mask_email(value: str) -> str:
+    local, _, domain = value.partition("@")
+    if not local or not domain:
+        return "настроен"
+    return f"{local[:1]}***@{domain}"
 
 
 async def _operator_email(db: AsyncSession, tenant_id: UUID) -> str | None:
@@ -102,19 +209,7 @@ async def _operator_email(db: AsyncSession, tenant_id: UUID) -> str | None:
             select(OperatorAlertRecipient).where(OperatorAlertRecipient.tenant_id == tenant_id)
         )
     ).scalar_one_or_none()
-    if recipient is None:
-        return None
-    try:
-        return get_encryptor().decrypt(recipient.recipient_enc)
-    except Exception:  # noqa: BLE001
-        return None
-
-
-def mask_email(value: str) -> str:
-    local, _, domain = value.partition("@")
-    if not local or not domain:
-        return "настроен"
-    return f"{local[:1]}***@{domain}"
+    return _decrypt(recipient.recipient_enc) if recipient else None
 
 
 async def alert_recipient_status(db: AsyncSession, tenant_id: UUID) -> dict[str, str | bool | None]:
@@ -154,37 +249,215 @@ async def clear_alert_recipient(db: AsyncSession, *, tenant_id: UUID) -> bool:
     return True
 
 
-def _send_email(recipient: str, title: str, body: str) -> None:
+async def create_operator_alert(
+    db: AsyncSession,
+    *,
+    tenant_id: UUID,
+    category: str,
+    signal_code: str,
+    title: str,
+    body: str,
+    subject_kind: str | None = None,
+    subject_key: str | None = None,
+    user_id: UUID | None = None,
+) -> Notification:
+    if category not in ALERT_CATEGORIES:
+        raise ValueError("Unsupported alert category")
+    if not signal_code or len(signal_code) > 64:
+        raise ValueError("Invalid alert signal")
+    notification = Notification(
+        id=uuid4(),
+        tenant_id=tenant_id,
+        user_id=user_id,
+        priority="high" if category == "security" else "normal",
+        title=_bounded(title, 255),
+        body=_bounded(body, 1000),
+        group_key=f"{signal_code}:{subject_kind or 'system'}:{subject_key or ''}"[:128],
+        category=category,
+        signal_code=signal_code,
+        subject_kind=_bounded(subject_kind or "system", 32),
+        subject_key=_bounded(subject_key or "", 64),
+    )
+    db.add(notification)
     settings = get_settings()
+    recipient = await _operator_email(db, tenant_id)
+    transport = await _transport_for_tenant(db, tenant_id)
+    if settings.operator_alerts_enabled and recipient and _transport_ready(transport):
+        db.add(
+            AlertDelivery(
+                tenant_id=tenant_id,
+                notification_id=notification.id,
+                channel=transport.transport,
+                status="queued",
+                idempotency_key=f"{notification.id}:{transport.transport}",
+                transport_revision=transport.revision,
+                next_attempt_at=_now(),
+            )
+        )
+    if settings.operator_alerts_enabled and settings.telegram_configured:
+        db.add(
+            AlertDelivery(
+                tenant_id=tenant_id,
+                notification_id=notification.id,
+                channel="telegram",
+                status="queued",
+                idempotency_key=f"{notification.id}:telegram",
+                next_attempt_at=_now(),
+            )
+        )
+    return notification
+
+
+def _smtp_client(transport: OperatorAlertTransport) -> smtplib.SMTP:
+    if transport.smtp_port is None or transport.smtp_tls_mode not in SMTP_BZ_SMTP_PORTS:
+        raise ValueError("SMTP transport is incomplete")
+    if transport.smtp_tls_mode == "implicit_tls":
+        return smtplib.SMTP_SSL(SMTP_BZ_HOST, transport.smtp_port, timeout=10)
+    return smtplib.SMTP(SMTP_BZ_HOST, transport.smtp_port, timeout=10)
+
+
+def _smtp_login(client: smtplib.SMTP, transport: OperatorAlertTransport) -> None:
+    username = _decrypt(transport.smtp_username_enc)
+    password = _decrypt(transport.smtp_password_enc)
+    if not username or not password:
+        raise ValueError("SMTP credentials cannot be decrypted")
+    client.ehlo()
+    if transport.smtp_tls_mode == "starttls":
+        client.starttls(context=ssl.create_default_context())
+        client.ehlo()
+    client.login(username, password)
+
+
+def _test_smtp(transport: OperatorAlertTransport) -> None:
+    with _smtp_client(transport) as client:
+        _smtp_login(client, transport)
+
+
+async def test_smtp_bz_transport(db: AsyncSession, tenant_id: UUID) -> str:
+    transport = await _transport_for_tenant(db, tenant_id)
+    if (
+        transport is None
+        or not _transport_ready(transport)
+        or transport.transport != "smtp_bz_smtp"
+    ):
+        return "invalid_config"
+    try:
+        await asyncio.to_thread(_test_smtp, transport)
+    except smtplib.SMTPAuthenticationError:
+        return "authentication_failed"
+    except (ssl.SSLError, smtplib.SMTPNotSupportedError):
+        return "tls_failed"
+    except TimeoutError:
+        return "timeout"
+    except (OSError, smtplib.SMTPException):
+        return "unavailable"
+    return "ok"
+
+
+def _send_smtp(transport: OperatorAlertTransport, *, recipient: str, title: str, body: str) -> None:
+    if not transport.sender_email:
+        raise ValueError("SMTP sender is missing")
     message = EmailMessage()
     message["Subject"] = title
-    message["From"] = settings.smtp_from_email
+    message["From"] = transport.sender_email
     message["To"] = recipient
     message.set_content(body)
-    client_class = smtplib.SMTP_SSL if settings.smtp_use_ssl else smtplib.SMTP
-    with client_class(settings.smtp_host, settings.smtp_port, timeout=10) as client:
-        client.ehlo()
-        if settings.smtp_starttls:
-            client.starttls(context=ssl.create_default_context())
-            client.ehlo()
-        if settings.smtp_username:
-            client.login(settings.smtp_username, settings.smtp_password)
-        client.send_message(message, from_addr=settings.smtp_from_email, to_addrs=[recipient])
+    with _smtp_client(transport) as client:
+        _smtp_login(client, transport)
+        client.send_message(message, from_addr=transport.sender_email, to_addrs=[recipient])
 
 
-async def _dispatch_email(
-    db: AsyncSession, notification: Notification
+async def _dispatch_smtp(
+    db: AsyncSession, notification: Notification, transport: OperatorAlertTransport
 ) -> tuple[bool, str | None, bool]:
     recipient = await _operator_email(db, notification.tenant_id)
-    if not recipient or not get_settings().smtp_configured:
+    if not recipient or not _transport_ready(transport):
         return False, "invalid_config", False
     try:
-        await asyncio.to_thread(_send_email, recipient, notification.title, notification.body)
+        await asyncio.to_thread(
+            _send_smtp,
+            transport,
+            recipient=recipient,
+            title=notification.title,
+            body=notification.body,
+        )
+    except smtplib.SMTPAuthenticationError:
+        return False, "authentication_failed", False
+    except smtplib.SMTPSenderRefused:
+        return False, "sender_rejected", False
+    except smtplib.SMTPRecipientsRefused:
+        return False, "recipient_rejected", False
+    except (ssl.SSLError, smtplib.SMTPNotSupportedError):
+        return False, "tls_failed", False
+    except TimeoutError:
+        return False, "timeout", True
     except (OSError, smtplib.SMTPException):
-        return False, "unavailable", True
-    except Exception:
-        return False, "unavailable", True
+        return False, "outcome_unknown", False
     return True, None, False
+
+
+def _alert_html(notification: Notification) -> str:
+    title = html.escape(notification.title)
+    body = html.escape(notification.body).replace("\n", "<br>")
+    return f"<h1>{title}</h1><p>{body}</p>"
+
+
+async def test_smtp_bz_api_transport(db: AsyncSession, tenant_id: UUID) -> str:
+    transport = await _transport_for_tenant(db, tenant_id)
+    authorization = _decrypt(transport.api_authorization_enc) if transport else None
+    if transport is None or not _transport_ready(transport) or not authorization:
+        return "invalid_config"
+    try:
+        async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
+            response = await client.get(
+                f"{SMTP_BZ_API_ROOT}/user", headers={"Authorization": authorization}
+            )
+    except httpx.TimeoutException:
+        return "timeout"
+    except httpx.HTTPError:
+        return "unavailable"
+    if response.status_code == 200:
+        return "ok"
+    if response.status_code in {401, 403}:
+        return "authentication_failed"
+    if response.status_code in {400, 404}:
+        return "invalid_config"
+    return "unavailable"
+
+
+async def _dispatch_smtp_bz_api(
+    db: AsyncSession, notification: Notification, transport: OperatorAlertTransport
+) -> tuple[bool, str | None, bool]:
+    recipient = await _operator_email(db, notification.tenant_id)
+    authorization = _decrypt(transport.api_authorization_enc)
+    if not recipient or not transport.sender_email or not authorization:
+        return False, "invalid_config", False
+    try:
+        async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
+            response = await client.post(
+                f"{SMTP_BZ_API_ROOT}/smtp/send",
+                headers={"Authorization": authorization},
+                data={
+                    "from": transport.sender_email,
+                    "to": recipient,
+                    "subject": notification.title,
+                    "html": _alert_html(notification),
+                    "text": notification.body,
+                },
+            )
+    except httpx.TimeoutException:
+        return False, "outcome_unknown", False
+    except httpx.HTTPError:
+        return False, "unavailable", True
+    if response.is_success:
+        return True, None, False
+    if response.status_code in {401, 403}:
+        return False, "authentication_failed", False
+    if response.status_code in {400, 404, 422}:
+        return False, "api_rejected", False
+    if response.status_code in {408, 429}:
+        return False, "unavailable", True
+    return False, "outcome_unknown", False
 
 
 async def _dispatch_telegram(notification: Notification) -> tuple[bool, str | None, bool]:
@@ -214,11 +487,20 @@ async def _dispatch_telegram(notification: Notification) -> tuple[bool, str | No
 async def _dispatch(
     db: AsyncSession, delivery: AlertDelivery, notification: Notification
 ) -> tuple[bool, str | None, bool]:
-    if delivery.channel == "email":
-        return await _dispatch_email(db, notification)
     if delivery.channel == "telegram":
         return await _dispatch_telegram(notification)
-    return False, "invalid_config", False
+    if delivery.channel not in {"smtp_bz_smtp", "smtp_bz_api"}:
+        return False, "legacy_transport_retired", False
+    transport = await _transport_for_tenant(db, delivery.tenant_id)
+    if (
+        transport is None
+        or transport.transport != delivery.channel
+        or transport.revision != delivery.transport_revision
+    ):
+        return False, "transport_changed", False
+    if delivery.channel == "smtp_bz_smtp":
+        return await _dispatch_smtp(db, notification, transport)
+    return await _dispatch_smtp_bz_api(db, notification, transport)
 
 
 async def process_alert_delivery(db: AsyncSession, delivery_id: UUID) -> str:

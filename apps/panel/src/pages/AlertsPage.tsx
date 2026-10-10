@@ -16,7 +16,7 @@ type Alert = {
   body: string;
   read: boolean;
   created_at: string | null;
-  deliveries: Partial<Record<"email" | "telegram", DeliveryStatus>>;
+  deliveries: Partial<Record<"smtp_bz_smtp" | "smtp_bz_api" | "telegram", DeliveryStatus>>;
 };
 type AlertChannels = { enabled: boolean; email: boolean; telegram: boolean };
 type AlertSummary = {
@@ -28,7 +28,16 @@ type AlertSummary = {
 type AlertSettings = {
   channels: AlertChannels;
   recipient: { configured: boolean; masked_email: string | null };
+  transport: { selected: "none" | "smtp_bz_smtp" | "smtp_bz_api"; configured: boolean };
 };
+
+function transportLabel(transport: AlertSettings["transport"]["selected"]) {
+  return transport === "smtp_bz_smtp"
+    ? "SMTP.bz SMTP"
+    : transport === "smtp_bz_api"
+      ? "SMTP.bz API"
+      : "не выбран";
+}
 
 function tone(status: DeliveryStatus | undefined) {
   if (status === "delivered") return "ok" as const;
@@ -105,7 +114,7 @@ export function AlertsPage() {
       <Surface title="Каналы доставки">
         <div className="row">
           <StatusPill tone={channels?.enabled ? "ok" : "warn"}>Оповещения: {channels?.enabled ? "включены" : "выключены"}</StatusPill>
-          <StatusPill tone={channels?.email ? "ok" : "warn"}>Email: {channels?.email ? "готов" : "не настроен"}</StatusPill>
+          <StatusPill tone={channels?.email ? "ok" : "warn"}>Email: {channels?.email ? transportLabel(alertSettings?.transport?.selected || "none") : "не настроен"}</StatusPill>
           <StatusPill tone={channels?.telegram ? "ok" : "warn"}>Telegram: {channels?.telegram ? "готов" : "не настроен"}</StatusPill>
           <StatusPill tone={recipientConfigured ? "ok" : "warn"}>Получатель: {recipientConfigured ? "настроен" : "не указан"}</StatusPill>
         </div>
@@ -122,7 +131,7 @@ export function AlertsPage() {
           <p>{alert.body}</p>
           {alert.subject_label && <p className="muted">Объект: {alert.subject_label}</p>}
           <p className="muted">{alert.created_at ? new Date(alert.created_at).toLocaleString() : "—"} · код: {alert.signal_code || "—"}</p>
-          <div className="row"><StatusPill tone={tone(alert.deliveries.email)}>Email: {alert.deliveries.email || "не настроен"}</StatusPill><StatusPill tone={tone(alert.deliveries.telegram)}>Telegram: {alert.deliveries.telegram || "не настроен"}</StatusPill>{!alert.read && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void markRead(alert)}>{busy === alert.id ? "Сохранение…" : "Прочитано"}</button>}</div>
+          <div className="row"><StatusPill tone={tone(alert.deliveries.smtp_bz_smtp || alert.deliveries.smtp_bz_api)}>Email: {alert.deliveries.smtp_bz_smtp || alert.deliveries.smtp_bz_api || "не настроен"}</StatusPill><StatusPill tone={tone(alert.deliveries.telegram)}>Telegram: {alert.deliveries.telegram || "не настроен"}</StatusPill>{!alert.read && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void markRead(alert)}>{busy === alert.id ? "Сохранение…" : "Прочитано"}</button>}</div>
         </article>)}</div>}
       </Surface>
       <ConfirmDialog

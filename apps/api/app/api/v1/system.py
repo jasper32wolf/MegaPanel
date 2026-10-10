@@ -207,7 +207,7 @@ async def github_workflow_run_webhook(
             workflow_run_id=run.run_id,
         )
     )
-    create_operator_alert(
+    await create_operator_alert(
         db,
         tenant_id=operation.tenant_id,
         category="system",
@@ -348,7 +348,7 @@ async def _create_operation(
     db.add(operation)
     try:
         await db.flush()
-        create_operator_alert(
+        await create_operator_alert(
             db,
             tenant_id=auth.tenant_id,
             category="system",
@@ -397,7 +397,7 @@ async def _dispatch_failure(
     operation.status = "failure"
     operation.error_code = error.code
     operation.completed_at = datetime.now(UTC)
-    create_operator_alert(
+    await create_operator_alert(
         db,
         tenant_id=operation.tenant_id,
         category="system",

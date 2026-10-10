@@ -84,7 +84,7 @@ async def _observe_integrity(db: AsyncSession, *, site: Site, active: bool) -> N
         subject_key=subject_key,
     )
     if active and existing is None:
-        create_operator_alert(
+        await create_operator_alert(
             db,
             tenant_id=site.tenant_id,
             category="security",
@@ -98,7 +98,7 @@ async def _observe_integrity(db: AsyncSession, *, site: Site, active: bool) -> N
             subject_key=subject_key,
         )
     elif not active and existing is not None:
-        create_operator_alert(
+        await create_operator_alert(
             db,
             tenant_id=site.tenant_id,
             category="security",

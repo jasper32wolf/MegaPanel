@@ -3858,7 +3858,7 @@ async def publish_project_build(
         manifest=manifest,
         metadata_by_slug=metadata_by_slug,
     )
-    create_operator_alert(
+    await create_operator_alert(
         db,
         tenant_id=project.tenant_id,
         category="security",
@@ -3986,7 +3986,7 @@ async def rollback_project_build(
         manifest=manifest,
         metadata_by_slug=metadata_by_slug,
     )
-    create_operator_alert(
+    await create_operator_alert(
         db,
         tenant_id=project.tenant_id,
         category="security",

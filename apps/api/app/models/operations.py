@@ -62,6 +62,30 @@ class OperatorAlertRecipient(Base):
     )
 
 
+class OperatorAlertTransport(Base):
+    __tablename__ = "operator_alert_transports"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    transport: Mapped[str] = mapped_column(String(16), nullable=False, default="none")
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    sender_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    smtp_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    smtp_tls_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    smtp_username_enc: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    smtp_password_enc: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    api_authorization_enc: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class AlertDelivery(Base):
     __tablename__ = "alert_deliveries"
 
@@ -75,6 +99,7 @@ class AlertDelivery(Base):
     channel: Mapped[str] = mapped_column(String(16), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="queued", index=True)
     idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    transport_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     lease_expires_at: Mapped[datetime | None] = mapped_column(

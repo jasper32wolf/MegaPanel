@@ -134,7 +134,7 @@ async def _observe_domain_signal(
         subject_key=subject_key,
     )
     if active and existing is None:
-        create_operator_alert(
+        await create_operator_alert(
             db,
             tenant_id=domain.tenant_id,
             category="site",
@@ -145,7 +145,7 @@ async def _observe_domain_signal(
             subject_key=subject_key,
         )
     elif not active and existing is not None:
-        create_operator_alert(
+        await create_operator_alert(
             db,
             tenant_id=domain.tenant_id,
             category="site",

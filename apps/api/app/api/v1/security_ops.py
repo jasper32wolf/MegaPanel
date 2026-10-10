@@ -63,7 +63,7 @@ async def totp_confirm(
     auth.user.totp_pending = None
     auth.user.mfa_enabled = True
     if auth.tenant_id:
-        create_operator_alert(
+        await create_operator_alert(
             db,
             tenant_id=auth.tenant_id,
             category="security",
@@ -100,7 +100,7 @@ async def totp_disable(
     auth.user.totp_pending = None
     auth.user.mfa_enabled = False
     if auth.tenant_id:
-        create_operator_alert(
+        await create_operator_alert(
             db,
             tenant_id=auth.tenant_id,
             category="security",
@@ -292,7 +292,7 @@ async def revoke_session(
     for item in active_members:
         item.revoked_at = now
     if auth.tenant_id:
-        create_operator_alert(
+        await create_operator_alert(
             db,
             tenant_id=auth.tenant_id,
             category="security",

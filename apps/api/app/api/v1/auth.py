@@ -243,7 +243,7 @@ async def login(
     db.add(session)
     await db.flush()
     if user.tenant_id:
-        create_operator_alert(
+        await create_operator_alert(
             db,
             tenant_id=user.tenant_id,
             category="security",
@@ -264,7 +264,7 @@ async def login(
                 and all(current_location)
                 and previous_location != current_location
             ):
-                create_operator_alert(
+                await create_operator_alert(
                     db,
                     tenant_id=user.tenant_id,
                     category="security",
