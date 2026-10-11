@@ -354,14 +354,96 @@ async def test_smtp_bz_transport(db: AsyncSession, tenant_id: UUID) -> str:
     return "ok"
 
 
-def _send_smtp(transport: OperatorAlertTransport, *, recipient: str, title: str, body: str) -> None:
+def _email_alert_kind(notification: Notification) -> tuple[str, str, str]:
+    category = {
+        "security": "БЕЗОПАСНОСТЬ",
+        "site": "САЙТ",
+        "system": "СИСТЕМА",
+    }.get(notification.category, "СИСТЕМА")
+    if notification.signal_code == "operator-alert-test":
+        return "🧪 ПРОВЕРКА", category, "#0f6e5c"
+    if notification.signal_code.endswith("-recovered"):
+        return "✅ ВОССТАНОВЛЕНО", category, "#1b7a4a"
+    if notification.category == "security":
+        return "🚨 КРИТИЧНО", category, "#b42318"
+    if notification.category == "site":
+        return "⚠️ ВАЖНО", category, "#9a6700"
+    return "🔔 ВАЖНО", category, "#0f6e5c"
+
+
+def _alert_email_subject(notification: Notification) -> str:
+    kind, category, _color = _email_alert_kind(notification)
+    return _bounded(f"{kind} | {category} | {notification.title.upper()} | MEGA PANEL", 255)
+
+
+def _alert_text(notification: Notification) -> str:
+    kind, category, _color = _email_alert_kind(notification)
+    return "\n".join(
+        (
+            _alert_email_subject(notification),
+            "",
+            notification.body,
+            "",
+            f"Статус: {kind}",
+            f"Категория: {category}",
+            f"Код события: {notification.signal_code.upper()}",
+            "",
+            "Откройте Mega Panel → Оповещения для проверки и дальнейших действий.",
+        )
+    )
+
+
+def _alert_html(notification: Notification) -> str:
+    kind, category, color = _email_alert_kind(notification)
+    title = html.escape(notification.title)
+    body = html.escape(notification.body).replace("\n", "<br>")
+    signal_code = html.escape(notification.signal_code.upper())
+    subject = html.escape(_alert_email_subject(notification))
+    outer_style = (
+        "margin:0;padding:24px;background:#f4f6f4;font-family:Arial,sans-serif;color:#14201c"
+    )
+    card_style = (
+        "max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #d5ddd8;"
+        "border-radius:12px;overflow:hidden"
+    )
+    header_style = (
+        f"padding:18px 24px;background:{color};color:#ffffff;font-size:18px;font-weight:700"
+    )
+    label_style = "margin:0 0 8px;color:#5f7269;font-size:12px;font-weight:700;letter-spacing:.08em"
+    title_style = "margin:0 0 16px;font-size:24px;line-height:1.25"
+    body_style = "margin:0 0 20px;font-size:16px;line-height:1.55"
+    signal_style = "margin:0;padding:12px;background:#eef2ef;border-radius:6px;font-size:13px"
+    hint_style = "margin:20px 0 0;color:#5f7269;font-size:14px"
+    subject_style = "margin:16px 0 0;color:#5f7269;font-size:12px"
+    hint = "Откройте Mega Panel → Оповещения для проверки и дальнейших действий."
+    return "".join(
+        (
+            f'<div style="{outer_style}">',
+            f'<div style="{card_style}">',
+            f'<div style="{header_style}">{html.escape(kind)}</div>',
+            '<div style="padding:24px">',
+            f'<p style="{label_style}">MEGA PANEL · {html.escape(category)}</p>',
+            f'<h1 style="{title_style}">{title}</h1>',
+            f'<p style="{body_style}">{body}</p>',
+            f'<p style="{signal_style}"><strong>Код события:</strong> {signal_code}</p>',
+            f'<p style="{hint_style}">{hint}</p>',
+            f'<p style="{subject_style}">Тема: {subject}</p>',
+            "</div></div></div>",
+        )
+    )
+
+
+def _send_smtp(
+    transport: OperatorAlertTransport, *, recipient: str, notification: Notification
+) -> None:
     if not transport.sender_email:
         raise ValueError("SMTP sender is missing")
     message = EmailMessage()
-    message["Subject"] = title
+    message["Subject"] = _alert_email_subject(notification)
     message["From"] = transport.sender_email
     message["To"] = recipient
-    message.set_content(body)
+    message.set_content(_alert_text(notification))
+    message.add_alternative(_alert_html(notification), subtype="html")
     with _smtp_client(transport) as client:
         _smtp_login(client, transport)
         client.send_message(message, from_addr=transport.sender_email, to_addrs=[recipient])
@@ -378,8 +460,7 @@ async def _dispatch_smtp(
             _send_smtp,
             transport,
             recipient=recipient,
-            title=notification.title,
-            body=notification.body,
+            notification=notification,
         )
     except smtplib.SMTPAuthenticationError:
         return False, "authentication_failed", False
@@ -394,12 +475,6 @@ async def _dispatch_smtp(
     except (OSError, smtplib.SMTPException):
         return False, "outcome_unknown", False
     return True, None, False
-
-
-def _alert_html(notification: Notification) -> str:
-    title = html.escape(notification.title)
-    body = html.escape(notification.body).replace("\n", "<br>")
-    return f"<h1>{title}</h1><p>{body}</p>"
 
 
 async def test_smtp_bz_api_transport(db: AsyncSession, tenant_id: UUID) -> str:
@@ -440,9 +515,9 @@ async def _dispatch_smtp_bz_api(
                 data={
                     "from": transport.sender_email,
                     "to": recipient,
-                    "subject": notification.title,
+                    "subject": _alert_email_subject(notification),
                     "html": _alert_html(notification),
-                    "text": notification.body,
+                    "text": _alert_text(notification),
                 },
             )
     except httpx.TimeoutException:

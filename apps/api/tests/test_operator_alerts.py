@@ -239,7 +239,13 @@ def test_smtp_bz_api_uses_fixed_endpoint_and_exact_authorization(monkeypatch):
     outcome = asyncio.run(
         operator_alerts._dispatch_smtp_bz_api(
             FakeDatabase(),
-            SimpleNamespace(tenant_id=uuid4(), title="Тест", body="Тело"),
+            SimpleNamespace(
+                tenant_id=uuid4(),
+                category="system",
+                signal_code="operator-alert-test",
+                title="Тест",
+                body="Тело",
+            ),
             transport,
         )
     )
@@ -247,13 +253,82 @@ def test_smtp_bz_api_uses_fixed_endpoint_and_exact_authorization(monkeypatch):
     assert outcome == (True, None, False)
     assert captured["url"] == "https://api.smtp.bz/v1/smtp/send"
     assert captured["headers"] == {"Authorization": "Raw SMTP.bz value"}
-    assert captured["data"] == {
-        "from": "alerts@osco-servis.ru",
-        "to": "operator@example.test",
-        "subject": "Тест",
-        "html": "<h1>Тест</h1><p>Тело</p>",
-        "text": "Тело",
+    data = captured["data"]
+    assert data["from"] == "alerts@osco-servis.ru"
+    assert data["to"] == "operator@example.test"
+    assert data["subject"] == "🧪 ПРОВЕРКА | СИСТЕМА | ТЕСТ | MEGA PANEL"
+    assert "Код события: OPERATOR-ALERT-TEST" in data["text"]
+    assert "Откройте Mega Panel" in data["text"]
+    assert "🧪 ПРОВЕРКА" in data["html"]
+    assert "Код события:" in data["html"]
+    assert "Тело" in data["html"]
+
+
+def test_smtp_email_has_an_urgent_subject_and_html_body(monkeypatch):
+    sent: dict[str, object] = {}
+
+    class Client:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def send_message(self, message, **kwargs):
+            sent["message"] = message
+            sent["kwargs"] = kwargs
+
+    transport = OperatorAlertTransport(sender_email="alerts@osco-servis.ru")
+    notification = SimpleNamespace(
+        category="security",
+        signal_code="security-login",
+        title="Выполнен вход в панель",
+        body="Создана новая сессия оператора.",
+    )
+    monkeypatch.setattr(operator_alerts, "_smtp_client", lambda _transport: Client())
+    monkeypatch.setattr(operator_alerts, "_smtp_login", lambda *_args: None)
+
+    operator_alerts._send_smtp(
+        transport,
+        recipient="operator@example.test",
+        notification=notification,
+    )
+
+    message = sent["message"]
+    assert (
+        str(message["Subject"])
+        == "🚨 КРИТИЧНО | БЕЗОПАСНОСТЬ | ВЫПОЛНЕН ВХОД В ПАНЕЛЬ | MEGA PANEL"
+    )
+    assert "Код события: SECURITY-LOGIN" in message.get_body(("plain",)).get_content()
+    assert "Создана новая сессия оператора." in message.get_body(("html",)).get_content()
+    assert sent["kwargs"] == {
+        "from_addr": "alerts@osco-servis.ru",
+        "to_addrs": ["operator@example.test"],
     }
+
+
+def test_email_subject_marks_urgent_and_recovered_alerts():
+    urgent = SimpleNamespace(
+        category="security",
+        signal_code="security-login",
+        title="Выполнен вход в панель",
+        body="Проверка",
+    )
+    recovered = SimpleNamespace(
+        category="site",
+        signal_code="site-unreachable-recovered",
+        title="Сайт снова доступен",
+        body="Проверка",
+    )
+
+    assert (
+        operator_alerts._alert_email_subject(urgent)
+        == "🚨 КРИТИЧНО | БЕЗОПАСНОСТЬ | ВЫПОЛНЕН ВХОД В ПАНЕЛЬ | MEGA PANEL"
+    )
+    assert (
+        operator_alerts._alert_email_subject(recovered)
+        == "✅ ВОССТАНОВЛЕНО | САЙТ | САЙТ СНОВА ДОСТУПЕН | MEGA PANEL"
+    )
 
 
 def test_api_timeout_is_not_retried_after_an_ambiguous_send(monkeypatch):
@@ -284,7 +359,13 @@ def test_api_timeout_is_not_retried_after_an_ambiguous_send(monkeypatch):
     outcome = asyncio.run(
         operator_alerts._dispatch_smtp_bz_api(
             FakeDatabase(),
-            SimpleNamespace(tenant_id=uuid4(), title="Тест", body="Тело"),
+            SimpleNamespace(
+                tenant_id=uuid4(),
+                category="system",
+                signal_code="operator-alert-test",
+                title="Тест",
+                body="Тело",
+            ),
             transport,
         )
     )
