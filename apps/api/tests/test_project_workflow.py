@@ -111,6 +111,33 @@ async def test_media_compliance_blocks_expired_asset_in_an_immutable_manifest():
     assert blockers and "unavailable" in blockers[0]
 
 
+def test_branding_assets_are_project_level_manifest_usages():
+    logo_id, favicon_id = uuid4(), uuid4()
+    manifest = SiteManifest.model_validate(
+        {
+            "site_id": uuid4(),
+            "tenant_id": uuid4(),
+            "domain": "example.test",
+            "branding": {
+                "logo": {
+                    "asset_id": logo_id,
+                    "stored_sha256": "a" * 64,
+                    "alt": "Логотип проекта",
+                },
+                "favicon": {"asset_id": favicon_id, "stored_sha256": "b" * 64},
+            },
+        }
+    )
+
+    usages = _manifest_asset_usage(manifest=manifest, scope="candidate", source={})
+
+    assert {(item["placement"], item["asset_id"], item["expected_sha256"]) for item in usages} == {
+        ("site_logo", str(logo_id), "a" * 64),
+        ("site_favicon", str(favicon_id), "b" * 64),
+    }
+    assert usages[0]["slug"] is None
+
+
 def _private_lead_email_migration():
     migration_path = (
         Path(__file__).parents[1] / "alembic" / "versions" / "0022_encrypt_private_lead_email.py"

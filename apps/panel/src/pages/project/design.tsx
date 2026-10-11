@@ -84,6 +84,22 @@ type IntentRun = {
   error_code: string | null;
 };
 
+type MediaAsset = {
+  id: string;
+  path: string;
+  content_type: string;
+  author: string | null;
+  license: string | null;
+  availability: "eligible" | "expired" | "rights_missing";
+  hashes: { stored_sha256?: string };
+};
+
+type BrandLogo = { asset_id: string; stored_sha256: string; alt: string };
+
+type BrandFavicon = { asset_id: string; stored_sha256: string };
+
+type Branding = { version: number; logo?: BrandLogo; favicon?: BrandFavicon };
+
 const DEFAULT_TOKENS: Tokens = {
   primary: "#0f6e5c",
   secondary: "#1a3d34",
@@ -139,6 +155,14 @@ export function ProjectDesignPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [branding, setBranding] = useState<Branding | null>(null);
+  const [media, setMedia] = useState<MediaAsset[]>([]);
+  const [logoAssetId, setLogoAssetId] = useState("");
+  const [faviconAssetId, setFaviconAssetId] = useState("");
+  const [logoAlt, setLogoAlt] = useState("");
+  const [uploadTarget, setUploadTarget] = useState<"logo" | "favicon">("logo");
+  const [brandFile, setBrandFile] = useState<File | null>(null);
+  const [rightsConfirmed, setRightsConfirmed] = useState(false);
 
   const effectiveLabel = useMemo(() => {
     if (!effective?.effective_profile) return "Профиль ещё не назначен";
@@ -147,13 +171,15 @@ export function ProjectDesignPage() {
 
   async function load() {
     if (!projectId) return;
-    const [nextRevisions, nextEffective, nextKits, nextGenerationRuns, nextPlans, nextProviders] = await Promise.all([
+    const [nextRevisions, nextEffective, nextKits, nextGenerationRuns, nextPlans, nextProviders, nextBranding, nextMedia] = await Promise.all([
       api<Revision[]>(`/api/v1/projects/${projectId}/design-profiles`, {}, token),
       api<Effective>(`/api/v1/projects/${projectId}/design-profile`, {}, token),
       api<Kit[]>("/api/v1/blocks/kits", {}, token),
       api<IntentRun[]>(`/api/v1/projects/${projectId}/intent-generation-runs`, {}, token),
       api<PagePlan[]>(`/api/v1/projects/${projectId}/page-plans`, {}, token),
       api<AIProvider[]>("/api/v1/ai/providers", {}, token),
+      api<Branding>(`/api/v1/projects/${projectId}/branding`, {}, token),
+      api<MediaAsset[]>("/api/v1/media", {}, token),
     ]);
     setRevisions(nextRevisions);
     setEffective(nextEffective);
@@ -161,12 +187,83 @@ export function ProjectDesignPage() {
     setGenerationRuns(nextGenerationRuns);
     setPlans(nextPlans);
     setProviders(nextProviders.filter((provider) => provider.enabled));
+    setBranding(nextBranding);
+    setMedia(nextMedia);
+    setLogoAssetId(nextBranding.logo?.asset_id || "");
+    setFaviconAssetId(nextBranding.favicon?.asset_id || "");
+    setLogoAlt(nextBranding.logo?.alt || "");
     if (!kits.length && nextKits[0]) setAllowedKit(nextKits[0].key);
   }
 
   useEffect(() => {
     void load().catch((cause) => setError(cause instanceof Error ? cause.message : "Не удалось загрузить дизайн-профили"));
   }, [projectId, token]);
+
+  const eligibleMedia = media.filter((asset) => asset.availability === "eligible" && Boolean(asset.hashes.stored_sha256));
+  const logoAsset = eligibleMedia.find((asset) => asset.id === logoAssetId);
+  const faviconAsset = eligibleMedia.find((asset) => asset.id === faviconAssetId);
+
+  async function saveBranding() {
+    if (!branding || (logoAssetId && (!logoAsset || !logoAlt.trim())) || (faviconAssetId && !faviconAsset)) {
+      setError("Выберите доступные изображения и заполните описание логотипа.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await api<Branding>(`/api/v1/projects/${projectId}/branding`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          version: branding.version,
+          logo: logoAsset ? {
+            asset_id: logoAsset.id,
+            stored_sha256: logoAsset.hashes.stored_sha256,
+            alt: logoAlt.trim(),
+          } : null,
+          favicon: faviconAsset ? {
+            asset_id: faviconAsset.id,
+            stored_sha256: faviconAsset.hashes.stored_sha256,
+          } : null,
+        }),
+      }, token);
+      setMessage("Логотип и favicon сохранены для будущих candidate-сборок. Уже готовые и опубликованные releases не менялись.");
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Не удалось сохранить branding проекта");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function uploadBrandAsset() {
+    if (!brandFile || !rightsConfirmed) {
+      setError("Выберите файл и подтвердите права на его использование.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    const form = new FormData();
+    form.set("file", brandFile);
+    form.set("rights_basis", "own");
+    form.set("rights_confirmed", "true");
+    form.set("source_reference", "Брендинг проекта");
+    form.set("normalize", "false");
+    try {
+      const asset = await api<MediaAsset>("/api/v1/media", { method: "POST", body: form }, token);
+      setMedia((current) => [asset, ...current]);
+      if (uploadTarget === "logo") setLogoAssetId(asset.id);
+      else setFaviconAssetId(asset.id);
+      setBrandFile(null);
+      setRightsConfirmed(false);
+      setMessage("Файл загружен в медиатеку. Отдельно сохраните выбор логотипа и favicon для проекта.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Не удалось загрузить изображение");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function quoteIntentGeneration() {
     if (!intentPlanId || !providerId || !model.trim()) {
@@ -339,6 +436,27 @@ export function ProjectDesignPage() {
     />
     {error && <p className="error" role="alert">{error}</p>}
     {message && <p className="success" role="status">{message}</p>}
+    <Surface title="Логотип и favicon">
+      <p className="muted">Выберите изображения из медиатеки или загрузите свои. Сохранение меняет только будущую candidate-сборку: оно не публикует сайт и не меняет уже готовый release.</p>
+      <div className="detail-grid">
+        <label className="field">Логотип<select aria-label="Выбор логотипа" value={logoAssetId} disabled={busy} onChange={(event) => setLogoAssetId(event.target.value)}><option value="">Не использовать логотип</option>{eligibleMedia.map((asset) => <option key={asset.id} value={asset.id}>#{asset.id.slice(0, 8)} · {asset.license || "права подтверждены"}</option>)}</select></label>
+        <label className="field">Описание логотипа<input value={logoAlt} disabled={busy || !logoAssetId} onChange={(event) => setLogoAlt(event.target.value)} placeholder="Например: Логотип компании" /></label>
+        <label className="field">Favicon<select aria-label="Выбор favicon" value={faviconAssetId} disabled={busy} onChange={(event) => setFaviconAssetId(event.target.value)}><option value="">Не использовать favicon</option>{eligibleMedia.map((asset) => <option key={asset.id} value={asset.id}>#{asset.id.slice(0, 8)} · {asset.license || "права подтверждены"}</option>)}</select></label>
+      </div>
+      <div className="row">
+        {logoAsset ? <img src={logoAsset.path} width="120" height="72" alt="Предпросмотр логотипа" style={{ objectFit: "contain" }} /> : null}
+        {faviconAsset ? <img src={faviconAsset.path} width="48" height="48" alt="Предпросмотр favicon" style={{ objectFit: "contain" }} /> : null}
+      </div>
+      <button className="btn" type="button" disabled={busy || !branding || (Boolean(logoAssetId) && !logoAlt.trim())} onClick={() => void saveBranding()}>{busy ? "Сохранение…" : "Сохранить branding"}</button>
+      <div className="stack">
+        <strong>Загрузить новый файл</strong>
+        <label className="field">Назначение<select value={uploadTarget} disabled={busy} onChange={(event) => setUploadTarget(event.target.value as "logo" | "favicon")}><option value="logo">Логотип</option><option value="favicon">Favicon</option></select></label>
+        <label className="field">Файл изображения<input type="file" accept="image/jpeg,image/png,image/webp,image/gif" disabled={busy} onChange={(event) => setBrandFile(event.target.files?.[0] || null)} /></label>
+        <label className="field"><span><input type="checkbox" checked={rightsConfirmed} disabled={busy} onChange={(event) => setRightsConfirmed(event.target.checked)} /> Подтверждаю, что имею право использовать этот файл как branding сайта.</span></label>
+        <button className="btn btn-ghost" type="button" disabled={busy || !brandFile || !rightsConfirmed} onClick={() => void uploadBrandAsset()}>Загрузить в медиатеку</button>
+      </div>
+      {eligibleMedia.length === 0 ? <p className="muted">Подходящих изображений пока нет. Загрузите собственный файл с подтверждёнными правами.</p> : null}
+    </Surface>
     <Surface title="Эффективный дизайн">
       <div className="detail-grid">
         <div><strong>Profile</strong><span className="muted">{effectiveLabel}</span></div>

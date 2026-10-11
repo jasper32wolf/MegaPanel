@@ -179,6 +179,66 @@ def test_candidate_build_copies_hashed_local_media_for_root_and_nested_pages(tmp
     assert not (tmp_path / str(site_id) / "current").exists()
 
 
+def test_candidate_build_copies_project_branding_for_all_generated_pages(tmp_path: Path):
+    logo_id = uuid4()
+    favicon_id = uuid4()
+    logo_path = tmp_path / "logo.webp"
+    favicon_path = tmp_path / "favicon.webp"
+    logo_path.write_bytes(b"project-logo")
+    favicon_path.write_bytes(b"project-favicon")
+    logo_hash = hashlib.sha256(logo_path.read_bytes()).hexdigest()
+    favicon_hash = hashlib.sha256(favicon_path.read_bytes()).hexdigest()
+    site_id = uuid4()
+    site = SiteManifest(
+        site_id=site_id,
+        tenant_id=uuid4(),
+        domain="candidate.test",
+        branding={
+            "logo": {"asset_id": logo_id, "stored_sha256": logo_hash, "alt": "Логотип проекта"},
+            "favicon": {"asset_id": favicon_id, "stored_sha256": favicon_hash},
+        },
+        pages=[
+            PageManifest(
+                slug="/",
+                title_template="Ремонт",
+                h1_template="Ремонт",
+                service="Ремонт",
+            ),
+            PageManifest(
+                slug="/district",
+                title_template="Ремонт",
+                h1_template="Ремонт",
+                service="Ремонт",
+            ),
+        ],
+        legal={"org": "Test"},
+    )
+
+    result = SiteBuilder(tmp_path).build(
+        site,
+        assets=[
+            BuildAsset(asset_id=logo_id, source_path=logo_path, stored_sha256=logo_hash),
+            BuildAsset(asset_id=favicon_id, source_path=favicon_path, stored_sha256=favicon_hash),
+        ],
+        activate=False,
+    )
+
+    release = tmp_path / str(site_id) / "releases" / result["build_hash"]
+    assert (release / "assets" / f"{logo_hash}.webp").read_bytes() == b"project-logo"
+    assert (release / "assets" / f"{favicon_hash}.webp").read_bytes() == b"project-favicon"
+    root_html = (release / "index.html").read_text(encoding="utf-8")
+    nested_html = (release / "district" / "index.html").read_text(encoding="utf-8")
+    assert f'class="sp-brand__logo" src="assets/{logo_hash}.webp"' in root_html
+    assert 'alt="Логотип проекта"' in root_html
+    assert f'rel="icon" type="image/webp" href="assets/{favicon_hash}.webp"' in root_html
+    assert f'src="../assets/{logo_hash}.webp"' in nested_html
+    assert f'href="../assets/{favicon_hash}.webp"' in nested_html
+    privacy_html = (release / "privacy" / "index.html").read_text(encoding="utf-8")
+    sitemap_html = (release / "sitemap" / "index.html").read_text(encoding="utf-8")
+    assert f'href="../assets/{favicon_hash}.webp"' in privacy_html
+    assert f'href="../assets/{favicon_hash}.webp"' in sitemap_html
+
+
 def test_candidate_build_copies_block_media_for_the_selected_block(tmp_path: Path):
     asset_id = uuid4()
     media_path = tmp_path / "uploaded.webp"

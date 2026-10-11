@@ -6,6 +6,7 @@ from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
+from site_panel_shared.manifests import BrandFavicon, BrandLogo
 from site_panel_shared.phone import normalize_phone_e164
 
 ProjectStatus = Literal["draft", "active", "archived"]
@@ -40,6 +41,14 @@ class ProjectUpdate(BaseModel):
     niche: str | None = Field(default=None, max_length=128)
     status: ProjectStatus | None = None
     version: int = Field(ge=1)
+
+
+class ProjectBrandingUpdate(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    version: int = Field(ge=1)
+    logo: BrandLogo | None = None
+    favicon: BrandFavicon | None = None
 
 
 class PublicContacts(BaseModel):

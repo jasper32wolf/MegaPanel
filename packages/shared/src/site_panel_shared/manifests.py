@@ -41,6 +41,28 @@ class PageMedia(BaseModel):
     alt: str = Field(min_length=1, max_length=255)
 
 
+class BrandLogo(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    asset_id: UUID
+    stored_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    alt: str = Field(min_length=1, max_length=255)
+
+
+class BrandFavicon(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    asset_id: UUID
+    stored_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class SiteBranding(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    logo: BrandLogo | None = None
+    favicon: BrandFavicon | None = None
+
+
 class DesignSnapshot(BaseModel):
     """Resolved reviewed visual policy frozen with a page or site artifact."""
 
@@ -114,6 +136,7 @@ class SiteManifest(BaseModel):
     locale: str = "ru"
     css_vars: dict[str, str] = Field(default_factory=dict)
     design: DesignSnapshot | None = None
+    branding: SiteBranding | None = None
     pages: list[PageManifest] = Field(default_factory=list)
     legal: dict[str, Any] = Field(default_factory=dict)
     contacts: dict[str, Any] = Field(default_factory=dict)

@@ -59,6 +59,7 @@ from app.schemas.workflow import (
     PagePlanCreate,
     PagePlanDecision,
     PagePlanUpdate,
+    ProjectBrandingUpdate,
     ProjectCreate,
     ProjectGeoUpdate,
     ProjectKeywordsUpdate,
@@ -98,7 +99,7 @@ from app.services.telemetry import telemetry_token
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
 from site_panel_blocks import list_kits
-from site_panel_shared.manifests import PageManifest, SiteManifest
+from site_panel_shared.manifests import PageManifest, SiteBranding, SiteManifest
 from site_panel_ssg import BuildAsset, SiteBuilder
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -257,6 +258,7 @@ def _serialize_project(project: Project) -> dict:
         if project.current_fact_revision_id
         else None,
         "domain_check_meta": project.domain_check_meta or {},
+        "branding": getattr(project, "branding", None) or {},
         "created_at": project.created_at.isoformat() if project.created_at else None,
         "updated_at": project.updated_at.isoformat() if project.updated_at else None,
     }
@@ -1620,6 +1622,120 @@ def _verified_media_hash(asset: MediaAsset) -> str:
     return stored_sha256
 
 
+async def _verified_branding_reference(
+    db: AsyncSession,
+    *,
+    project: Project,
+    asset_id: UUID,
+    expected_sha256: str,
+) -> None:
+    asset = (
+        await db.execute(
+            select(MediaAsset).where(
+                MediaAsset.id == asset_id,
+                MediaAsset.tenant_id == project.tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if asset is None:
+        raise HTTPException(status_code=422, detail="Branding media asset is unavailable")
+    if asset.content_type != "image/webp":
+        raise HTTPException(status_code=422, detail="Branding media must be a WebP image")
+    try:
+        stored_sha256 = _verified_media_hash(asset)
+        _asset_path(asset)
+        if stored_sha256 != expected_sha256:
+            raise ValueError("Branding media asset changed")
+        await ensure_media_review_allows_use(
+            db,
+            tenant_id=project.tenant_id,
+            asset_id=asset.id,
+            stored_sha256=stored_sha256,
+        )
+    except (HTTPException, ValueError) as exc:
+        detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+        raise HTTPException(status_code=422, detail=f"Branding media blocker: {detail}") from exc
+
+
+@router.get("/{project_id}/branding")
+async def get_project_branding(
+    project_id: UUID,
+    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    project = await _project_or_404(db, project_id, auth)
+    try:
+        branding = SiteBranding.model_validate(getattr(project, "branding", None) or {})
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="Project branding is invalid") from exc
+    return {"version": project.version, **branding.model_dump(mode="json", exclude_none=True)}
+
+
+@router.patch("/{project_id}/branding")
+async def update_project_branding(
+    project_id: UUID,
+    body: ProjectBrandingUpdate,
+    auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    project = await _project_or_404(db, project_id, auth)
+    if body.version != project.version:
+        raise HTTPException(status_code=409, detail={"blockers": ["Project changed; reload it"]})
+    fields = body.model_fields_set.intersection({"logo", "favicon"})
+    if not fields:
+        raise HTTPException(status_code=422, detail="Select a branding field to update")
+    try:
+        current = SiteBranding.model_validate(getattr(project, "branding", None) or {})
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="Project branding is invalid") from exc
+    branding = current.model_copy(
+        update={field: getattr(body, field) for field in fields}
+    )
+    for field in fields:
+        item = getattr(branding, field)
+        if item:
+            await _verified_branding_reference(
+                db,
+                project=project,
+                asset_id=item.asset_id,
+                expected_sha256=item.stored_sha256,
+            )
+    project.branding = branding.model_dump(mode="json", exclude_none=True)
+    if project.site_id:
+        site = await _project_site_or_409(db, project)
+        try:
+            manifest = SiteManifest.model_validate(site.manifest)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail="Project site manifest is invalid") from exc
+        manifest.branding = branding if branding.logo or branding.favicon else None
+        manifest.version += 1
+        site.manifest = manifest.model_dump(mode="json")
+        site.version += 1
+    project.version += 1
+    await append_audit(
+        db,
+        action="project.branding.update",
+        payload={
+            "project_id": str(project.id),
+            "fields": sorted(fields),
+            "branding": {
+                role: {
+                    "asset_id": str(item.asset_id),
+                    "stored_sha256": item.stored_sha256,
+                }
+                for role, item in (("logo", branding.logo), ("favicon", branding.favicon))
+                if item
+            },
+            "version": project.version,
+        },
+        tenant_id=project.tenant_id,
+        actor_id=auth.user.id,
+    )
+    await db.commit()
+    await db.refresh(project)
+    return {"version": project.version, **(getattr(project, "branding", None) or {})}
+
+
 async def _approved_author_snapshot_or_409(
     db: AsyncSession,
     *,
@@ -2291,6 +2407,10 @@ async def apply_page_draft(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     project = await _project_or_404(db, project_id, auth)
+    try:
+        project_branding = SiteBranding.model_validate(getattr(project, "branding", None) or {})
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="Project branding is invalid") from exc
     draft = (
         await db.execute(
             select(PageDraft).where(PageDraft.id == draft_id, PageDraft.project_id == project.id)
@@ -2447,6 +2567,9 @@ async def apply_page_draft(
             locale=project.locale,
             css_vars=css_vars,
             design=page.design,
+            branding=(
+                project_branding if project_branding.logo or project_branding.favicon else None
+            ),
             pages=[page],
             contacts=contacts,
             legal=dict(fact_values.get("legal") or {}),
@@ -2883,6 +3006,29 @@ def _manifest_asset_usage(
     source: dict,
 ) -> list[dict]:
     usages = []
+    if manifest.branding and manifest.branding.logo:
+        usages.append(
+            {
+                "scope": scope,
+                "source": source,
+                "slug": None,
+                "placement": "site_logo",
+                "asset_id": str(manifest.branding.logo.asset_id),
+                "expected_sha256": manifest.branding.logo.stored_sha256,
+                "alt": manifest.branding.logo.alt,
+            }
+        )
+    if manifest.branding and manifest.branding.favicon:
+        usages.append(
+            {
+                "scope": scope,
+                "source": source,
+                "slug": None,
+                "placement": "site_favicon",
+                "asset_id": str(manifest.branding.favicon.asset_id),
+                "expected_sha256": manifest.branding.favicon.stored_sha256,
+            }
+        )
     for page in manifest.pages:
         for attachment in page.media:
             usages.append(
@@ -2962,8 +3108,8 @@ async def _manifest_media_compliance_blockers(
         status = _asset_usage_status(by_id.get(usage["asset_id"]), usage["expected_sha256"])
         if status != "verified":
             blockers.append(
-                f"Media asset {usage['asset_id']} for {usage['slug']} is {status}; "
-                "replace it in a new draft"
+                f"Media asset {usage['asset_id']} for {usage['placement']} is {status}; "
+                "replace it before creating a new candidate"
             )
     return blockers
 
@@ -3096,16 +3242,23 @@ async def _build_assets_for_manifest(
     tenant_id: UUID,
 ) -> list[BuildAsset]:
     expected_hashes: dict[UUID, str] = {}
+    attachments = []
+    if manifest.branding:
+        if manifest.branding.logo:
+            attachments.append(manifest.branding.logo)
+        if manifest.branding.favicon:
+            attachments.append(manifest.branding.favicon)
     for page in manifest.pages:
-        attachments = [*page.media, *page.block_media.values()]
+        attachments.extend([*page.media, *page.block_media.values()])
         if page.author:
             attachments.append(page.author.portrait)
-        for attachment in attachments:
-            existing = expected_hashes.setdefault(attachment.asset_id, attachment.stored_sha256)
-            if existing != attachment.stored_sha256:
-                raise HTTPException(
-                    status_code=422, detail="Media asset hash conflicts across pages"
-                )
+    for attachment in attachments:
+        existing = expected_hashes.setdefault(attachment.asset_id, attachment.stored_sha256)
+        if existing != attachment.stored_sha256:
+            raise HTTPException(
+                status_code=422,
+                detail="Media asset hash conflicts in site manifest",
+            )
     if not expected_hashes:
         return []
     assets = list(

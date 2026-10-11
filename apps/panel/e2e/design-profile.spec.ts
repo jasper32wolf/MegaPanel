@@ -69,6 +69,8 @@ test("design profile проходит draft и review без изменения 
       effective_profile: null,
       effective_profile_hash: null,
     });
+    if (path === `/api/v1/projects/${projectId}/branding`) return json({ version: 1 });
+    if (path === "/api/v1/media") return json([]);
     if (path === `/api/v1/projects/${projectId}/intent-generation-runs`) return json(generationRuns);
     if (path === `/api/v1/projects/${projectId}/page-plans`) return json([{ id: "d1000000-0000-4000-8000-000000000003", slug: "/repair", objective: "Ремонт окон", state: "approved" }]);
     if (path === "/api/v1/ai/providers") return json([{ id: "d1000000-0000-4000-8000-000000000004", label: "Mock provider", provider_id: "mock", enabled: true }]);

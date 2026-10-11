@@ -408,6 +408,7 @@ def render_html_sitemap(
     pages: list[PageManifest],
     context: dict[str, Any],
     index_states: dict[str, str],
+    media_urls: dict[str, str] | None = None,
 ) -> str:
     """Render a visible, server-owned map of only index-eligible page artifacts."""
     links = []
@@ -430,6 +431,16 @@ def render_html_sitemap(
         if telemetry_token
         else ""
     )
+    favicon_url = (
+        (media_urls or {}).get(str(site.branding.favicon.asset_id))
+        if site.branding and site.branding.favicon
+        else None
+    )
+    favicon_html = (
+        f'  <link rel="icon" type="image/webp" href="{escape(favicon_url, quote=True)}">\n'
+        if favicon_url
+        else ""
+    )
     return f"""<!DOCTYPE html>
 <html lang="{escape(site.locale, quote=True)}">
 <head>
@@ -437,7 +448,7 @@ def render_html_sitemap(
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Карта сайта</title>
   <link rel="canonical" href="{canonical}">
-  <meta name="robots" content="noindex, follow">
+{favicon_html}  <meta name="robots" content="noindex, follow">
 </head>
 <body>
   <main>
@@ -707,6 +718,10 @@ class SiteBuilder:
                     + ([page.author.portrait] if page.author else [])
                 )
             }
+            if site.branding and site.branding.logo:
+                referenced_asset_ids.add(str(site.branding.logo.asset_id))
+            if site.branding and site.branding.favicon:
+                referenced_asset_ids.add(str(site.branding.favicon.asset_id))
             if referenced_asset_ids != set(asset_urls):
                 raise ValueError("Static media assets do not match the manifest")
             for page in site.pages:
@@ -817,12 +832,17 @@ class SiteBuilder:
             )
             html_sitemap = staging / "sitemap" / "index.html"
             html_sitemap.parent.mkdir(parents=True, exist_ok=True)
+            sitemap_media_urls = {
+                asset_id: os.path.relpath(staging / path, html_sitemap.parent).replace(os.sep, "/")
+                for asset_id, path in asset_urls.items()
+            }
             html_sitemap.write_text(
                 render_html_sitemap(
                     site,
                     site.pages,
                     ctx,
                     {item["slug"]: item["index_state"] for item in page_meta},
+                    sitemap_media_urls,
                 ),
                 encoding="utf-8",
             )
@@ -831,12 +851,23 @@ class SiteBuilder:
             _validate_release_artifacts(staging, site, page_meta)
             telemetry_token = str(ctx.get("telemetry_token") or "")
             retention = dict(ctx.get("telemetry_retention") or {})
+            favicon_path = (
+                asset_urls.get(str(site.branding.favicon.asset_id))
+                if site.branding and site.branding.favicon
+                else None
+            )
+            legal_favicon_url = (
+                os.path.relpath(staging / favicon_path, staging / "privacy").replace(os.sep, "/")
+                if favicon_path
+                else None
+            )
             write_legal_pack(
                 staging,
                 site.legal or {},
                 telemetry_token=telemetry_token,
                 raw_days=int(retention.get("raw_days", 30)),
                 aggregate_days=int(retention.get("aggregate_days", 365)),
+                favicon_url=legal_favicon_url,
             )
             if telemetry_token:
                 (staging / "site-panel-telemetry.js").write_text(

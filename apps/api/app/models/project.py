@@ -31,6 +31,7 @@ class Project(Base):
         UUID(as_uuid=True), nullable=True
     )
     domain_check_meta: Mapped[dict] = mapped_column(JSONB, default=dict)
+    branding: Mapped[dict] = mapped_column(JSONB, default=dict)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

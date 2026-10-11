@@ -75,6 +75,10 @@ def render_page(
         "margin:2rem 0;padding:1rem;border:1px solid #d7dbe2;border-radius:.75rem;}"
         " .sp-author__portrait{width:112px;height:112px;object-fit:cover;border-radius:50%;}"
         " .sp-author__meta{margin:0;color:#444}"
+        " .sp-brand{max-width:960px;margin:0 auto;padding:1rem 1rem 0;}"
+        " .sp-brand__link{display:inline-flex;align-items:center;}"
+        " .sp-brand__logo{display:block;max-width:min(240px,100%);max-height:72px;"
+        "width:auto;height:auto;}"
     )
 
     has_hero = any(block.type == "hero" for block in blocks)
@@ -145,6 +149,30 @@ def render_page(
       </div>
     </section>'''
 
+    branding = site.branding
+    logo_url = (
+        (media_urls or {}).get(str(branding.logo.asset_id))
+        if branding and branding.logo
+        else None
+    )
+    logo_html = (
+        '<header class="sp-brand"><a class="sp-brand__link" href="/">'
+        f'<img class="sp-brand__logo" src="{escape(logo_url, quote=True)}" '
+        f'alt="{escape(branding.logo.alt, quote=True)}" decoding="async"></a></header>'
+        if logo_url and branding and branding.logo
+        else ""
+    )
+    favicon_url = (
+        (media_urls or {}).get(str(branding.favicon.asset_id))
+        if branding and branding.favicon
+        else None
+    )
+    favicon_html = (
+        f'  <link rel="icon" type="image/webp" href="{escape(favicon_url, quote=True)}">\n'
+        if favicon_url
+        else ""
+    )
+
     return f"""<!DOCTYPE html>
 <html lang="{escape(site.locale, quote=True)}">
 <head>
@@ -153,9 +181,10 @@ def render_page(
   <title>{title}</title>
   <meta name="description" content="{meta}">
   <link rel="canonical" href="{escape(page_url(site.domain, page.slug), quote=True)}">
-  <style>{css}</style>
+{favicon_html}  <style>{css}</style>
 </head>
 <body>
+  {logo_html}
   <main>
     {h1_html}
     {unique_html}

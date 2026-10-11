@@ -15,6 +15,10 @@ def _legal_telemetry_tag(token: str | None) -> str:
     )
 
 
+def _favicon_tag(url: str | None) -> str:
+    return f'<link rel="icon" type="image/webp" href="{escape(url, quote=True)}">' if url else ""
+
+
 def render_privacy(
     org: dict[str, Any],
     jurisdiction: str = "152-FZ",
@@ -22,6 +26,7 @@ def render_privacy(
     *,
     raw_days: int = 30,
     aggregate_days: int = 365,
+    favicon_url: str | None = None,
 ) -> str:
     name = escape(str(org.get("org") or org.get("name") or "Оператор"))
     inn = escape(str(org.get("inn") or "—"))
@@ -31,6 +36,7 @@ def render_privacy(
     return f"""<!DOCTYPE html>
 <html lang="ru"><head>
 <meta charset="utf-8"><meta name="robots" content="noindex, follow">
+{_favicon_tag(favicon_url)}
 <title>Политика конфиденциальности</title></head>
 <body>
 <h1>Политика конфиденциальности</h1>
@@ -58,11 +64,14 @@ def render_privacy(
 """
 
 
-def render_terms(org: dict[str, Any], telemetry_token: str | None = None) -> str:
+def render_terms(
+    org: dict[str, Any], telemetry_token: str | None = None, *, favicon_url: str | None = None
+) -> str:
     name = escape(str(org.get("org") or "Исполнитель"))
     return f"""<!DOCTYPE html>
 <html lang="ru"><head>
 <meta charset="utf-8"><meta name="robots" content="noindex, follow">
+{_favicon_tag(favicon_url)}
 <title>Пользовательское соглашение</title></head>
 <body>
 <h1>Пользовательское соглашение</h1>
@@ -74,10 +83,13 @@ def render_terms(org: dict[str, Any], telemetry_token: str | None = None) -> str
 """
 
 
-def render_cookies(org: dict[str, Any], telemetry_token: str | None = None) -> str:
+def render_cookies(
+    org: dict[str, Any], telemetry_token: str | None = None, *, favicon_url: str | None = None
+) -> str:
     return f"""<!DOCTYPE html>
 <html lang="ru"><head>
 <meta charset="utf-8"><meta name="robots" content="noindex, follow">
+{_favicon_tag(favicon_url)}
 <title>Политика cookie</title></head>
 <body>
 <h1>Политика cookie</h1>
@@ -185,6 +197,7 @@ def write_legal_pack(
     telemetry_token: str | None = None,
     raw_days: int = 30,
     aggregate_days: int = 365,
+    favicon_url: str | None = None,
 ) -> list[str]:
     from pathlib import Path
 
@@ -201,10 +214,11 @@ def write_legal_pack(
                 telemetry_token,
                 raw_days=raw_days,
                 aggregate_days=aggregate_days,
+                favicon_url=favicon_url,
             ),
         ),
-        ("terms", render_terms(org, telemetry_token)),
-        ("cookie-policy", render_cookies(org, telemetry_token)),
+        ("terms", render_terms(org, telemetry_token, favicon_url=favicon_url)),
+        ("cookie-policy", render_cookies(org, telemetry_token, favicon_url=favicon_url)),
     ):
         out = site_dir / slug / "index.html"
         out.parent.mkdir(parents=True, exist_ok=True)

@@ -294,6 +294,7 @@ async def create_city_project(
         domain=hostname,
         locale=master.locale,
         niche=master.niche,
+        branding=deepcopy(getattr(master, "branding", None) or {}),
     )
     db.add(child)
     await db.flush()
@@ -342,6 +343,7 @@ async def create_city_project(
             "geo_id": str(city.id),
             "hostname": hostname,
             "draft_fact_revision_id": str(draft.id),
+            "branding_copied": bool(getattr(master, "branding", None)),
         },
         tenant_id=master.tenant_id,
         actor_id=auth.user.id,
