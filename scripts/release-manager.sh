@@ -8,6 +8,8 @@ COMPOSE_PROJECT="${COMPOSE_PROJECT:-site-panel}"
 RELEASE_RETENTION="${RELEASE_RETENTION:-5}"
 HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-120}"
 AUTO_RECOVERY_COOLDOWN_SECONDS="${AUTO_RECOVERY_COOLDOWN_SECONDS:-900}"
+AUDIT_LOG_MAX_BYTES="${AUDIT_LOG_MAX_BYTES:-5242880}"
+AUDIT_LOG_GENERATIONS="${AUDIT_LOG_GENERATIONS:-52}"
 
 RELEASES_DIR="$SITE_PANEL_ROOT/releases"
 INCOMING_DIR="$SITE_PANEL_ROOT/incoming"
@@ -61,10 +63,43 @@ ensure_layout() {
   chmod 0640 "$AUDIT_FILE" 2>/dev/null || true
 }
 
+validate_audit_rotation_settings() {
+  [[ "$AUDIT_LOG_MAX_BYTES" =~ ^[1-9][0-9]*$ ]] || return 1
+  [[ "$AUDIT_LOG_GENERATIONS" =~ ^[1-9][0-9]*$ ]] || return 1
+}
+
+rotate_audit_log() {
+  [[ -f "$AUDIT_FILE" && ! -L "$AUDIT_FILE" ]] || return 0
+  local size
+  size="$(wc -c <"$AUDIT_FILE")"
+  [[ "$size" =~ ^[0-9]+$ && "$size" -ge "$AUDIT_LOG_MAX_BYTES" ]] || return 0
+  local stamp archived sequence=0
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  archived="$AUDIT_FILE.$stamp"
+  while [[ -e "$archived" || -L "$archived" || -e "$archived.gz" || -L "$archived.gz" ]]; do
+    ((sequence += 1))
+    archived="$AUDIT_FILE.$stamp.$sequence"
+  done
+  mv -- "$AUDIT_FILE" "$archived"
+  gzip -n -- "$archived"
+  touch "$AUDIT_FILE"
+  chmod 0640 "$AUDIT_FILE" "$archived.gz" 2>/dev/null || true
+  local -a archives=()
+  local archive
+  while IFS= read -r archive; do
+    archives+=("$archive")
+  done < <(compgen -G "$AUDIT_FILE"'*.gz' | LC_ALL=C sort || true)
+  local excess=$(( ${#archives[@]} - AUDIT_LOG_GENERATIONS ))
+  if (( excess > 0 )); then
+    printf '%s\0' "${archives[@]:0:excess}" | xargs -0 -r rm -f --
+  fi
+}
+
 audit() {
   local action="$1"
   local result="$2"
   local detail="${3:-}"
+  rotate_audit_log
   printf '%s action=%s result=%s %s\n' "$(now_utc)" "$action" "$result" "$detail" >>"$AUDIT_FILE"
 }
 
@@ -474,6 +509,7 @@ run_restore() {
 
 main() {
   ACTION="${1:-}"
+  validate_audit_rotation_settings || { emit "result=error"; emit "error=invalid_audit_rotation_settings"; exit 2; }
   ensure_layout
   exec 9>"$LOCK_FILE"
   flock -n 9 || die "release_manager_locked"

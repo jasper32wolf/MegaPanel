@@ -2,6 +2,13 @@ name: site-panel
 
 # Immutable release production stack. This file is intentionally separate from
 # docker-compose.yml, which remains a development-oriented configuration.
+# Keep each container's stdout/stderr bounded on the VPS.
+x-bounded-logging: &bounded-logging
+  driver: local
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -17,17 +24,19 @@ services:
       timeout: 5s
       retries: 20
     restart: unless-stopped
+    logging: *bounded-logging
     networks: [internal]
 
   redis:
     image: redis:7-alpine
-    command: ["redis-server", "--appendonly", "yes"]
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction", "--auto-aof-rewrite-percentage", "100", "--auto-aof-rewrite-min-size", "64mb"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 20
     restart: unless-stopped
+    logging: *bounded-logging
     networks: [internal]
 
   migrate:
@@ -41,6 +50,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    logging: *bounded-logging
     networks: [internal]
 
   api:
@@ -78,6 +88,7 @@ services:
       retries: 12
       start_period: 20s
     restart: unless-stopped
+    logging: *bounded-logging
     networks: [internal]
 
   worker:
@@ -108,6 +119,7 @@ services:
       retries: 3
       start_period: 40s
     restart: unless-stopped
+    logging: *bounded-logging
     networks: [internal]
 
   caddy-state-init:
@@ -130,6 +142,7 @@ services:
         target: /config
         volume:
           nocopy: true
+    logging: *bounded-logging
     networks: [internal]
 
   caddy:
@@ -167,6 +180,7 @@ services:
       retries: 12
       start_period: 15s
     restart: unless-stopped
+    logging: *bounded-logging
     networks: [internal]
 
   panel:
@@ -181,6 +195,7 @@ services:
       retries: 12
       start_period: 15s
     restart: unless-stopped
+    logging: *bounded-logging
     networks: [internal]
 
 networks:

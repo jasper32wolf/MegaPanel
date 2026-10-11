@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 import structlog
@@ -23,6 +24,7 @@ from app.services.bukvarix_queue import (
     run_bukvarix_keyword_run,
 )
 from app.services.competitor_crawl import recover_legacy_competitor_crawls, run_competitor_crawl
+from app.services.dsar import purge_expired_exports
 from app.services.index_schedule import prepare_due_index_schedule_batches
 from app.services.intent_generation import validate_intent_page_proposal
 from app.services.operations import auto_resolve_inactive_incidents
@@ -37,6 +39,11 @@ from app.services.scheduler import (
 from app.services.site_build_queue import expire_stale_site_builds
 from app.services.site_integrity import verify_published_release_integrity
 from app.services.site_monitor import monitor_published_domains
+from app.services.site_release_retention import prune_stale_site_releases
+from app.services.storage_retention import (
+    process_queued_retention_runs,
+    queue_scheduled_retention_runs,
+)
 from app.services.telemetry_retention import rollup_and_purge
 from app.services.webhook_delivery import due_delivery_ids, process_delivery, recover_expired_leases
 from app.services.worker_heartbeat import record_worker_heartbeat
@@ -258,6 +265,50 @@ async def telemetry_retention_task(ctx: dict) -> dict:
     except Exception:  # noqa: BLE001
         logger.exception("telemetry_retention_failed")
         return {"status": "failed", "error_code": "telemetry_retention_failed"}
+
+
+async def dsar_export_retention_task(ctx: dict) -> dict:
+    try:
+        deleted = await asyncio.to_thread(purge_expired_exports)
+        logger.info("dsar_export_retention_completed", deleted=deleted)
+        return {"deleted": deleted}
+    except Exception:  # noqa: BLE001
+        logger.exception("dsar_export_retention_failed")
+        return {"status": "failed", "error_code": "dsar_export_retention_failed"}
+
+
+async def storage_retention_sweep_task(ctx: dict) -> dict:
+    try:
+        async with open_db_session() as session:
+            processed = await process_queued_retention_runs(session)
+        logger.info("storage_retention_sweep_completed", processed=processed)
+        return {"processed": processed}
+    except Exception:  # noqa: BLE001
+        logger.exception("storage_retention_sweep_failed")
+        return {"status": "failed", "error_code": "storage_retention_sweep_failed"}
+
+
+async def schedule_storage_retention_task(ctx: dict) -> dict:
+    try:
+        async with open_db_session() as session:
+            queued = await queue_scheduled_retention_runs(session)
+            processed = await process_queued_retention_runs(session)
+        logger.info("storage_retention_scheduled", queued=queued, processed=processed)
+        return {"queued": queued, "processed": processed}
+    except Exception:  # noqa: BLE001
+        logger.exception("storage_retention_schedule_failed")
+        return {"status": "failed", "error_code": "storage_retention_schedule_failed"}
+
+
+async def site_release_retention_task(ctx: dict) -> dict:
+    try:
+        async with open_db_session() as session:
+            deleted = await prune_stale_site_releases(session)
+        logger.info("site_release_retention_completed", deleted=deleted)
+        return {"deleted": deleted}
+    except Exception:  # noqa: BLE001
+        logger.exception("site_release_retention_failed")
+        return {"status": "failed", "error_code": "site_release_retention_failed"}
 
 
 async def index_schedule_sweep_task(ctx: dict) -> dict:
@@ -529,6 +580,10 @@ class WorkerSettings:
         candidate_build_task,
         candidate_build_sweep_task,
         telemetry_retention_task,
+        dsar_export_retention_task,
+        storage_retention_sweep_task,
+        schedule_storage_retention_task,
+        site_release_retention_task,
         index_schedule_sweep_task,
         competitor_crawl_task,
         operational_incident_auto_resolve_task,
@@ -556,6 +611,10 @@ class WorkerSettings:
         cron(index_schedule_sweep_task, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}),
         cron(candidate_build_sweep_task, minute=set(range(60)), run_at_startup=True),
         cron(telemetry_retention_task, hour=3, minute=17, run_at_startup=True),
+        cron(dsar_export_retention_task, minute={0, 15, 30, 45}, run_at_startup=True),
+        cron(storage_retention_sweep_task, minute={2, 17, 32, 47}, run_at_startup=True),
+        cron(schedule_storage_retention_task, hour=3, minute=31, run_at_startup=True),
+        cron(site_release_retention_task, hour=4, minute=11, run_at_startup=True),
         cron(
             operational_incident_auto_resolve_task,
             minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55},

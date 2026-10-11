@@ -146,6 +146,9 @@ const SystemOperationsPage = lazy(() =>
     ({ SystemOperationsPage: Page }) => ({ default: Page }),
   ),
 );
+const StorageLogsPage = lazy(() =>
+  import("./pages/StorageLogsPage").then(({ StorageLogsPage: Page }) => ({ default: Page })),
+);
 
 function PageLoading() {
   return (
@@ -208,6 +211,7 @@ export default function App() {
                   <Route path="/settings/sessions" element={<SessionHistoryPage />} />
                   <Route path="/audit" element={<AuditPage />} />
                   <Route path="/system" element={<SystemOperationsPage />} />
+                  <Route path="/system/storage" element={<StorageLogsPage />} />
                   <Route path="/ai" element={<AIWorkspacePage />} />
                   <Route path="/ai/providers" element={<AIProvidersPage />} />
                   <Route path="/ai/prompts" element={<PromptsPage />} />

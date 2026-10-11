@@ -1162,6 +1162,17 @@ sudo tail -n 100 /opt/site-panel/shared/release-state/audit.log
 
 В audit log должны быть только технические события: timestamp, SHA, snapshot ID, action/result. Не добавляйте туда PII, пароли, webhook body или credentials.
 
+### Хранение и безопасная очистка
+
+Откройте в Mega Panel: **Система → Хранение и журналы**. Экран показывает только политику и агрегированные счётчики, а не содержимое файлов, IP, email или секреты.
+
+1. Worker автоматически удаляет безопасно просроченные сессии, прочитанные уведомления с доставкой `delivered`, старые попытки успешно доставленных webhook, операционные события и DSAR-экспорты. Он также ежедневно проверяет старые static-site release directories.
+2. Чтобы увидеть объём до ручного запуска, нажмите **«Рассчитать предпросмотр»**. Это ничего не удаляет.
+3. Проверьте счётчики, введите ровно `PURGE EXPIRED DATA`, затем нажмите **«Поставить очистку в очередь»** и подтвердите диалог. Нужны роль superadmin и настроенный TOTP.
+4. Дождитесь статуса `succeeded` в истории. При `failed` сохраните только код ошибки и время; не отправляйте содержимое `.env`, Docker logs или database credentials.
+
+Обычная очистка никогда не удаляет audit ledger, открытые incidents, активные/retrying/dead-letter доставки, evidence публикаций, `current`/`previous`, ready candidates или historical published releases. Не запускайте `docker system prune`, `docker volume prune` или `docker compose down -v` как способ освободить место.
+
 ### Место на диске
 
 ```bash

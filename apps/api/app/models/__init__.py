@@ -268,6 +268,7 @@ from app.models.operations import (  # noqa: E402
     OperationalEvent,
     OperatorAlertRecipient,
     OperatorAlertTransport,
+    StorageRetentionRun,
 )
 from app.models.ops import (  # noqa: E402
     ContentDecayEvent,
@@ -374,6 +375,7 @@ __all__ = [
     "OperatorAlertRecipient",
     "OperatorAlertTransport",
     "OperationalVerification",
+    "StorageRetentionRun",
     "Plugin",
     "Project",
     "ProjectFactRevision",

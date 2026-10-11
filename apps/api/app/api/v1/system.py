@@ -10,7 +10,7 @@ from uuid import UUID, uuid4
 from app.api.deps import AuthContext, get_current_user
 from app.core.config import get_settings
 from app.db.session import get_db
-from app.models import GitHubWorkflowRunDelivery, SystemOperation
+from app.models import GitHubWorkflowRunDelivery, StorageRetentionRun, SystemOperation
 from app.schemas.system import (
     GitHubControlOut,
     RecoveryRequest,
@@ -27,7 +27,14 @@ from app.services.github_control import (
     operation_status,
 )
 from app.services.operator_alerts import create_operator_alert
+from app.services.storage_retention import (
+    build_preview,
+    effective_policy,
+    queue_preview_run,
+    serialize_run,
+)
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,6 +45,12 @@ TERMINAL_STATUSES = {"success", "failure", "cancelled"}
 FINAL_STATUSES = TERMINAL_STATUSES | {"unknown"}
 _GITHUB_SIGNATURE = re.compile(r"sha256=[a-f0-9]{64}")
 _MAX_GITHUB_WEBHOOK_BYTES = 65_536
+
+
+class StorageRetentionConfirmIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    confirmation: str = Field(min_length=1, max_length=64)
 
 
 def _github_webhook_signature_valid(*, raw_body: bytes, signature: str | None, secret: str) -> bool:
@@ -128,6 +141,68 @@ async def require_system_operator(
     if not auth.user.mfa_enabled or not auth.user.totp_secret:
         raise HTTPException(status_code=403, detail="Confirm TOTP before system operations")
     return auth
+
+
+@router.get("/storage")
+async def storage_retention_status(
+    auth: AuthContext = Depends(require_system_operator),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    if not auth.tenant_id:
+        raise HTTPException(status_code=403, detail="Tenant required")
+    runs = list(
+        (
+            await db.execute(
+                select(StorageRetentionRun)
+                .where(StorageRetentionRun.tenant_id == auth.tenant_id)
+                .order_by(StorageRetentionRun.created_at.desc(), StorageRetentionRun.id.desc())
+                .limit(20)
+            )
+        ).scalars()
+    )
+    return {
+        "policy": effective_policy(),
+        "protected_sources": [
+            "audit_log",
+            "release_evidence",
+            "open_incidents",
+            "active_deliveries",
+        ],
+        "runs": [serialize_run(run) for run in runs],
+    }
+
+
+@router.post("/storage/previews")
+async def create_storage_retention_preview(
+    auth: AuthContext = Depends(require_system_operator),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    if not auth.tenant_id:
+        raise HTTPException(status_code=403, detail="Tenant required")
+    run = await build_preview(db, tenant_id=auth.tenant_id, requested_by=auth.user.id)
+    return serialize_run(run)
+
+
+@router.post("/storage/previews/{run_id}/run")
+async def queue_storage_retention_run(
+    run_id: UUID,
+    body: StorageRetentionConfirmIn,
+    auth: AuthContext = Depends(require_system_operator),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    if not auth.tenant_id:
+        raise HTTPException(status_code=403, detail="Tenant required")
+    try:
+        run = await queue_preview_run(
+            db,
+            run_id=run_id,
+            tenant_id=auth.tenant_id,
+            requested_by=auth.user.id,
+            confirmation=body.confirmation,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return serialize_run(run)
 
 
 @router.post("/github/workflow-run", status_code=status.HTTP_204_NO_CONTENT)

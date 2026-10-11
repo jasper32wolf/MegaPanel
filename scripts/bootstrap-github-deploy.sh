@@ -128,6 +128,19 @@ for key_role in deploy recovery; do
   grep -Fqx "$FORCED_KEY" "$AUTHORIZED_KEYS" || printf '%s\n' "$FORCED_KEY" >>"$AUTHORIZED_KEYS"
 done
 
+if command -v systemctl >/dev/null; then
+  install -d -o root -g root -m 0755 /etc/systemd/journald.conf.d
+  cat > /etc/systemd/journald.conf.d/60-site-panel-retention.conf <<'EOF'
+[Journal]
+SystemMaxUse=256M
+SystemMaxFileSize=32M
+SystemMaxFileSec=14day
+RuntimeMaxUse=64M
+EOF
+  chmod 0644 /etc/systemd/journald.conf.d/60-site-panel-retention.conf
+  systemctl restart systemd-journald
+fi
+
 if [[ "$INSTALL_TIMER" == "1" ]] && command -v systemctl >/dev/null; then
   cat > /etc/systemd/system/site-panel-backup.service <<EOF
 [Unit]

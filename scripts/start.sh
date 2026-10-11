@@ -26,9 +26,10 @@ start_one() {
     echo "$name already running (pid $(cat "$pidfile"))"
     return
   fi
-  nohup "$@" >"$RUNTIME/$name.out.log" 2>"$RUNTIME/$name.err.log" &
+  nohup "$ROOT/.venv/bin/python" scripts/log_supervisor.py \
+    --runtime "$RUNTIME" --name "$name" --cwd "$ROOT" -- "$@" >/dev/null 2>&1 &
   echo $! >"$pidfile"
-  echo "Started $name (pid $!) — logs: data/runtime/$name.*.log"
+  echo "Started $name (pid $!) — logs: data/runtime/$name.*.log (5 MiB × 5 generations)"
 }
 
 start_one api uvicorn app.main:app --app-dir apps/api --host 127.0.0.1 --port 8000 --reload

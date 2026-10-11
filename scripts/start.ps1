@@ -29,8 +29,6 @@ $env:PYTHONPATH = "$Root\apps\api;$Root\packages\shared\src;$Root\packages\secur
 $env:HTTP_PROXY = ""; $env:HTTPS_PROXY = ""; $env:NO_PROXY = "*"
 
 function Start-LoggedProcess([string]$Name, [string]$FilePath, [string[]]$ArgumentList, [string]$WorkDir) {
-  $outLog = Join-Path $runtimeDir "$Name.out.log"
-  $errLog = Join-Path $runtimeDir "$Name.err.log"
   $pidFile = Join-Path $runtimeDir "$Name.pid"
   if (Test-Path $pidFile) {
     $old = Get-Content $pidFile | Select-Object -First 1
@@ -42,14 +40,19 @@ function Start-LoggedProcess([string]$Name, [string]$FilePath, [string[]]$Argume
       } catch { }
     }
   }
-  $p = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList `
-    -WorkingDirectory $WorkDir `
-    -RedirectStandardOutput $outLog `
-    -RedirectStandardError $errLog `
+  $supervisorArgs = @(
+    (Join-Path $Root "scripts\log_supervisor.py"),
+    "--runtime", $runtimeDir,
+    "--name", $Name,
+    "--cwd", $WorkDir,
+    "--", $FilePath
+  ) + $ArgumentList
+  $p = Start-Process -FilePath $py -ArgumentList $supervisorArgs `
+    -WorkingDirectory $Root `
     -WindowStyle Hidden `
     -PassThru
   Set-Content -Path $pidFile -Value $p.Id
-  Write-Host "Started $Name (pid $($p.Id)) - logs: data/runtime/$Name.*.log"
+  Write-Host "Started $Name (pid $($p.Id)) - logs: data/runtime/$Name.*.log (5 MiB × 5 generations)"
 }
 
 $uv = Join-Path $Root ".venv\Scripts\uvicorn.exe"

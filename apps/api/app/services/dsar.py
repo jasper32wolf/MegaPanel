@@ -129,12 +129,22 @@ async def process_dsar_job(
 def purge_expired_exports(now: datetime | None = None) -> int:
     settings = get_settings()
     root = Path(settings.dsar_exports_root)
-    if not root.exists():
+    try:
+        resolved_root = root.resolve(strict=True)
+    except OSError:
+        return 0
+    if not resolved_root.is_dir():
         return 0
     cutoff = (now or datetime.now(UTC)).timestamp() - settings.dsar_export_ttl_hours * 3600
     deleted = 0
-    for path in root.rglob("*.json"):
-        if path.is_file() and path.stat().st_mtime < cutoff:
-            path.unlink()
+    for path in resolved_root.rglob("*.json"):
+        try:
+            resolved_path = path.resolve(strict=True)
+            resolved_path.relative_to(resolved_root)
+            if not resolved_path.is_file() or resolved_path.stat().st_mtime >= cutoff:
+                continue
+            resolved_path.unlink()
             deleted += 1
+        except (OSError, ValueError):
+            continue
     return deleted

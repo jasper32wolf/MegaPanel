@@ -1,4 +1,10 @@
 # Lightweight deps for local hybrid install (API/panel on host, DB in Docker).
+x-bounded-logging: &bounded-logging
+  driver: local
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -15,9 +21,11 @@ services:
       interval: 3s
       timeout: 5s
       retries: 20
+    logging: *bounded-logging
 
   redis:
     image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "128mb", "--maxmemory-policy", "noeviction", "--auto-aof-rewrite-percentage", "100", "--auto-aof-rewrite-min-size", "32mb"]
     ports:
       - "6379:6379"
     healthcheck:
@@ -25,6 +33,7 @@ services:
       interval: 3s
       timeout: 3s
       retries: 20
+    logging: *bounded-logging
 
 volumes:
   pgdata_deps:

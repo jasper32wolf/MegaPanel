@@ -41,6 +41,7 @@ const groups = [
       { to: "/ops", label: "Статус системы" },
       { to: "/alerts", label: "Оповещения" },
       { to: "/system", label: "Обновления и восстановление" },
+      { to: "/system/storage", label: "Хранение и журналы" },
       { to: "/audit", label: "Журнал аудита" },
       { to: "/settings", label: "Настройки" },
     ],

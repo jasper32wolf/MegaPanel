@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     worker_heartbeat_stale_after_seconds: int = Field(default=90, ge=30, le=900)
     telemetry_raw_retention_days: int = Field(default=30, ge=7, le=90)
     telemetry_aggregate_retention_days: int = Field(default=365, ge=90, le=730)
+    auth_session_retention_days: int = Field(default=180, ge=30, le=730)
+    notification_retention_days: int = Field(default=90, ge=30, le=730)
+    operational_event_retention_days: int = Field(default=90, ge=30, le=730)
+    delivery_attempt_retention_days: int = Field(default=90, ge=30, le=730)
+    storage_retention_preview_minutes: int = Field(default=15, ge=5, le=60)
 
     sentry_dsn: str = ""
     log_level: str = "INFO"
