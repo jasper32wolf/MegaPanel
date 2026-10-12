@@ -133,6 +133,9 @@ const SettingsPage = lazy(() =>
     default: Page,
   })),
 );
+const SiteMetricsPage = lazy(() =>
+  import("./pages/SiteMetricsPage").then(({ SiteMetricsPage: Page }) => ({ default: Page })),
+);
 const SessionHistoryPage = lazy(() =>
   import("./pages/SessionHistoryPage").then(({ SessionHistoryPage: Page }) => ({
     default: Page,
@@ -196,6 +199,7 @@ export default function App() {
                   {/* Existing activity URL remains unchanged for bookmarks and E2E coverage. */}
                   <Route path="/projects/:projectId/activity" element={<ProjectActivityPage />} />
                   <Route path="/sites" element={<SitesPage />} />
+                  <Route path="/analytics" element={<SiteMetricsPage />} />
                   <Route path="/keywords" element={<KeywordsPage />} />
                   <Route path="/competitors" element={<CompetitorsPage />} />
                   <Route path="/geo" element={<GeoPage />} />

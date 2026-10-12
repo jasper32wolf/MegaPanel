@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from app.core.config import get_settings
-from app.models import AlertIncident, Domain, Site
+from app.models import AlertIncident, Domain, Site, SiteMonitorObservation
 from app.services.operations import observe_alert
 from app.services.operator_alerts import create_operator_alert
 from sqlalchemy import select
@@ -170,8 +170,22 @@ async def monitor_published_domains(db: AsyncSession) -> int:
     )
     for domain, _site in rows:
         probe = await probe_published_domain(domain.hostname)
+        observed_at = datetime.now(UTC)
         domain.dns_status = probe.dns_status
         domain.ssl_status = probe.ssl_status
+        domain.checked_at = observed_at
+        db.add(
+            SiteMonitorObservation(
+                tenant_id=domain.tenant_id,
+                site_id=domain.site_id,
+                domain_id=domain.id,
+                dns_status=probe.dns_status,
+                ssl_status=probe.ssl_status,
+                http_status=probe.http_status,
+                signal_code=probe.signal_code,
+                observed_at=observed_at,
+            )
+        )
         monitored = (
             "site-dns-failure",
             "site-tls-failure",

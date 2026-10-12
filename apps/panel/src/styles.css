@@ -890,3 +890,38 @@ textarea:focus-visible {
     margin-left: 0;
   }
 }
+
+.site-metrics-chart {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+
+.site-metrics-chart svg {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  overflow: visible;
+}
+
+.site-metrics-chart circle:focus {
+  outline: none;
+  stroke-width: 3;
+}
+
+.site-metrics-chart details {
+  color: var(--muted);
+}
+
+.site-metrics-chart details .table-wrap {
+  margin-top: var(--space-3);
+}
+
+@media (forced-colors: active) {
+  .site-metrics-chart path,
+  .site-metrics-chart circle {
+    forced-color-adjust: none;
+    stroke: CanvasText;
+  }
+}

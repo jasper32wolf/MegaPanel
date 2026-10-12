@@ -269,6 +269,7 @@ from app.models.operations import (  # noqa: E402
     OperationalEvent,
     OperatorAlertRecipient,
     OperatorAlertTransport,
+    SiteMonitorObservation,
     StorageRetentionRun,
 )
 from app.models.ops import (  # noqa: E402
@@ -408,6 +409,7 @@ __all__ = [
     "SchedulerWakeup",
     "SerpCheck",
     "Site",
+    "SiteMonitorObservation",
     "SiteBuild",
     "SiteBuildEvent",
     "SitePage",

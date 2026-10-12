@@ -87,6 +87,7 @@ export function DashboardPage() {
             </button>
             <Link className="btn btn-ghost" to="/projects">Новый проект</Link>
             <Link className="btn" to="/sites">Сайты</Link>
+            <Link className="btn btn-ghost" to="/analytics">Аналитика</Link>
           </>
         }
       />

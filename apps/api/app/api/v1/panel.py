@@ -53,6 +53,7 @@ from app.services.operator_alerts import (
     test_smtp_bz_api_transport,
     test_smtp_bz_transport,
 )
+from app.services.site_metrics import site_metrics_report
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 from sqlalchemy import func, select
@@ -353,6 +354,27 @@ def _worker_heartbeat_observation(
         "stale_after_seconds": stale_after_seconds,
         "reason": None,
     }
+
+
+@router.get("/reports/site-metrics")
+async def report_site_metrics(
+    days: int = 30,
+    site_id: UUID | None = None,
+    auth: AuthContext = Depends(
+        require_roles("superadmin", "tenant_admin", "manager", "editor", "client")
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    if days not in {7, 30, 90}:
+        raise HTTPException(status_code=400, detail="Days must be one of: 7, 30, 90")
+    if not auth.tenant_id and auth.role != "superadmin":
+        raise HTTPException(status_code=403, detail="Tenant required")
+    return await site_metrics_report(
+        db,
+        tenant_id=None if auth.role == "superadmin" else auth.tenant_id,
+        days=days,
+        selected_site_id=site_id,
+    )
 
 
 @router.get("/reports/summary")

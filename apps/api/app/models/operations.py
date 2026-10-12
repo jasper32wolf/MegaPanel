@@ -45,6 +45,33 @@ class AlertIncident(Base):
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class SiteMonitorObservation(Base):
+    __tablename__ = "site_monitor_observations"
+    __table_args__ = (
+        UniqueConstraint(
+            "domain_id", "observed_at", name="uq_site_monitor_observation_domain_time"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    )
+    site_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sites.id", ondelete="CASCADE"), index=True
+    )
+    domain_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("domains.id", ondelete="CASCADE"), index=True
+    )
+    dns_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    ssl_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    http_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    signal_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+
+
 class OperatorAlertRecipient(Base):
     __tablename__ = "operator_alert_recipients"
 
