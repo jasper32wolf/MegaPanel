@@ -26,6 +26,7 @@ from app.services import webhook_delivery
 from app.services.leads import canonical_webhook_body, get_encryptor, sign_webhook
 from app.services.webhook_delivery import (
     _retryable,
+    create_lead_deliveries,
     create_lead_delivery,
     enqueue_delivery,
     resend_delivery,
@@ -461,8 +462,11 @@ def test_worker_delivery_uses_postgres_redis_and_no_external_webhook(monkeypatch
                 )
                 db.add(retry_lead)
                 await db.flush()
-                retry_delivery = await create_lead_delivery(db, lead=retry_lead, site=site)
-                assert retry_delivery is not None
+                retry_deliveries = await create_lead_deliveries(
+                    db, lead=retry_lead, site=site
+                )
+                assert len(retry_deliveries) == 1
+                retry_delivery = retry_deliveries[0]
                 await db.flush()
                 retry_delivery_id = retry_delivery.id
                 await db.commit()
