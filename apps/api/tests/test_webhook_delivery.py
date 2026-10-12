@@ -13,8 +13,15 @@ import pytest
 from app.core.config import get_settings
 from app.db.session import engine, open_db_session
 from app.main import app
-from app.models import Site, Tenant
-from app.models.leads import Consent, Lead, WebhookDelivery, WebhookDeliveryAttempt
+from app.models import Project, Site, Tenant
+from app.models.leads import (
+    Consent,
+    Lead,
+    LeadRoutingDestination,
+    LeadRoutingPolicy,
+    WebhookDelivery,
+    WebhookDeliveryAttempt,
+)
 from app.services import webhook_delivery
 from app.services.leads import canonical_webhook_body, get_encryptor, sign_webhook
 from app.services.webhook_delivery import (
@@ -307,21 +314,47 @@ def test_worker_delivery_uses_postgres_redis_and_no_external_webhook(monkeypatch
                     branding={},
                     quotas={},
                 )
+                project = Project(
+                    id=uuid4(),
+                    tenant_id=tenant_id,
+                    name="Webhook integration",
+                    slug=f"webhook-{tenant_id.hex}",
+                )
                 site = Site(
                     id=uuid4(),
                     tenant_id=tenant_id,
+                    project_id=project.id,
                     domain=f"webhook-{tenant_id.hex}.example.test",
                     lead_token=f"lead-token-{tenant_id.hex}",
-                    manifest={
-                        "contacts": {
-                            "webhook_url": "https://receiver.example.test/leads",
-                            "webhook_secret_enc": get_encryptor().encrypt(secret),
-                        }
-                    },
+                    manifest={},
+                )
+                policy = LeadRoutingPolicy(
+                    id=uuid4(),
+                    tenant_id=tenant_id,
+                    project_id=project.id,
+                    site_id=site.id,
+                    version=1,
+                    state="active",
+                    delivery_mode="replace_global",
+                    policy_hash="a" * 64,
+                )
+                destination = LeadRoutingDestination(
+                    tenant_id=tenant_id,
+                    policy_id=policy.id,
+                    target_key="integration_webhook",
+                    channel="webhook",
+                    required=True,
+                    target_url="https://receiver.example.test/leads",
+                    target_secret_enc=get_encryptor().encrypt(secret),
                 )
                 db.add(tenant)
                 await db.flush()
+                db.add(project)
+                await db.flush()
                 db.add(site)
+                await db.flush()
+                project.site_id = site.id
+                db.add_all([policy, destination])
                 await db.commit()
 
             form = await asyncio.to_thread(
