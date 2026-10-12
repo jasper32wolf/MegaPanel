@@ -70,10 +70,10 @@ test("Ops shows bounded verification evidence without mutation", async ({ page }
   await page.goto("/ops");
   await expect(page.getByRole("heading", { name: "Статус системы" })).toBeVisible();
   await expect(page.getByText("Границы доказательств")).toBeVisible();
-  await expect(page.getByText("Последняя готовая candidate (не публикация): aaaaaaaaaaaa")).toBeVisible();
-  await expect(page.getByText("passed", { exact: true })).toBeVisible();
-  await expect(page.getByText("not_observed", { exact: true })).toBeVisible();
-  await expect(page.getByText("не доказывают staging или VPS production", { exact: false })).toBeVisible();
+  await expect(page.getByText("Последняя готовая сборка-кандидат (не публикация): aaaaaaaaaaaa")).toBeVisible();
+  await expect(page.getByText("пройдено", { exact: true })).toBeVisible();
+  await expect(page.getByText("нет наблюдений", { exact: true })).toBeVisible();
+  await expect(page.getByText("не подтверждают предпродакшен или работу на VPS", { exact: false })).toBeVisible();
   await expect(page.getByRole("button", { name: /Записать|Добавить|Подтвердить evidence/ })).toHaveCount(0);
   expect(mutationRequests).toEqual([]);
 });

@@ -102,6 +102,6 @@ test("storage screen previews and queues only allowlisted expired data", async (
   await queueButton.click();
   await expect(page.getByRole("dialog")).toBeVisible();
   await page.getByRole("button", { name: "Поставить в очередь" }).click();
-  await expect(page.getByText("Очистка поставлена в очередь worker.")).toBeVisible();
+  await expect(page.getByText("Очистка поставлена в очередь обработчика.")).toBeVisible();
   await expect(page.getByText("в очереди", { exact: true })).toBeVisible();
 });

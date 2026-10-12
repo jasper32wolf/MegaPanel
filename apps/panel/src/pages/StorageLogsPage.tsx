@@ -109,7 +109,7 @@ export function StorageLogsPage() {
       );
       setPreview(null);
       setConfirmation("");
-      setMessage("Очистка поставлена в очередь worker. Открытые инциденты, активные доставки и audit-цепочка исключены.");
+      setMessage("Очистка поставлена в очередь обработчика. Открытые инциденты, активные доставки и цепочка аудита исключены.");
       await load();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Не удалось поставить очистку в очередь");
@@ -122,20 +122,20 @@ export function StorageLogsPage() {
     <div aria-busy={busy !== null}>
       <PageHeader
         title="Хранение и журналы"
-        description="Панель ограничивает рост технических данных безопасными политиками. Она не получает доступ к Docker, shell-командам, произвольным путям или содержимому журналов."
+        description="Панель ограничивает рост технических данных безопасными политиками. Она не получает доступ к Docker, командной оболочке, произвольным путям или содержимому журналов."
         actions={<button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void load().catch((cause) => setError(cause instanceof Error ? cause.message : "Не удалось обновить состояние"))}>Обновить</button>}
       />
       <AsyncFeedback error={error} message={message} />
       <Surface title="Автоматические лимиты">
         {!status ? <p className="muted">Загрузка политики…</p> : <div className="table-wrap"><table className="table"><thead><tr><th>Источник</th><th>Хранение</th><th>Режим</th></tr></thead><tbody>{Object.entries(status.policy).map(([key, value]) => <tr key={key}><td>{labels[key] || key}</td><td>{key.endsWith("_hours") ? `${value} ч` : `${value} дней`}</td><td><StatusPill tone="ok">автоматически</StatusPill></td></tr>)}</tbody></table></div>}
-        <p className="muted">Docker stdout/stderr: 10 MiB × 3 файла на сервис. Redis: фиксированная память без вытеснения очередей и AOF-rewrite. Локальные runtime-логи: 5 MiB × 5 поколений. VPS release audit: 5 MiB × 52 сжатые генерации. Артефакты сайтов: ежедневно сохраняются current/previous, ready и опубликованные сборки, последние 3 и всё моложе 90 дней.</p>
+        <p className="muted">Docker stdout/stderr: 10 MiB × 3 файла на сервис. Redis: фиксированная память без вытеснения очередей и AOF-rewrite. Локальные журналы среды выполнения: 5 MiB × 5 поколений. Аудит выпусков на VPS: 5 MiB × 52 сжатых поколений. Артефакты сайтов: ежедневно сохраняются текущая и предыдущая, готовые и опубликованные сборки, последние 3 и всё моложе 90 дней.</p>
       </Surface>
       <Surface title="Защищённые данные">
-        <p className="muted">Не попадают в обычную очистку: hash-chained audit ledger, evidence публикаций и rollback, открытые инциденты, активные доставки и финальные approval-записи.</p>
+        <p className="muted">Не попадают в обычную очистку: цепочка хешей журнала аудита, доказательства публикаций и отката, открытые инциденты, активные доставки и итоговые записи подтверждения.</p>
         <div className="row">{status?.protected_sources.map((source) => <StatusPill key={source} tone="accent">{source}</StatusPill>)}</div>
       </Surface>
       <Surface title="Безопасная очистка">
-        <p className="muted">Сначала рассчитывается неизменяемый предпросмотр. Очистка удаляет только просроченные сессии, прочитанные оповещения с доставкой, старые операционные события и попытки успешно доставленных webhook. Не используйте её для расследования активного инцидента.</p>
+        <p className="muted">Сначала рассчитывается неизменяемый предпросмотр. Очистка удаляет только просроченные сессии, прочитанные доставленные оповещения, старые операционные события и попытки успешно доставленных webhook. Не используйте её при расследовании активного инцидента.</p>
         <button className="btn" type="button" disabled={busy !== null} onClick={() => void createPreview()}>{busy === "preview" ? "Расчёт…" : "Рассчитать предпросмотр"}</button>
         {preview && <div className="stack"><div className="table-wrap"><table className="table"><thead><tr><th>Источник</th><th>Будет удалено</th></tr></thead><tbody>{Object.entries(preview.preview.sources).map(([source, count]) => <tr key={source}><td>{labels[source] || source}</td><td>{count}</td></tr>)}</tbody></table></div><label className="field">Для подтверждения введите PURGE EXPIRED DATA<input value={confirmation} onChange={(event) => setConfirmation(event.target.value.toUpperCase())} required /></label><button className="btn btn-danger" type="button" disabled={busy !== null || confirmation !== "PURGE EXPIRED DATA"} onClick={() => setConfirmOpen(true)}>Поставить очистку в очередь</button></div>}
       </Surface>
@@ -145,7 +145,7 @@ export function StorageLogsPage() {
       <ConfirmDialog
         open={confirmOpen}
         title="Поставить удаление просроченных данных в очередь?"
-        description="Worker повторно проверит политику и состояние записей перед удалением. Активные доставки, открытые инциденты, audit ledger и evidence будут исключены."
+        description="Обработчик повторно проверит политику и состояние записей перед удалением. Активные доставки, открытые инциденты, журнал аудита и доказательства будут исключены."
         confirmLabel="Поставить в очередь"
         dangerous
         onCancel={() => setConfirmOpen(false)}
