@@ -8,15 +8,9 @@ from uuid import uuid4
 
 import pytest
 from app.api.v1.leads import _serialize_delivery
-from app.core.config import Settings
 from app.services import webhook_delivery
 from app.services.leads import get_encryptor
-from app.services.webhook_delivery import (
-    create_global_smtp_delivery,
-    create_lead_deliveries,
-    create_smtp_delivery,
-)
-from pydantic import ValidationError
+from app.services.webhook_delivery import create_global_smtp_delivery, create_lead_deliveries
 
 
 class FakeDatabase:
@@ -53,57 +47,22 @@ def _site() -> SimpleNamespace:
     return SimpleNamespace(id=uuid4(), domain="example.test")
 
 
-def test_email_delivery_snapshots_an_encrypted_private_recipient(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(
-        webhook_delivery, "get_settings", lambda: SimpleNamespace(smtp_configured=True)
-    )
-    lead = _lead()
-    recipient = "private-leads@example.test"
-    db = FakeDatabase()
-
-    delivery = create_smtp_delivery(
-        db,
-        lead=lead,
-        site=_site(),
-        recipient_enc=get_encryptor().encrypt(recipient),
-    )
-
-    assert delivery is db.added[0]
-    assert delivery.channel == "email"
-    assert delivery.target_key == "private_email"
-    assert delivery.target_url is None
-    assert delivery.target_recipient_enc != recipient
-    assert delivery.payload["lead_id"] == str(lead.id)
-    assert recipient not in str(delivery.payload)
-    assert delivery.status == "queued"
-
-
-def test_central_smtp_delivery_readiness_uses_the_configured_server_route(
+def test_central_smtp_delivery_snapshots_panel_transport_revision(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setattr(
-        webhook_delivery,
-        "get_settings",
-        lambda: SimpleNamespace(smtp_lead_delivery_ready=True),
-    )
-
-    assert webhook_delivery.central_smtp_delivery_configured() is True
-
-
-def test_central_smtp_delivery_snapshots_server_recipient(monkeypatch: pytest.MonkeyPatch):
     recipient = "central-leads@example.test"
-    monkeypatch.setattr(
-        webhook_delivery,
-        "get_settings",
-        lambda: SimpleNamespace(
-            smtp_lead_delivery_ready=True,
-            smtp_lead_recipient=recipient,
-        ),
-    )
+
+    async def bind(_db, delivery, *, rebind_recipient):
+        assert rebind_recipient is True
+        delivery.target_recipient_enc = get_encryptor().encrypt(recipient)
+        delivery.lead_transport_revision = 7
+        return True
+
+    monkeypatch.setattr(webhook_delivery, "bind_delivery_transport", bind)
     lead = _lead()
     db = FakeDatabase()
 
-    delivery = create_global_smtp_delivery(db, lead=lead, site=_site())
+    delivery = asyncio.run(create_global_smtp_delivery(db, lead=lead, site=_site()))
 
     assert delivery is db.added[0]
     assert delivery.channel == "email"
@@ -111,24 +70,20 @@ def test_central_smtp_delivery_snapshots_server_recipient(monkeypatch: pytest.Mo
     assert delivery.routing_source == "global_default"
     assert delivery.required is True
     assert delivery.target_recipient_enc != recipient
+    assert delivery.lead_transport_revision == 7
     assert recipient not in str(delivery.payload)
     assert delivery.status == "queued"
 
 
-def test_central_smtp_delivery_preserves_lead_when_server_route_is_missing(
+def test_central_smtp_delivery_preserves_lead_when_panel_route_is_missing(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setattr(
-        webhook_delivery,
-        "get_settings",
-        lambda: SimpleNamespace(
-            smtp_lead_delivery_ready=False,
-            smtp_lead_recipient="",
-        ),
-    )
-    db = FakeDatabase()
+    async def bind(_db, _delivery, *, rebind_recipient):
+        assert rebind_recipient is True
+        return False
 
-    delivery = create_global_smtp_delivery(db, lead=_lead(), site=_site())
+    monkeypatch.setattr(webhook_delivery, "bind_delivery_transport", bind)
+    delivery = asyncio.run(create_global_smtp_delivery(FakeDatabase(), lead=_lead(), site=_site()))
 
     assert delivery.status == "dead_letter"
     assert delivery.required is True
@@ -148,15 +103,14 @@ def test_new_leads_use_central_delivery_unless_policy_replaces_it(
     monkeypatch: pytest.MonkeyPatch, delivery_mode: str | None, expected_sources: list[str]
 ):
     recipient = "central-leads@example.test"
-    monkeypatch.setattr(
-        webhook_delivery,
-        "get_settings",
-        lambda: SimpleNamespace(
-            smtp_configured=True,
-            smtp_lead_delivery_ready=True,
-            smtp_lead_recipient=recipient,
-        ),
-    )
+
+    async def bind(_db, delivery, *, rebind_recipient):
+        if rebind_recipient:
+            delivery.target_recipient_enc = get_encryptor().encrypt(recipient)
+        delivery.lead_transport_revision = 1
+        return True
+
+    monkeypatch.setattr(webhook_delivery, "bind_delivery_transport", bind)
 
     async def active_policy(_db, *, site):
         if delivery_mode is None:
@@ -251,13 +205,13 @@ def test_email_delivery_dispatches_only_through_fake_transport(monkeypatch: pyte
     )
     calls: list[tuple[str, dict]] = []
 
-    async def fake_dispatch(actual_recipient: str, payload: dict) -> dict:
-        calls.append((actual_recipient, payload))
+    async def fake_dispatch(_db, *, delivery, recipient: str, payload: dict) -> dict:
+        calls.append((recipient, payload))
         return {"ok": True}
 
-    monkeypatch.setattr(webhook_delivery, "dispatch_smtp", fake_dispatch)
+    monkeypatch.setattr(webhook_delivery, "dispatch_lead_smtp", fake_dispatch)
 
-    result = asyncio.run(webhook_delivery._dispatch_delivery(delivery, lead))
+    result = asyncio.run(webhook_delivery._dispatch_delivery(object(), delivery, lead))
 
     assert result == {"ok": True}
     assert calls == [
@@ -273,44 +227,6 @@ def test_email_delivery_dispatches_only_through_fake_transport(monkeypatch: pyte
             },
         )
     ]
-
-
-def test_smtp_setting_contract_rejects_half_configured_or_double_tls():
-    with pytest.raises(ValidationError, match="SMTP_HOST and SMTP_FROM_EMAIL"):
-        Settings(smtp_host="smtp.example.test")
-    with pytest.raises(ValidationError, match="SMTP_USERNAME and SMTP_PASSWORD"):
-        Settings(
-            smtp_host="smtp.example.test", smtp_from_email="sender@example.test", smtp_username="u"
-        )
-    with pytest.raises(ValidationError, match="cannot both be enabled"):
-        Settings(
-            smtp_host="smtp.example.test", smtp_from_email="sender@example.test", smtp_use_ssl=True
-        )
-
-
-def test_smtp_lead_recipient_requires_safe_complete_smtp_configuration():
-    assert Settings().smtp_lead_delivery_ready is False
-    assert (
-        Settings(smtp_host="smtp.example.test", smtp_from_email="sender@example.test")
-        .smtp_lead_delivery_ready
-        is False
-    )
-
-    settings = Settings(
-        smtp_host="smtp.example.test",
-        smtp_from_email="sender@example.test",
-        smtp_lead_recipient="private-leads@example.test",
-    )
-    assert settings.smtp_lead_delivery_ready is True
-
-    with pytest.raises(ValidationError, match="SMTP_HOST and SMTP_FROM_EMAIL"):
-        Settings(smtp_lead_recipient="private-leads@example.test")
-    with pytest.raises(ValidationError, match="SMTP_LEAD_RECIPIENT must be a valid email address"):
-        Settings(
-            smtp_host="smtp.example.test",
-            smtp_from_email="sender@example.test",
-            smtp_lead_recipient="private-leads@example.test\\nBcc: attacker@example.test",
-        )
 
 
 def test_email_delivery_migration_adds_encrypted_target_fields(monkeypatch: pytest.MonkeyPatch):

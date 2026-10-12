@@ -5,7 +5,6 @@ from uuid import UUID
 
 from app.api.deps import AuthContext, require_roles
 from app.api.v1.sites import validate_webhook_target
-from app.core.config import get_settings
 from app.db.session import get_db
 from app.models import Site
 from app.models.leads import LeadRoutingDestination, LeadRoutingPolicy
@@ -96,7 +95,7 @@ async def _central_delivery_status(db: AsyncSession, site: Site) -> dict:
     routing = await active_routing_policy(db, site=site)
     effective_mode = routing[0].delivery_mode if routing else "central_default"
     return {
-        "configured": central_smtp_delivery_configured(),
+        "configured": await central_smtp_delivery_configured(db, site.tenant_id),
         "effective_mode": effective_mode,
         "uses_central_delivery": effective_mode != "replace_global",
     }
@@ -336,11 +335,11 @@ async def activate_lead_routing_policy(
             status_code=422,
             detail="Explicit confirmation is required to replace central delivery",
         )
-    if policy.delivery_mode == "append_global" and not central_smtp_delivery_configured():
+    needs_smtp_transport = policy.delivery_mode == "append_global" or any(
+        destination.channel == "email" for destination in destinations
+    )
+    if needs_smtp_transport and not await central_smtp_delivery_configured(db, site.tenant_id):
         raise HTTPException(status_code=409, detail="Central SMTP delivery is not configured")
-    has_email_destination = any(destination.channel == "email" for destination in destinations)
-    if has_email_destination and not get_settings().smtp_configured:
-        raise HTTPException(status_code=409, detail="SMTP transport is not configured")
     active = (
         await db.execute(
             select(LeadRoutingPolicy)

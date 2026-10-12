@@ -69,7 +69,7 @@ def _lead():
 
 
 def _site():
-    return SimpleNamespace(id=uuid4(), domain="example.test")
+    return SimpleNamespace(id=uuid4(), tenant_id=uuid4(), domain="example.test")
 
 
 def test_routing_policy_schema_requires_exactly_one_safe_channel_target():
@@ -140,8 +140,11 @@ def test_central_delivery_status_exposes_only_safe_effective_route(monkeypatch):
     async def no_policy(_db, *, site):
         return None
 
+    async def configured(_db, _tenant_id):
+        return True
+
     monkeypatch.setattr(lead_routing, "active_routing_policy", no_policy)
-    monkeypatch.setattr(lead_routing, "central_smtp_delivery_configured", lambda: True)
+    monkeypatch.setattr(lead_routing, "central_smtp_delivery_configured", configured)
 
     assert asyncio.run(_central_delivery_status(object(), site)) == {
         "configured": True,
@@ -162,10 +165,14 @@ def test_central_delivery_status_exposes_only_safe_effective_route(monkeypatch):
 
 
 def test_policy_delivery_snapshots_encrypted_destination_without_pii_payload(monkeypatch):
-    monkeypatch.setattr(
-        "app.services.webhook_delivery.get_settings", lambda: SimpleNamespace(smtp_configured=True)
-    )
     recipient = "private-leads@example.com"
+
+    async def bind(_db, delivery, *, rebind_recipient):
+        assert rebind_recipient is False
+        delivery.lead_transport_revision = 1
+        return True
+
+    monkeypatch.setattr("app.services.webhook_delivery.bind_delivery_transport", bind)
     policy = SimpleNamespace(id=uuid4(), version=3, policy_hash="a" * 64)
     destination = SimpleNamespace(
         target_key="private_email",
@@ -178,8 +185,8 @@ def test_policy_delivery_snapshots_encrypted_destination_without_pii_payload(mon
     db = DeliveryDatabase()
     lead = _lead()
 
-    delivery = create_policy_delivery(
-        db, lead=lead, site=_site(), policy=policy, destination=destination
+    delivery = asyncio.run(
+        create_policy_delivery(db, lead=lead, site=_site(), policy=policy, destination=destination)
     )
 
     assert delivery is db.added[0]

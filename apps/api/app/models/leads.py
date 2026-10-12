@@ -54,6 +54,40 @@ class Lead(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class CentralLeadSmtpTransport(Base):
+    __tablename__ = "central_lead_smtp_transports"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", name="uq_central_lead_smtp_transport_tenant"),
+        CheckConstraint(
+            "tls_mode IN ('starttls', 'implicit_tls')",
+            name="ck_central_lead_smtp_transport_tls_mode",
+        ),
+        CheckConstraint("revision >= 1", name="ck_central_lead_smtp_transport_revision"),
+        CheckConstraint(
+            "(smtp_username_enc IS NULL) = (smtp_password_enc IS NULL)",
+            name="ck_central_lead_smtp_transport_credentials",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    )
+    host: Mapped[str] = mapped_column(String(255), nullable=False)
+    port: Mapped[int] = mapped_column(Integer, nullable=False)
+    tls_mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    sender_email: Mapped[str] = mapped_column(String(320), nullable=False)
+    recipient_enc: Mapped[str] = mapped_column(Text, nullable=False)
+    smtp_username_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    smtp_password_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class LeadRoutingPolicy(Base):
     __tablename__ = "lead_routing_policies"
     __table_args__ = (
@@ -166,6 +200,7 @@ class WebhookDelivery(Base):
     )
     routing_policy_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     routing_policy_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lead_transport_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
     routing_source: Mapped[str] = mapped_column(String(16), nullable=False, default="legacy")
     required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     target_key: Mapped[str] = mapped_column(String(64), nullable=False)

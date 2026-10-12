@@ -1301,7 +1301,7 @@ def test_rollback_caddy_failure_restores_release_without_projection_mutation(mon
     ("policies", "central_ready", "expected"),
     [
         ([], True, []),
-        ([], False, ["Configure central SMTP lead delivery before publish"]),
+        ([], False, ["Configure central SMTP delivery in panel before publish"]),
         (
             [SimpleNamespace(state="review", delivery_mode="append_global")],
             True,
@@ -1311,9 +1311,13 @@ def test_rollback_caddy_failure_restores_release_without_projection_mutation(mon
         (
             [SimpleNamespace(state="active", delivery_mode="append_global")],
             False,
-            ["Configure central SMTP lead delivery before publish"],
+            ["Configure central SMTP delivery in panel before publish"],
         ),
-        ([SimpleNamespace(state="active", delivery_mode="replace_global")], False, []),
+        (
+            [SimpleNamespace(id=uuid4(), state="active", delivery_mode="replace_global")],
+            False,
+            [],
+        ),
     ],
 )
 def test_form_build_publish_requires_an_effective_lead_route(
@@ -1326,9 +1330,36 @@ def test_form_build_publish_requires_an_effective_lead_route(
         async def execute(self, _statement):
             return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: policies))
 
-    monkeypatch.setattr(projects, "central_smtp_delivery_configured", lambda: central_ready)
+    async def central_configured(_db, _tenant_id):
+        return central_ready
+
+    monkeypatch.setattr(projects, "central_smtp_delivery_configured", central_configured)
 
     assert asyncio.run(_lead_routing_publish_blockers(Database(), site, manifest)) == expected
+
+
+def test_replace_policy_with_email_requires_panel_smtp_transport(monkeypatch):
+    site = SimpleNamespace(id=uuid4(), tenant_id=uuid4(), project_id=uuid4())
+    manifest = SimpleNamespace(pages=[SimpleNamespace(blocks=[SimpleNamespace(type="lead_form")])])
+    policy = SimpleNamespace(id=uuid4(), state="active", delivery_mode="replace_global")
+
+    class Database:
+        def __init__(self):
+            self.calls = 0
+
+        async def execute(self, _statement):
+            self.calls += 1
+            values = [policy] if self.calls == 1 else ["email"]
+            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: values))
+
+    async def central_configured(_db, _tenant_id):
+        return False
+
+    monkeypatch.setattr(projects, "central_smtp_delivery_configured", central_configured)
+
+    assert asyncio.run(_lead_routing_publish_blockers(Database(), site, manifest)) == [
+        "Configure central SMTP delivery in panel before publish"
+    ]
 
 
 def test_build_without_a_lead_form_does_not_require_central_delivery(monkeypatch):

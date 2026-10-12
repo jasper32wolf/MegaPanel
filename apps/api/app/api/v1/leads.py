@@ -714,6 +714,9 @@ async def resend_lead_delivery(
             "lead_id": str(lead.id),
             "delivery_id": str(delivery.id),
             "channel": delivery.channel,
+            "lead_transport_revision": delivery.lead_transport_revision
+            if delivery.channel == "email"
+            else None,
         },
         tenant_id=lead.tenant_id,
         actor_id=auth.user.id,

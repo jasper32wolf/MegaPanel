@@ -78,7 +78,7 @@ def test_production_validator_rejects_inconsistent_public_origin(tmp_path: Path)
     assert "cors_origins_must_equal_panel_origin" in result.stderr
 
 
-def test_production_validator_rejects_invalid_central_lead_recipient_without_echoing_it(
+def test_production_validator_ignores_retired_central_smtp_environment_values(
     tmp_path: Path,
 ):
     recipient = "invalid recipient@example.test"
@@ -111,6 +111,6 @@ def test_production_validator_rejects_invalid_central_lead_recipient_without_ech
 
     result = run(str(VALIDATOR), "--env-file", str(env_file))
 
-    assert result.returncode == 1
-    assert "invalid_SMTP_LEAD_RECIPIENT" in result.stderr
+    assert result.returncode == 0, result.stderr
+    assert recipient not in result.stdout
     assert recipient not in result.stderr

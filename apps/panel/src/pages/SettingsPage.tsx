@@ -92,11 +92,8 @@ function transportTestError(result: string) {
 
 function leadSmtpTestError(result: string) {
   const messages: Record<string, string> = {
-    authentication_failed: "SMTP-сервер отклонил учётные данные. Проверьте логин и пароль и сохраните их повторно.",
     invalid_config: "Параметры SMTP-сервера неполны или несовместимы. Проверьте хост, порт и TLS.",
-    tls_failed: "Не удалось установить защищённое TLS-соединение с SMTP-сервером.",
-    timeout: "SMTP-сервер не ответил вовремя. Проверьте хост, порт и доступ VPS к серверу.",
-    unavailable: "SMTP-сервер временно недоступен. Повторите проверку позже.",
+    connection_failed: "SMTP-сервер не подтвердил соединение или авторизацию. Проверьте параметры и доступ VPS к серверу.",
   };
   return messages[result] || "SMTP-сервер не подтвердил соединение. Проверьте настройки и повторите попытку.";
 }
@@ -139,7 +136,7 @@ export function SettingsPage() {
       api<Readiness>("/api/v1/health/ready", {}, token).catch(() => null),
       api<SessionSummary>("/api/v1/security/sessions", {}, token),
       api<AlertSettings>("/api/v1/panel/alert-settings", {}, token),
-      api<LeadSmtpTransport>("/api/v1/panel/lead-smtp-transport", {}, token),
+      api<LeadSmtpTransport>("/api/v1/panel/lead-smtp-transport", {}, token).catch(() => null),
     ]);
     setOperator(me);
     setHealth(apiHealth);
@@ -283,7 +280,7 @@ export function SettingsPage() {
         { method: "POST" },
         token,
       );
-      if (result.result && result.result !== "ok") {
+      if (result.result && result.result !== "connected") {
         setError(leadSmtpTestError(result.result));
       } else {
         setMessage("Соединение с SMTP-сервером и авторизация проверены. Заявка и письмо о заявке не отправлялись.");
@@ -413,6 +410,7 @@ export function SettingsPage() {
           <StatusPill tone={leadSmtpTransport?.configured ? "ok" : "warn"}>SMTP: {leadSmtpTransport?.configured ? "настроен" : "не настроен"}</StatusPill>
         </div>
         <p className="muted">Это отдельный канал для отправки заявок с сайтов на указанный email. Он не заменяет SMTP.bz для системных оповещений и не использует его настройки.</p>
+        {!operator?.mfa_enabled && <p className="error">Для просмотра и изменения этой системной настройки сначала подтвердите TOTP выше.</p>}
         {leadSmtpTransport?.configured ? (
           <div className="detail-grid">
             <div><strong>SMTP-сервер</strong><p>{leadSmtpTransport.host || "—"}</p></div>
@@ -422,7 +420,7 @@ export function SettingsPage() {
           </div>
         ) : null}
         <form className="stack" onSubmit={saveLeadSmtpTransport}>
-          <p className="muted" style={{ margin: 0 }}>Введите параметры SMTP-сервера для заявок. Логин и пароль — write-only: после сохранения они очищаются из формы и больше не выводятся. При изменении настроек введите их повторно.</p>
+          <p className="muted" style={{ margin: 0 }}>Введите параметры SMTP-сервера для заявок. Логин и пароль укажите, если сервер требует SMTP AUTH; после сохранения они очищаются из формы и больше не выводятся. При изменении настроек введите их повторно.</p>
           <label className="field">Хост SMTP-сервера<input value={leadSmtpForm.host} onChange={(event) => setLeadSmtpForm((current) => ({ ...current, host: event.target.value }))} autoComplete="off" placeholder="smtp.example.com" required /></label>
           <div className="detail-grid">
             <label className="field">Порт центрального SMTP<input type="number" min={1} max={65535} value={leadSmtpForm.port || ""} onChange={(event) => setLeadSmtpForm((current) => ({ ...current, port: Number(event.target.value) }))} inputMode="numeric" required /></label>
@@ -430,12 +428,12 @@ export function SettingsPage() {
           </div>
           <label className="field">Адрес отправителя для заявок<input type="email" value={leadSmtpForm.sender_email} onChange={(event) => setLeadSmtpForm((current) => ({ ...current, sender_email: event.target.value }))} autoComplete="email" placeholder="leads@example.com" required /></label>
           <label className="field">Получатель заявок<input type="email" value={leadSmtpForm.recipient} onChange={(event) => setLeadSmtpForm((current) => ({ ...current, recipient: event.target.value }))} autoComplete="email" placeholder="sales@example.com" required /></label>
-          <label className="field">Логин центрального SMTP<input type="password" value={leadSmtpForm.username} onChange={(event) => setLeadSmtpForm((current) => ({ ...current, username: event.target.value }))} autoComplete="new-password" required /></label>
-          <label className="field">Пароль центрального SMTP<input type="password" value={leadSmtpForm.password} onChange={(event) => setLeadSmtpForm((current) => ({ ...current, password: event.target.value }))} autoComplete="new-password" required /></label>
+          <label className="field">Логин центрального SMTP<input type="password" value={leadSmtpForm.username} onChange={(event) => setLeadSmtpForm((current) => ({ ...current, username: event.target.value }))} autoComplete="new-password" /></label>
+          <label className="field">Пароль центрального SMTP<input type="password" value={leadSmtpForm.password} onChange={(event) => setLeadSmtpForm((current) => ({ ...current, password: event.target.value }))} autoComplete="new-password" /></label>
           <div className="row">
-            <button className="btn" type="submit" disabled={busy !== null}>{busy === "lead-smtp-save" ? "Сохранение…" : leadSmtpTransport?.enabled ? "Сохранить настройки" : "Сохранить и включить доставку"}</button>
-            {leadSmtpTransport?.configured ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void testLeadSmtpTransport()}>{busy === "lead-smtp-test" ? "Проверка…" : "Проверить центральное SMTP-соединение"}</button> : null}
-            {leadSmtpTransport?.enabled ? <button className="btn btn-danger" type="button" disabled={busy !== null} onClick={() => setLeadSmtpToDisable(true)}>{busy === "lead-smtp-disable" ? "Отключение…" : "Отключить доставку заявок"}</button> : null}
+            <button className="btn" type="submit" disabled={busy !== null || !operator?.mfa_enabled}>{busy === "lead-smtp-save" ? "Сохранение…" : leadSmtpTransport?.enabled ? "Сохранить настройки" : "Сохранить и включить доставку"}</button>
+            {leadSmtpTransport?.configured ? <button className="btn btn-ghost" type="button" disabled={busy !== null || !operator?.mfa_enabled} onClick={() => void testLeadSmtpTransport()}>{busy === "lead-smtp-test" ? "Проверка…" : "Проверить центральное SMTP-соединение"}</button> : null}
+            {leadSmtpTransport?.enabled ? <button className="btn btn-danger" type="button" disabled={busy !== null || !operator?.mfa_enabled} onClick={() => setLeadSmtpToDisable(true)}>{busy === "lead-smtp-disable" ? "Отключение…" : "Отключить доставку заявок"}</button> : null}
           </div>
         </form>
         <p className="muted" style={{ marginBottom: 0 }}>Проверка подтверждает соединение и авторизацию. Она не создаёт заявку и не отправляет письмо о заявке.</p>

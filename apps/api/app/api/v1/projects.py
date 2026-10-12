@@ -22,6 +22,7 @@ from app.models import (
     BuildReleaseGate,
     GeoPlace,
     Keyword,
+    LeadRoutingDestination,
     LeadRoutingPolicy,
     MediaAsset,
     PageDraft,
@@ -231,10 +232,23 @@ async def _lead_routing_publish_blockers(
     active = next((policy for policy in policies if policy.state == "active"), None)
     if policies and active is None:
         return ["Activate the reviewed lead routing policy before publish"]
+    requires_smtp_transport = active is None or active.delivery_mode == "append_global"
     if active and active.delivery_mode == "replace_global":
-        return []
-    if not central_smtp_delivery_configured():
-        return ["Configure central SMTP lead delivery before publish"]
+        destinations = list(
+            (
+                await db.execute(
+                    select(LeadRoutingDestination.channel).where(
+                        LeadRoutingDestination.policy_id == active.id,
+                        LeadRoutingDestination.tenant_id == site.tenant_id,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        requires_smtp_transport = "email" in destinations
+    if requires_smtp_transport and not await central_smtp_delivery_configured(db, site.tenant_id):
+        return ["Configure central SMTP delivery in panel before publish"]
     return []
 
 

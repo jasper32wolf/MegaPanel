@@ -208,7 +208,7 @@ test("central SMTP delivery saves write-only credentials, tests without a lead, 
     }
     if (url.pathname === "/api/v1/panel/lead-smtp-transport/test" && request.method() === "POST") {
       tested = true;
-      return route.fulfill({ status: 200, body: '{"result":"ok"}' });
+      return route.fulfill({ status: 200, body: '{"result":"connected"}' });
     }
     if (url.pathname === "/api/v1/panel/lead-smtp-transport" && request.method() === "DELETE") {
       enabled = false;

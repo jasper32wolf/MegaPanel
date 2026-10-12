@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
-import smtplib
-import ssl
 from datetime import UTC, datetime, timedelta
-from email.message import EmailMessage
 from hashlib import sha256
 from uuid import UUID
 
 from app.core.config import get_settings
-from app.models import Project, Site
+from app.models import Site
 from app.models.leads import (
     Lead,
     LeadDeliveryAggregate,
@@ -21,7 +17,11 @@ from app.models.leads import (
     WebhookDelivery,
     WebhookDeliveryAttempt,
 )
-from app.models.project import ProjectFactRevision
+from app.services.lead_transport import (
+    bind_delivery_transport,
+    central_lead_transport_ready,
+    dispatch_lead_smtp,
+)
 from app.services.leads import dispatch_webhook, get_encryptor
 from app.services.metrics import record_delivery_transition
 from app.services.operations import record_operational_event
@@ -221,55 +221,10 @@ async def create_lead_delivery(
     return delivery
 
 
-async def _private_lead_email_enc(db: AsyncSession, site: Site) -> str | None:
-    if not site.project_id:
-        return None
-    return (
-        await db.execute(
-            select(ProjectFactRevision.private_lead_email_enc)
-            .join(Project, Project.current_fact_revision_id == ProjectFactRevision.id)
-            .where(
-                Project.id == site.project_id,
-                Project.tenant_id == site.tenant_id,
-                ProjectFactRevision.project_id == Project.id,
-                ProjectFactRevision.state == "confirmed",
-            )
-        )
-    ).scalar_one_or_none()
-
-
-def create_smtp_delivery(
-    db: AsyncSession, *, lead: Lead, site: Site, recipient_enc: str
-) -> WebhookDelivery:
-    payload = _delivery_payload(lead, site)
-    configured = get_settings().smtp_configured
-    delivery = WebhookDelivery(
-        tenant_id=lead.tenant_id,
-        site_id=site.id,
-        lead_id=lead.id,
-        target_key="private_email",
-        channel="email",
-        routing_source="legacy",
-        target_recipient_enc=recipient_enc,
-        payload=payload,
-        idempotency_key=payload["idempotency_key"],
-        status="queued" if configured else "dead_letter",
-        max_attempts=MAX_ATTEMPTS,
-        next_attempt_at=_now() if configured else None,
-        last_error=None if configured else "SMTP transport is not configured",
-        dead_lettered_at=None if configured else _now(),
-    )
-    db.add(delivery)
-    return delivery
-
-
-def create_global_smtp_delivery(
+async def create_global_smtp_delivery(
     db: AsyncSession, *, lead: Lead, site: Site
 ) -> WebhookDelivery:
     payload = _delivery_payload(lead, site)
-    settings = get_settings()
-    configured = settings.smtp_lead_delivery_ready
-    recipient_enc = get_encryptor().encrypt(settings.smtp_lead_recipient) if configured else None
     delivery = WebhookDelivery(
         tenant_id=lead.tenant_id,
         site_id=site.id,
@@ -278,20 +233,20 @@ def create_global_smtp_delivery(
         channel="email",
         routing_source="global_default",
         required=True,
-        target_recipient_enc=recipient_enc,
         payload=payload,
         idempotency_key=payload["idempotency_key"],
-        status="queued" if configured else "dead_letter",
         max_attempts=MAX_ATTEMPTS,
-        next_attempt_at=_now() if configured else None,
-        last_error=None if configured else "Central SMTP delivery is not configured",
-        dead_lettered_at=None if configured else _now(),
     )
+    configured = await bind_delivery_transport(db, delivery, rebind_recipient=True)
+    delivery.status = "queued" if configured else "dead_letter"
+    delivery.next_attempt_at = _now() if configured else None
+    delivery.last_error = None if configured else "Central SMTP delivery is not configured"
+    delivery.dead_lettered_at = None if configured else _now()
     db.add(delivery)
     return delivery
 
 
-def create_policy_delivery(
+async def create_policy_delivery(
     db: AsyncSession,
     *,
     lead: Lead,
@@ -300,53 +255,45 @@ def create_policy_delivery(
     destination: LeadRoutingDestination,
 ) -> WebhookDelivery:
     payload = _delivery_payload(lead, site)
+    common = {
+        "tenant_id": lead.tenant_id,
+        "site_id": site.id,
+        "lead_id": lead.id,
+        "routing_policy_id": policy.id,
+        "routing_policy_version": policy.version,
+        "routing_policy_hash": policy.policy_hash,
+        "routing_source": "project_policy",
+        "required": destination.required,
+        "target_key": destination.target_key,
+        "payload": payload,
+        "idempotency_key": payload["idempotency_key"],
+        "max_attempts": MAX_ATTEMPTS,
+    }
     if destination.channel == "webhook":
         configured = bool(destination.target_url and destination.target_secret_enc)
         delivery = WebhookDelivery(
-            tenant_id=lead.tenant_id,
-            site_id=site.id,
-            lead_id=lead.id,
-            routing_policy_id=policy.id,
-            routing_policy_version=policy.version,
-            routing_policy_hash=policy.policy_hash,
-            routing_source="project_policy",
-            required=destination.required,
-            target_key=destination.target_key,
+            **common,
             channel="webhook",
             target_url=destination.target_url,
             target_secret_enc=destination.target_secret_enc,
-            payload=payload,
-            idempotency_key=payload["idempotency_key"],
-            status="queued" if configured else "dead_letter",
-            max_attempts=MAX_ATTEMPTS,
-            next_attempt_at=_now() if configured else None,
-            last_error=None if configured else "Webhook target is not configured",
-            dead_lettered_at=None if configured else _now(),
         )
+        error = "Webhook target is not configured"
     elif destination.channel == "email":
-        configured = bool(destination.target_recipient_enc and get_settings().smtp_configured)
         delivery = WebhookDelivery(
-            tenant_id=lead.tenant_id,
-            site_id=site.id,
-            lead_id=lead.id,
-            routing_policy_id=policy.id,
-            routing_policy_version=policy.version,
-            routing_policy_hash=policy.policy_hash,
-            routing_source="project_policy",
-            required=destination.required,
-            target_key=destination.target_key,
+            **common,
             channel="email",
             target_recipient_enc=destination.target_recipient_enc,
-            payload=payload,
-            idempotency_key=payload["idempotency_key"],
-            status="queued" if configured else "dead_letter",
-            max_attempts=MAX_ATTEMPTS,
-            next_attempt_at=_now() if configured else None,
-            last_error=None if configured else "SMTP target is not configured",
-            dead_lettered_at=None if configured else _now(),
         )
+        configured = bool(destination.target_recipient_enc) and await bind_delivery_transport(
+            db, delivery, rebind_recipient=False
+        )
+        error = "Central SMTP delivery is not configured"
     else:
         raise ValueError("Unsupported routing destination channel")
+    delivery.status = "queued" if configured else "dead_letter"
+    delivery.next_attempt_at = _now() if configured else None
+    delivery.last_error = None if configured else error
+    delivery.dead_lettered_at = None if configured else _now()
     db.add(delivery)
     return delivery
 
@@ -356,17 +303,23 @@ async def create_lead_deliveries(
 ) -> list[WebhookDelivery]:
     routing = await active_routing_policy(db, site=site)
     if routing is None:
-        return [create_global_smtp_delivery(db, lead=lead, site=site)]
+        return [await create_global_smtp_delivery(db, lead=lead, site=site)]
 
     policy, destinations = routing
     deliveries: list[WebhookDelivery] = []
     if policy.delivery_mode == "append_global":
-        deliveries.append(create_global_smtp_delivery(db, lead=lead, site=site))
-    deliveries.extend(
-        create_policy_delivery(db, lead=lead, site=site, policy=policy, destination=destination)
-        for destination in destinations
-    )
+        deliveries.append(await create_global_smtp_delivery(db, lead=lead, site=site))
+    for destination in destinations:
+        deliveries.append(
+            await create_policy_delivery(
+                db, lead=lead, site=site, policy=policy, destination=destination
+            )
+        )
     return deliveries
+
+
+async def central_smtp_delivery_configured(db: AsyncSession, tenant_id: UUID) -> bool:
+    return await central_lead_transport_ready(db, tenant_id)
 
 
 async def effective_lead_route(db: AsyncSession, *, site: Site) -> str:
@@ -376,9 +329,6 @@ async def effective_lead_route(db: AsyncSession, *, site: Site) -> str:
     policy, _destinations = routing
     return policy.delivery_mode
 
-
-def central_smtp_delivery_configured() -> bool:
-    return get_settings().smtp_lead_delivery_ready
 
 
 async def enqueue_delivery(delivery_id: UUID, *, trigger: str = "automatic") -> bool:
@@ -455,54 +405,7 @@ async def recover_expired_leases(db: AsyncSession) -> int:
     return len(rows)
 
 
-def _smtp_message(payload: dict, sender: str, recipient: str) -> EmailMessage:
-    message = EmailMessage()
-    message["Subject"] = f"Новая заявка с сайта {payload.get('domain') or 'Site Panel'}"
-    message["From"] = sender
-    message["To"] = recipient
-    message.set_content(
-        "\n".join(
-            [
-                "Новая заявка",
-                f"Сайт: {payload.get('domain') or '—'}",
-                f"Страница: {payload.get('page_slug') or '—'}",
-                f"Телефон: {payload.get('phone') or '—'}",
-                f"Email: {payload.get('email') or '—'}",
-                f"Имя: {payload.get('name') or '—'}",
-                "",
-                "Сообщение:",
-                str(payload.get("message") or "—"),
-            ]
-        )
-    )
-    return message
-
-
-def _send_smtp_message(payload: dict, recipient: str) -> None:
-    settings = get_settings()
-    message = _smtp_message(payload, settings.smtp_from_email, recipient)
-    client_class = smtplib.SMTP_SSL if settings.smtp_use_ssl else smtplib.SMTP
-    with client_class(settings.smtp_host, settings.smtp_port, timeout=10) as client:
-        client.ehlo()
-        if settings.smtp_starttls:
-            client.starttls(context=ssl.create_default_context())
-            client.ehlo()
-        if settings.smtp_username:
-            client.login(settings.smtp_username, settings.smtp_password)
-        client.send_message(message, from_addr=settings.smtp_from_email, to_addrs=[recipient])
-
-
-async def dispatch_smtp(recipient: str, payload: dict) -> dict:
-    if not get_settings().smtp_configured:
-        return {"ok": False, "error": "SMTP transport is not configured", "retryable": False}
-    try:
-        await asyncio.to_thread(_send_smtp_message, payload, recipient)
-    except Exception:  # SMTP details can contain sensitive infrastructure context.
-        return {"ok": False, "error": "SMTP delivery failed", "retryable": True}
-    return {"ok": True}
-
-
-async def _dispatch_delivery(delivery: WebhookDelivery, lead: Lead) -> dict:
+async def _dispatch_delivery(db: AsyncSession, delivery: WebhookDelivery, lead: Lead) -> dict:
     channel = getattr(delivery, "channel", "webhook")
     if channel == "webhook":
         if not delivery.target_secret_enc:
@@ -516,7 +419,9 @@ async def _dispatch_delivery(delivery: WebhookDelivery, lead: Lead) -> dict:
     if channel == "email":
         recipient = _decrypt(delivery.target_recipient_enc or "")
         return (
-            await dispatch_smtp(recipient, wire_payload(delivery, lead))
+            await dispatch_lead_smtp(
+                db, delivery=delivery, recipient=recipient, payload=wire_payload(delivery, lead)
+            )
             if recipient
             else {"ok": False, "error": "SMTP recipient cannot be decrypted", "retryable": False}
         )
@@ -569,7 +474,7 @@ async def process_delivery(
 
     lead = await db.get(Lead, delivery.lead_id)
     assert lead is not None
-    result = await _dispatch_delivery(delivery, lead)
+    result = await _dispatch_delivery(db, delivery, lead)
 
     delivery = (
         await db.execute(
@@ -622,6 +527,13 @@ async def process_delivery(
 async def resend_delivery(db: AsyncSession, delivery: WebhookDelivery) -> None:
     if delivery.status != "dead_letter":
         raise ValueError("Delivery is already queued")
+    if delivery.channel == "email":
+        if not await bind_delivery_transport(
+            db,
+            delivery,
+            rebind_recipient=delivery.routing_source == "global_default",
+        ):
+            raise ValueError("Central SMTP delivery is not configured")
     delivery.status = "queued"
     delivery.attempt_count = 0
     delivery.next_attempt_at = _now()

@@ -23,6 +23,12 @@ from app.models.project import PageDraft, PagePlan, Project
 from app.models.publish import Domain, SiteBuild
 from app.models.system_operation import SystemOperation
 from app.services.audit import append_audit
+from app.services.lead_transport import (
+    configure_lead_transport,
+    disable_lead_transport,
+    lead_transport_status,
+    test_lead_transport,
+)
 from app.services.metrics import (
     record_active_incidents,
     record_delivery_queue_age,
@@ -149,6 +155,26 @@ class SmtpBzSmtpIn(BaseModel):
         ports = {"starttls": {587, 9587}, "implicit_tls": {465, 9465}}
         if self.port not in ports[self.tls_mode]:
             raise ValueError("SMTP.bz port does not match the selected TLS mode")
+        return self
+
+
+class CentralLeadSmtpTransportIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    host: str = Field(min_length=1, max_length=255)
+    port: int = Field(ge=1, le=65535)
+    tls_mode: Literal["starttls", "implicit_tls"] = "starttls"
+    sender_email: EmailStr
+    recipient: EmailStr
+    username: str | None = Field(default=None, max_length=512)
+    password: str | None = Field(default=None, max_length=4096)
+
+    @model_validator(mode="after")
+    def validate_credentials(self) -> CentralLeadSmtpTransportIn:
+        has_username = bool(self.username and self.username.strip())
+        has_password = bool(self.password and self.password.strip())
+        if has_username != has_password:
+            raise ValueError("SMTP username and password must be configured together")
         return self
 
 
@@ -732,6 +758,90 @@ async def test_operator_alert_transport(
         db,
         action="operator_alert.transport.test",
         payload={"transport": status, "result": result},
+        tenant_id=auth.tenant_id,
+        actor_id=auth.user.id,
+    )
+    await db.commit()
+    return {"result": result}
+
+
+@router.get("/lead-smtp-transport")
+async def get_lead_smtp_transport(
+    auth: AuthContext = Depends(require_system_operator),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    if not auth.tenant_id:
+        raise HTTPException(status_code=403, detail="Tenant required")
+    return await lead_transport_status(db, auth.tenant_id)
+
+
+@router.put("/lead-smtp-transport")
+async def update_lead_smtp_transport(
+    body: CentralLeadSmtpTransportIn,
+    auth: AuthContext = Depends(require_system_operator),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    if not auth.tenant_id:
+        raise HTTPException(status_code=403, detail="Tenant required")
+    try:
+        transport = await configure_lead_transport(
+            db,
+            tenant_id=auth.tenant_id,
+            host=body.host,
+            port=body.port,
+            tls_mode=body.tls_mode,
+            sender_email=str(body.sender_email),
+            recipient=str(body.recipient),
+            username=body.username,
+            password=body.password,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    await append_audit(
+        db,
+        action="lead_transport.configure",
+        payload={"enabled": True, "revision": transport.revision},
+        tenant_id=auth.tenant_id,
+        actor_id=auth.user.id,
+    )
+    await db.commit()
+    return await lead_transport_status(db, auth.tenant_id)
+
+
+@router.delete("/lead-smtp-transport")
+async def disable_panel_lead_smtp_transport(
+    auth: AuthContext = Depends(require_system_operator),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    if not auth.tenant_id:
+        raise HTTPException(status_code=403, detail="Tenant required")
+    transport = await disable_lead_transport(db, auth.tenant_id)
+    await append_audit(
+        db,
+        action="lead_transport.disable",
+        payload={
+            "configured": transport is not None,
+            "revision": transport.revision if transport else None,
+        },
+        tenant_id=auth.tenant_id,
+        actor_id=auth.user.id,
+    )
+    await db.commit()
+    return await lead_transport_status(db, auth.tenant_id)
+
+
+@router.post("/lead-smtp-transport/test")
+async def test_panel_lead_smtp_transport(
+    auth: AuthContext = Depends(require_system_operator),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    if not auth.tenant_id:
+        raise HTTPException(status_code=403, detail="Tenant required")
+    result = await test_lead_transport(db, auth.tenant_id)
+    await append_audit(
+        db,
+        action="lead_transport.test",
+        payload={"result": result},
         tenant_id=auth.tenant_id,
         actor_id=auth.user.id,
     )
