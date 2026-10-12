@@ -43,6 +43,22 @@ function operationTarget(operation: Operation): string {
   return operation.release_sha || operation.snapshot_id || "—";
 }
 
+function operationStatusLabel(status: Operation["status"]) {
+  return {
+    requested: "запрошено",
+    queued: "в очереди",
+    in_progress: "выполняется",
+    success: "завершено успешно",
+    failure: "ошибка",
+    cancelled: "отменено",
+    unknown: "неизвестно",
+  }[status];
+}
+
+function operationKindLabel(kind: Operation["kind"]) {
+  return kind === "update" ? "обновление" : "восстановление";
+}
+
 export function SystemOperationsPage() {
   const { token } = useAuth();
   const [control, setControl] = useState<Control | null>(null);
@@ -136,31 +152,31 @@ export function SystemOperationsPage() {
     <div aria-busy={busy !== null}>
       <PageHeader
         title="Обновления и восстановление"
-        description="Панель создаёт только ограниченные запросы в GitHub Actions. Она не получает Docker-доступ, root shell, SSH private keys или backup credentials."
+        description="Панель создаёт только ограниченные запросы в GitHub Actions. Она не получает доступ к Docker, оболочке root, закрытым SSH-ключам или учётным данным резервных копий."
       />
       {error && <p className="error" role="alert">{error}</p>}
       {message && <p className="success" aria-live="polite">{message}</p>}
 
-      <Surface title="GitHub control">
+      <Surface title="Управление через GitHub">
         <div className="row">
           <StatusPill tone={control?.configured ? "ok" : "warn"}>
-            {control?.configured ? "настроен" : "не настроен"}
+            {control?.configured ? "настроено" : "не настроено"}
           </StatusPill>
           {control?.repository && <span className="muted">{control.repository}</span>}
         </div>
         <p className="muted">{control?.message || "Проверка конфигурации…"}</p>
-        {!control?.configured && <p className="muted">Обновления из панели недоступны, пока на VPS не заданы GitHub repository и least-privilege control token. Ручные GitHub Actions остаются рабочим резервным путём.</p>}
+        {!control?.configured && <p className="muted">Обновления из панели недоступны, пока на VPS не заданы репозиторий GitHub и управляющий токен с минимальными правами. Ручной запуск GitHub Actions остаётся резервным способом.</p>}
       </Surface>
 
       <Surface title="Проверенные обновления">
-        <p className="muted">Можно выбрать только SHA с успешным CI в ветке main. GitHub Environment может запросить отдельное approval перед deployment.</p>
+        <p className="muted">Можно выбрать только SHA с успешно завершённым CI в ветке main. Среда GitHub может запросить отдельное подтверждение перед развёртыванием.</p>
         {releases.length === 0 ? (
-          <EmptyState title="Проверенных SHA пока нет" hint="Проверьте GitHub control или запустите CI для commit в main." />
+          <EmptyState title="Проверенных SHA пока нет" hint="Проверьте управление через GitHub или запустите CI для коммита в main." />
         ) : (
           <div className="table-wrap"><table className="table"><thead><tr><th>SHA</th><th>CI завершён</th><th></th></tr></thead><tbody>{releases.map((release) => <tr key={release.sha}><td><code>{release.sha}</code></td><td className="muted">{release.updated_at?.slice(0, 19) || "—"}</td><td><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => setReleaseSha(release.sha)}>Выбрать</button></td></tr>)}</tbody></table></div>
         )}
         <form className="stack" onSubmit={requestUpdate}>
-          <label className="field">SHA release<input value={releaseSha} onChange={(event) => setReleaseSha(event.target.value.trim().toLowerCase())} pattern="[0-9a-f]{40}([0-9a-f]{24})?" required /></label>
+          <label className="field">SHA выпуска<input value={releaseSha} onChange={(event) => setReleaseSha(event.target.value.trim().toLowerCase())} pattern="[0-9a-f]{40}([0-9a-f]{24})?" required /></label>
           <label className="field">Для подтверждения введите DEPLOY<input value={updateConfirmation} onChange={(event) => setUpdateConfirmation(event.target.value.toUpperCase())} required /></label>
           <button className="btn" type="submit" disabled={!control?.configured || busy !== null || updateConfirmation !== "DEPLOY"}>Запросить обновление</button>
         </form>
@@ -178,7 +194,7 @@ export function SystemOperationsPage() {
       </Surface>
 
       <Surface title="История операций">
-        {operations.length === 0 ? <EmptyState title="Операций пока нет" hint="Здесь появятся запросы обновления и recovery из панели." /> : <div className="table-wrap"><table className="table"><thead><tr><th>Когда</th><th>Действие</th><th>Версия / snapshot</th><th>Статус</th><th>GitHub</th></tr></thead><tbody>{operations.map((operation) => <tr key={operation.id}><td className="muted">{operation.created_at?.slice(0, 19) || "—"}</td><td>{operation.kind} / {operation.action}</td><td><code>{operationTarget(operation)}</code>{operation.error_code && <p className="error">{operation.error_code}</p>}</td><td><StatusPill tone={operationTone(operation.status)}>{operation.status}</StatusPill></td><td>{operation.workflow_url ? <a href={operation.workflow_url} target="_blank" rel="noreferrer">Открыть run</a> : <span className="muted">ожидание run</span>}</td></tr>)}</tbody></table></div>}
+        {operations.length === 0 ? <EmptyState title="Операций пока нет" hint="Здесь появятся запросы обновления и восстановления из панели." /> : <div className="table-wrap"><table className="table"><thead><tr><th>Когда</th><th>Действие</th><th>Версия / снимок</th><th>Статус</th><th>GitHub</th></tr></thead><tbody>{operations.map((operation) => <tr key={operation.id}><td className="muted">{operation.created_at?.slice(0, 19) || "—"}</td><td>{operationKindLabel(operation.kind)} / {operation.action}</td><td><code>{operationTarget(operation)}</code>{operation.error_code && <p className="error">{operation.error_code}</p>}</td><td><StatusPill tone={operationTone(operation.status)}>{operationStatusLabel(operation.status)}</StatusPill></td><td>{operation.workflow_url ? <a href={operation.workflow_url} target="_blank" rel="noreferrer">Открыть запуск</a> : <span className="muted">ожидание запуска</span>}</td></tr>)}</tbody></table></div>}
       </Surface>
     </div>
   );

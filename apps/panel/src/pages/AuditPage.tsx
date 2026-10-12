@@ -12,6 +12,10 @@ type AuditEntry = {
 type AuditHistory = { items: AuditEntry[]; offset: number; limit: number; total: number };
 type Integrity = { status: "valid" | "invalid"; checked_records: number; invalid_record_ids: number[] };
 
+function integrityLabel(status: Integrity["status"]) {
+  return status === "valid" ? "цепочка корректна" : "целостность цепочки нарушена";
+}
+
 export function AuditPage() {
   const { token } = useAuth();
   const [action, setAction] = useState("");
@@ -45,14 +49,14 @@ export function AuditPage() {
 
   return (
     <div>
-      <PageHeader title="Audit history" description="Только metadata событий: payload, PII, recipient адреса и secrets не выводятся в панели." />
+      <PageHeader title="История аудита" description="В панели отображаются только метаданные событий: полезные данные, персональные данные, адреса получателей и секреты не выводятся." />
       {error ? <p className="error" role="alert">{error}</p> : null}
-      <Surface title="Integrity hash chain">
-        {integrity ? <div className="row"><StatusPill tone={integrity.status === "valid" ? "ok" : "danger"}>{integrity.status === "valid" ? "chain valid" : "chain invalid"}</StatusPill><span className="muted">Проверено записей: {integrity.checked_records}</span>{integrity.invalid_record_ids.length ? <span className="error">Нарушены записи: {integrity.invalid_record_ids.join(", ")}</span> : null}</div> : <p className="muted">Integrity status доступен только superadmin.</p>}
+      <Surface title="Целостность цепочки хешей">
+        {integrity ? <div className="row"><StatusPill tone={integrity.status === "valid" ? "ok" : "danger"}>{integrityLabel(integrity.status)}</StatusPill><span className="muted">Проверено записей: {integrity.checked_records}</span>{integrity.invalid_record_ids.length ? <span className="error">Нарушены записи: {integrity.invalid_record_ids.join(", ")}</span> : null}</div> : <p className="muted">Состояние целостности доступно только суперадминистратору.</p>}
       </Surface>
       <Surface title="События">
-        <div className="row"><label className="field">Action<input value={action} onChange={(event) => setAction(event.target.value)} placeholder="Например: project.build.publish" /></label><button className="btn btn-ghost" type="button" disabled={loading} onClick={() => void load()}>{loading ? "Загрузка…" : "Применить"}</button></div>
-        <div className="table-wrap"><table className="table"><thead><tr><th>Когда</th><th>Action</th><th>Actor</th><th>Hash</th></tr></thead><tbody>{history?.items.map((entry) => <tr key={entry.id}><td className="muted">{entry.created_at?.slice(0, 19) || "—"}</td><td>{entry.action}</td><td className="muted">{entry.actor_id ? entry.actor_id.slice(0, 12) : "system"}</td><td><code>{entry.record_hash.slice(0, 16)}…</code></td></tr>)}{history?.items.length === 0 ? <tr><td colSpan={4} className="muted">Событий не найдено</td></tr> : null}</tbody></table></div>
+        <div className="row"><label className="field">Действие<input value={action} onChange={(event) => setAction(event.target.value)} placeholder="Например: project.build.publish" /></label><button className="btn btn-ghost" type="button" disabled={loading} onClick={() => void load()}>{loading ? "Загрузка…" : "Применить"}</button></div>
+        <div className="table-wrap"><table className="table"><thead><tr><th>Когда</th><th>Действие</th><th>Исполнитель</th><th>Хеш</th></tr></thead><tbody>{history?.items.map((entry) => <tr key={entry.id}><td className="muted">{entry.created_at?.slice(0, 19) || "—"}</td><td>{entry.action}</td><td className="muted">{entry.actor_id ? entry.actor_id.slice(0, 12) : "система"}</td><td><code>{entry.record_hash.slice(0, 16)}…</code></td></tr>)}{history?.items.length === 0 ? <tr><td colSpan={4} className="muted">Событий не найдено</td></tr> : null}</tbody></table></div>
         {history ? <div className="row"><span className="muted">Показано {history.items.length ? history.offset + 1 : 0}–{Math.min(history.offset + history.items.length, history.total)} из {history.total}</span><button className="btn btn-ghost" type="button" disabled={loading || history.offset === 0} onClick={() => void load(Math.max(0, history.offset - history.limit))}>Назад</button><button className="btn btn-ghost" type="button" disabled={loading || history.offset + history.items.length >= history.total} onClick={() => void load(history.offset + history.limit)}>Далее</button></div> : null}
       </Surface>
     </div>

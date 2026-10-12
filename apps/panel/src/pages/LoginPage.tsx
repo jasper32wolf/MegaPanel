@@ -29,7 +29,7 @@ export function LoginPage() {
       markAuthenticated();
       navigate("/");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Login failed");
+      setError(cause instanceof Error ? cause.message : "Не удалось войти");
     } finally {
       setLoading(false);
     }

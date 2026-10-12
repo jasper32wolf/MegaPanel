@@ -79,7 +79,7 @@ export function DashboardPage() {
     <div>
       <PageHeader
         title="Обзор"
-        description="Текущее измеренное состояние системы, сайтов и очередей. Обновляется каждые 30 секунд и не заменяет external production monitoring."
+        description="Текущее измеренное состояние системы, сайтов и очередей. Обновляется каждые 30 секунд и не заменяет внешнего мониторинга рабочей среды."
         actions={
           <>
             <button className="btn btn-ghost" type="button" onClick={() => void load(true)} disabled={refreshing}>
@@ -99,7 +99,7 @@ export function DashboardPage() {
       <div className="stat-grid">
         <div className="stat"><div className="label">Сайты</div><div className="value">{summary?.sites ?? "—"}</div><p className="muted">{summary ? `${summary.published_sites} опубликовано · ${summary.pages_estimate} страниц` : "Загрузка…"}</p></div>
         <div className="stat"><div className="label">Активные лиды</div><div className="value">{summary?.active_leads ?? "—"}</div><p className="muted">Всего: {summary?.leads ?? "—"}</p></div>
-        <div className="stat"><div className="label">Delivery queue</div><div className="value">{summary?.delivery_pending ?? "—"}</div><p><StatusPill tone={deliveryTone}>{summary?.delivery_dead_letter ? `${summary.delivery_dead_letter} dead letter` : "без dead letter"}</StatusPill></p></div>
+        <div className="stat"><div className="label">Очередь доставки</div><div className="value">{summary?.delivery_pending ?? "—"}</div><p><StatusPill tone={deliveryTone}>{summary?.delivery_dead_letter ? `${summary.delivery_dead_letter} в очереди недоставленных` : "нет недоставленных"}</StatusPill></p></div>
         <div className="stat"><div className="label">TLS / DNS</div><div className="value">{summary ? summary.domains_pending_tls + summary.domains_tls_error : "—"}</div><p><StatusPill tone={domainTone}>{summary?.domains_tls_error ? `${summary.domains_tls_error} ошибок` : "проверьте pending"}</StatusPill></p></div>
       </div>
       <Surface title="Системное состояние">
@@ -112,16 +112,16 @@ export function DashboardPage() {
         </div>
       </Surface>
       <Surface title="Внимание оператора">
-        {summary === null ? <p className="muted">Загрузка alert-очереди…</p> : otherAlerts.length === 0 && criticalAlerts.length === 0 ? <p className="muted">Открытых серверных alert-условий нет.</p> : <div className="stack">{otherAlerts.map((alert) => <InlineAlert key={alert.code} severity={alert.severity} title={`${alert.title}: ${alert.count}`}>{alert.detail} <Link to={alert.route}>Перейти</Link></InlineAlert>)}</div>}
+        {summary === null ? <p className="muted">Загрузка очереди оповещений…</p> : otherAlerts.length === 0 && criticalAlerts.length === 0 ? <p className="muted">Открытых условий для серверных оповещений нет.</p> : <div className="stack">{otherAlerts.map((alert) => <InlineAlert key={alert.code} severity={alert.severity} title={`${alert.title}: ${alert.count}`}>{alert.detail} <Link to={alert.route}>Перейти</Link></InlineAlert>)}</div>}
       </Surface>
       <Surface title="Сайты и workflow">
         <div className="row">
           <StatusPill tone={summary?.page_plan_statuses.review ? "warn" : "ok"}>Планы на проверке: {summary?.page_plan_statuses.review || 0}</StatusPill>
           <StatusPill tone={summary?.page_draft_statuses.review ? "warn" : "ok"}>Черновики на проверке: {summary?.page_draft_statuses.review || 0}</StatusPill>
           <StatusPill tone={summary?.page_draft_statuses.failed ? "danger" : "ok"}>Ошибки черновиков: {summary?.page_draft_statuses.failed || 0}</StatusPill>
-          <StatusPill tone={summary?.build_statuses.ready ? "accent" : "default"}>Готовые candidate: {summary?.build_statuses.ready || 0}</StatusPill>
+          <StatusPill tone={summary?.build_statuses.ready ? "accent" : "default"}>Готовые сборки-кандидаты: {summary?.build_statuses.ready || 0}</StatusPill>
         </div>
-        <p className="muted">Одобрение plan/draft и готовая candidate-сборка не публикуют сайт автоматически. Публикация остаётся отдельным подтверждаемым действием.</p>
+        <p className="muted">Одобрение плана или черновика и готовая сборка-кандидат не публикуют сайт автоматически. Публикация остаётся отдельным действием с подтверждением.</p>
       </Surface>
       <Surface title="Доставка заявок">
         <div className="row">
@@ -130,7 +130,7 @@ export function DashboardPage() {
           <span className="muted">Самая ранняя ожидающая: {formatMoment(summary?.delivery_oldest_at)}</span>
           <HelpTip label="Недоставленная заявка" topicId="leads-and-delivery">Задача попадает сюда после исчерпания попыток или отсутствия корректного получателя. Откройте входящие заявки, исправьте настройку и повторите доставку вручную.</HelpTip>
         </div>
-        <Link className="btn btn-ghost" to="/leads">Открыть inbox лидов</Link>
+        <Link className="btn btn-ghost" to="/leads">Открыть входящие заявки</Link>
       </Surface>
     </div>
   );

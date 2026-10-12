@@ -36,7 +36,7 @@ export function PanelToolsPage() {
     try {
       setSearch(await api<SearchResult>(`/api/v1/panel/search?q=${encodeURIComponent(q)}`, {}, token));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error");
+      setError(err instanceof Error ? err.message : "Не удалось выполнить поиск");
     }
   }
 
@@ -45,7 +45,7 @@ export function PanelToolsPage() {
     try {
       setAudit(await api<AuditRow[]>("/api/v1/panel/audit", {}, token));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error");
+      setError(err instanceof Error ? err.message : "Не удалось загрузить журнал аудита");
     }
   }
 
@@ -54,16 +54,16 @@ export function PanelToolsPage() {
     try {
       setSummary(await api<Summary>("/api/v1/panel/reports/summary", {}, token));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error");
+      setError(err instanceof Error ? err.message : "Не удалось загрузить сводку");
     }
   }
 
   return (
     <div>
-      <PageHeader title="Инструменты" description="Поиск, отчёты и audit hash-chain." />
+      <PageHeader title="Инструменты" description="Поиск, отчёты и цепочка хешей аудита." />
       {error && <p className="error">{error}</p>}
 
-      <Surface title="Command Palette">
+      <Surface title="Палитра команд">
         <form onSubmit={onSearch} className="row">
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Поиск…" style={{ flex: 1 }} />
           <button className="btn" type="submit">
@@ -85,17 +85,17 @@ export function PanelToolsPage() {
         </button>
         {summary && (
           <p style={{ marginTop: "0.75rem" }}>
-            Сайты: {summary.sites} · Лиды: {summary.leads} · Квал.: {summary.qualified_leads} · Conv:{" "}
+            Сайты: {summary.sites} · Лиды: {summary.leads} · Квалифицированные: {summary.qualified_leads} · Конверсия:{" "}
             {summary.conversion_hint}
           </p>
         )}
       </Surface>
 
-      <Surface title="Audit Trail">
+      <Surface title="Журнал аудита">
         <button className="btn btn-ghost" type="button" onClick={loadAudit} style={{ marginBottom: "0.75rem" }}>
           Загрузить
         </button>
-        <DataTable headers={["ID", "Action", "Hash", "When"]}>
+        <DataTable headers={["ID", "Действие", "Хеш", "Когда"]}>
           {audit.map((a) => (
             <tr key={a.id}>
               <td>{a.id}</td>

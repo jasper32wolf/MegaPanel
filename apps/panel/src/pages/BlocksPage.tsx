@@ -36,7 +36,7 @@ export function BlocksPage() {
   useEffect(() => {
     api<KitsResponse>("/api/v1/blocks/kits", {}, token)
       .then(setData)
-      .catch((e) => setError(e instanceof Error ? e.message : "Error"));
+      .catch((e) => setError(e instanceof Error ? e.message : "Не удалось загрузить комплекты блоков"));
   }, [token]);
 
   async function showPreview(key: string) {
@@ -45,7 +45,7 @@ export function BlocksPage() {
     try {
       setPreview(await api<PreviewResponse>(`/api/v1/blocks/kits/${key}/preview`, {}, token));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Preview failed");
+      setError(e instanceof Error ? e.message : "Не удалось загрузить предпросмотр");
     }
   }
 
@@ -80,9 +80,9 @@ body{margin:0;font-family:system-ui,sans-serif;background:var(--sp-bg,#fff);colo
     <div>
       <PageHeader
         title="Библиотека блоков"
-        description="Версионируемые комплекты для сайтов услуг. Theme morph: палитра, радиусы, градиенты."
+        description="Версионируемые комплекты для сайтов услуг. Настройка темы: палитра, скругления и градиенты."
         actions={
-          data ? <StatusPill tone="accent">lib {data.library_version}</StatusPill> : undefined
+          data ? <StatusPill tone="accent">Версия библиотеки: {data.library_version}</StatusPill> : undefined
         }
       />
       <AsyncFeedback error={error} message={syncMsg} />
@@ -103,7 +103,7 @@ body{margin:0;font-family:system-ui,sans-serif;background:var(--sp-bg,#fff);colo
                 </span>
               ))}
             </div>
-            {Object.keys(kit.block_slots).length > 0 && <div className="stack"><p className="muted" style={{ margin: 0 }}>AI writable slots: только plain-text значения в curated text nodes. Они создают proposal в проекте и не меняют HTML/CSS.</p><div className="block-chips">{Object.entries(kit.block_slots).flatMap(([block, slots]) => Object.entries(slots).map(([slot, spec]) => <span className="pill" key={`${block}:${slot}`}>{block}.{slot} · ≤ {spec.max_length}</span>))}</div></div>}
+            {Object.keys(kit.block_slots).length > 0 && <div className="stack"><p className="muted" style={{ margin: 0 }}>Поля, доступные для записи ИИ: только текстовые значения в отобранных текстовых узлах. Они создают предложение в проекте и не меняют HTML/CSS.</p><div className="block-chips">{Object.entries(kit.block_slots).flatMap(([block, slots]) => Object.entries(slots).map(([slot, spec]) => <span className="pill" key={`${block}:${slot}`}>{block}.{slot} · ≤ {spec.max_length}</span>))}</div></div>}
             <div className="row">
               <button className="btn btn-ghost" type="button" onClick={() => showPreview(kit.key)}>
                 Превью
@@ -129,7 +129,7 @@ body{margin:0;font-family:system-ui,sans-serif;background:var(--sp-bg,#fff);colo
               ))}
           </div>
           <div className="preview-frame">
-            <iframe title="kit-preview" srcDoc={srcDoc} sandbox="" />
+            <iframe title="Предпросмотр комплекта" srcDoc={srcDoc} sandbox="" />
           </div>
         </Surface>
       )}

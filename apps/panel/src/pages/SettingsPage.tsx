@@ -285,15 +285,15 @@ export function SettingsPage() {
       <Surface title="TOTP / приложение-аутентификатор">
         {!operator?.mfa_enabled && !setup && <div className="stack"><p className="muted" style={{ margin: 0 }}>Подключите приложение-аутентификатор до публикации рабочих сайтов. После подтверждения код потребуется при каждом новом входе.</p><button className="btn" type="button" disabled={busy !== null} onClick={beginTotp}>{busy === "setup" ? "Подготовка…" : "Настроить TOTP"}</button></div>}
         {setup && <form onSubmit={confirmTotp} className="stack"><p className="muted" style={{ margin: 0 }}>Добавьте этот ключ в приложение-аутентификатор. Он показывается только до подтверждения, не передавайте его третьим лицам.</p><label className="field">Секретный ключ<input value={setup.secret} readOnly /></label><label className="field">Одноразовый код<input value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 8))} inputMode="numeric" autoComplete="one-time-code" required /></label><div className="row"><button className="btn" type="submit" disabled={busy !== null || code.length < 6}>{busy === "confirm" ? "Проверка…" : "Подтвердить"}</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => { setSetup(null); setCode(""); }}>Отмена</button></div></form>}
-        {operator?.mfa_enabled && <form onSubmit={disableTotp} className="stack"><p className="muted" style={{ margin: 0 }}>Чтобы отключить TOTP, подтвердите текущий одноразовый код. Это действие записывается в audit log.</p><label className="field">Текущий код<input value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 8))} inputMode="numeric" autoComplete="one-time-code" required /></label><button className="btn btn-ghost" type="submit" disabled={busy !== null || code.length < 6}>{busy === "disable" ? "Отключение…" : "Отключить TOTP"}</button></form>}
+        {operator?.mfa_enabled && <form onSubmit={disableTotp} className="stack"><p className="muted" style={{ margin: 0 }}>Чтобы отключить TOTP, подтвердите текущий одноразовый код. Это действие записывается в журнал аудита.</p><label className="field">Текущий код<input value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 8))} inputMode="numeric" autoComplete="one-time-code" required /></label><button className="btn btn-ghost" type="submit" disabled={busy !== null || code.length < 6}>{busy === "disable" ? "Отключение…" : "Отключить TOTP"}</button></form>}
       </Surface>
       <Surface title="Оповещения">
         <div className="row"><StatusPill tone={alertChannels?.enabled ? "ok" : "warn"}>Оповещения: {alertChannels?.enabled ? "включены" : "выключены"}</StatusPill><StatusPill tone={alertTransport?.configured ? "ok" : "warn"}>Email SMTP.bz: {alertTransport?.configured ? "готов" : "не настроен"}</StatusPill><StatusPill tone={alertChannels?.telegram ? "ok" : "warn"}>Telegram: {alertChannelLabel(Boolean(alertChannels?.telegram))}</StatusPill><StatusPill tone={alertRecipient?.configured ? "ok" : "warn"}>Получатель: {alertRecipient?.configured ? "настроен" : "не указан"}</StatusPill></div>
         <p className="muted">Получатель задаётся только здесь и хранится зашифрованно. Текущий: {alertRecipient?.masked_email || "не указан"}. Логин, пароль и API Authorization SMTP.bz также сохраняются только зашифрованно и после сохранения никогда не показываются.</p>
         <form className="stack" onSubmit={saveAlertRecipient}><label className="field">Email для оповещений<input type="email" value={recipientEmail} onChange={(event) => setRecipientEmail(event.target.value)} autoComplete="email" placeholder="alerts@example.com" required /></label><button className="btn" type="submit" disabled={busy !== null || !recipientEmail}>{busy === "alert-recipient" ? "Сохранение…" : alertRecipient?.configured ? "Заменить адрес" : "Сохранить адрес"}</button></form>
-        <p className="muted">Этот адрес используется только для получения security, site и system alerts; он не обязан совпадать с email входа в панель.</p>
+        <p className="muted">Этот адрес используется только для оповещений безопасности, сайтов и системы; он не обязан совпадать с адресом для входа в панель.</p>
         <hr />
-        <p className="muted">Активный email-транспорт: {alertTransport?.selected === "smtp_bz_smtp" ? "SMTP.bz SMTP" : alertTransport?.selected === "smtp_bz_api" ? "SMTP.bz API" : "не выбран"}. Sender: {alertTransport?.sender_email || "не указан"}.</p>
+        <p className="muted">Активный транспорт email: {alertTransport?.selected === "smtp_bz_smtp" ? "SMTP.bz SMTP" : alertTransport?.selected === "smtp_bz_api" ? "SMTP.bz API" : "не выбран"}. Адрес отправителя: {alertTransport?.sender_email || "не указан"}.</p>
         <form className="stack" onSubmit={saveSmtpTransport}><strong>SMTP.bz SMTP</strong><p className="muted">Заполните логин и пароль из SMTP.bz → Connect &amp; Quota. Для SMTP.bz выбран безопасный STARTTLS-порт 587.</p><label className="field">Адрес отправителя на подтверждённом домене<input type="email" value={smtpForm.sender_email} onChange={(event) => setSmtpForm((current) => ({ ...current, sender_email: event.target.value }))} placeholder="alerts@osco-servis.ru" required /></label><div className="detail-grid"><label className="field">Порт<select value={smtpForm.port} onChange={(event) => {
   const port = Number(event.target.value) as SmtpForm["port"];
   setSmtpForm((current) => ({
@@ -314,7 +314,7 @@ export function SettingsPage() {
         <Link className="btn btn-ghost" to="/alerts">Открыть оповещения</Link>
       </Surface>
       <Surface title="Сессии">
-        <p className="muted">Показаны не более десяти последних сессий. Каждая строка — одна device family: обновление refresh token не создаёт дубликат. IP и место фиксируются при входе локальной GeoIP-базой и могут быть не определены или неточны. Источник геоданных: <a href="https://db-ip.com" target="_blank" rel="noreferrer">DB-IP Lite</a> · CC BY 4.0.</p>
+        <p className="muted">Показаны не более десяти последних сессий. Каждая строка соответствует одному устройству: обновление токена сессии не создаёт дубликат. IP-адрес и место фиксируются при входе локальной базой GeoIP и могут быть не определены или неточны. Источник геоданных: <a href="https://db-ip.com" target="_blank" rel="noreferrer">DB-IP Lite</a> · CC BY 4.0.</p>
         <div className="table-wrap">
           <table className="table">
             <thead><tr><th>Браузер и устройство</th><th>Язык</th><th>IP</th><th>Страна и город</th><th>Последняя активность</th><th>Состояние</th><th></th></tr></thead>
@@ -340,7 +340,7 @@ export function SettingsPage() {
       <ConfirmDialog
         open={sessionToRevoke !== null}
         title="Отозвать сессию?"
-        description="Эта device family больше не сможет обновить access token. Уже выданный access token может действовать до 15 минут."
+        description="Это устройство больше не сможет обновить токен доступа. Уже выданный токен доступа может действовать до 15 минут."
         confirmLabel="Отозвать"
         dangerous
         onCancel={() => setSessionToRevoke(null)}

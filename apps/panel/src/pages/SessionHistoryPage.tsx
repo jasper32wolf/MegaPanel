@@ -57,7 +57,7 @@ export function SessionHistoryPage() {
 
   return (
     <div>
-      <PageHeader title="Журнал прошлых сессий" description="Здесь находятся сессии старше десяти последних записей из настроек. Это снимки на момент первой авторизации device family." actions={<Link className="btn btn-ghost" to="/settings">Вернуться к настройкам</Link>} />
+      <PageHeader title="Журнал прошлых сессий" description="Здесь находятся сессии старше десяти последних записей из настроек. Это снимки на момент первой авторизации для каждого устройства." actions={<Link className="btn btn-ghost" to="/settings">Вернуться к настройкам</Link>} />
       <AsyncFeedback error={error} />
       <Surface title="Прошлые сессии">
         {loading ? <p className="muted" aria-live="polite">Загрузка журнала…</p> : <>

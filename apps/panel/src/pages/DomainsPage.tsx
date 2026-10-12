@@ -24,6 +24,10 @@ type Redirect = {
 };
 type Health = { hostname: string; ssl_status: string; dns_status: string; caddy_reachable: boolean; expiry_alerts: number[] };
 
+function domainStatusLabel(status: string) {
+  return { ok: "готово", pending: "ожидается", error: "ошибка", failed: "ошибка" }[status] || status;
+}
+
 export function DomainsPage() {
   const { token } = useAuth();
   const [domains, setDomains] = useState<Domain[]>([]);
@@ -148,20 +152,20 @@ export function DomainsPage() {
         {sites.length === 0 ? <EmptyState title="Сначала создайте сайт" hint="Домен можно привязать только к конкретному static release." /> : (
           <form onSubmit={onCreate} className="stack">
             <label className="field">Сайт<select value={siteId} onChange={(event) => setSiteId(event.target.value)}>{sites.map((site) => <option key={site.id} value={site.id}>{site.domain}</option>)}</select></label>
-            <label className="field">Hostname<input value={hostname} onChange={(event) => setHostname(event.target.value)} placeholder="example.ru" required /></label>
+            <label className="field">Имя хоста<input value={hostname} onChange={(event) => setHostname(event.target.value)} placeholder="example.ru" required /></label>
             <ol className="muted" style={{ margin: 0, paddingLeft: "1.25rem" }}><li>Направьте A/AAAA-запись hostname на IP VPS.</li><li>Подождите распространения DNS и нажмите «Проверить».</li><li>После успешной проверки Caddy выпустит TLS-сертификат.</li></ol>
             <button className="btn" type="submit" disabled={busy !== null || !siteId}>{busy === "domain-create" ? "Подключение…" : "Подключить"}</button>
           </form>
         )}
       </Surface>
       <Surface title="Подключённые домены">
-        <DataTable headers={["Hostname", "Сайт", "DNS", "TLS", "Срок", ""]}>
+        <DataTable headers={["Имя хоста", "Сайт", "DNS", "TLS", "Срок", ""]}>
           {domains.map((domain) => (
             <tr key={domain.id}>
               <td><strong>{domain.hostname}</strong></td>
               <td className="muted">{sites.find((site) => site.id === domain.site_id)?.domain || "—"}</td>
-              <td><StatusPill tone={domain.dns_status === "ok" ? "ok" : "warn"}>{domain.dns_status}</StatusPill></td>
-              <td><StatusPill tone={domain.ssl_status === "ok" ? "ok" : domain.ssl_status === "pending" ? "accent" : "warn"}>{domain.ssl_status}</StatusPill></td>
+              <td><StatusPill tone={domain.dns_status === "ok" ? "ok" : "warn"}>{domainStatusLabel(domain.dns_status)}</StatusPill></td>
+              <td><StatusPill tone={domain.ssl_status === "ok" ? "ok" : domain.ssl_status === "pending" ? "accent" : "warn"}>{domainStatusLabel(domain.ssl_status)}</StatusPill></td>
               <td className="muted">{domain.expires_at?.slice(0, 10) || "—"}</td>
               <td><div className="row row-tight"><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => checkHealth(domain.id)}>{busy === `health:${domain.id}` ? "Проверка…" : "Проверить"}</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => { setRemovingDomain(domain); setDomainConfirmation(""); }}>Удалить</button></div></td>
             </tr>
@@ -170,9 +174,9 @@ export function DomainsPage() {
         </DataTable>
       </Surface>
       {removingDomain && <Surface title={`Удалить ${removingDomain.hostname}`}><form onSubmit={removeDomain} className="stack"><p className="muted" style={{ margin: 0 }}>Будет удалена привязка hostname и его vhost в Caddy. Введите hostname полностью для подтверждения.</p><label className="field">Подтверждение<input value={domainConfirmation} onChange={(event) => setDomainConfirmation(event.target.value)} placeholder={removingDomain.hostname} autoComplete="off" /></label><div className="row"><button className="btn" type="submit" disabled={busy !== null || domainConfirmation !== removingDomain.hostname}>{busy === `domain-delete:${removingDomain.id}` ? "Удаление…" : "Подтвердить удаление"}</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => { setRemovingDomain(null); setDomainConfirmation(""); }}>Отмена</button></div></form></Surface>}
-      {health && <Surface title={`Проверка · ${health.hostname}`}><div className="row"><StatusPill tone={health.dns_status === "ok" ? "ok" : "warn"}>DNS: {health.dns_status}</StatusPill><StatusPill tone={health.ssl_status === "ok" ? "ok" : "warn"}>TLS: {health.ssl_status}</StatusPill><StatusPill tone={health.caddy_reachable ? "ok" : "danger"}>Caddy: {health.caddy_reachable ? "доступен" : "недоступен"}</StatusPill>{health.expiry_alerts.map((days) => <StatusPill key={days} tone="warn">Срок &lt; {days} дн.</StatusPill>)}</div></Surface>}
-      <Surface title="Redirect rules">
-        {sites.length === 0 ? <EmptyState title="Нет сайта для редиректа" /> : <form onSubmit={createRedirect} className="stack"><label className="field">Сайт<select value={redirectSiteId} onChange={(event) => setRedirectSiteId(event.target.value)}>{sites.map((site) => <option key={site.id} value={site.id}>{site.domain}</option>)}</select></label><label className="field">Исходный путь<input value={redirectPath} onChange={(event) => setRedirectPath(event.target.value)} placeholder="/old-page" required /></label><label className="field">Целевой HTTPS URL<input value={redirectTarget} onChange={(event) => setRedirectTarget(event.target.value)} placeholder={`https://${sites.find((site) => site.id === redirectSiteId)?.domain || "example.ru"}/new-page`} type="url" required /></label><label className="field">Код<select value={redirectCode} onChange={(event) => setRedirectCode(event.target.value)}><option value="301">301 — постоянно</option><option value="302">302 — временно</option><option value="303">303 — see other</option><option value="307">307 — временно, метод сохранён</option><option value="308">308 — постоянно, метод сохранён</option></select></label><p className="muted" style={{ margin: 0 }}>Целевой URL должен использовать HTTPS и домен выбранного сайта.</p><button className="btn" type="submit" disabled={busy !== null || !redirectSiteId}>{busy === "redirect-create" ? "Создание…" : "Создать редирект"}</button></form>}
+      {health && <Surface title={`Проверка · ${health.hostname}`}><div className="row"><StatusPill tone={health.dns_status === "ok" ? "ok" : "warn"}>DNS: {domainStatusLabel(health.dns_status)}</StatusPill><StatusPill tone={health.ssl_status === "ok" ? "ok" : "warn"}>TLS: {domainStatusLabel(health.ssl_status)}</StatusPill><StatusPill tone={health.caddy_reachable ? "ok" : "danger"}>Caddy: {health.caddy_reachable ? "доступен" : "недоступен"}</StatusPill>{health.expiry_alerts.map((days) => <StatusPill key={days} tone="warn">Срок &lt; {days} дн.</StatusPill>)}</div></Surface>}
+      <Surface title="Правила перенаправления">
+        {sites.length === 0 ? <EmptyState title="Нет сайта для перенаправления" /> : <form onSubmit={createRedirect} className="stack"><label className="field">Сайт<select value={redirectSiteId} onChange={(event) => setRedirectSiteId(event.target.value)}>{sites.map((site) => <option key={site.id} value={site.id}>{site.domain}</option>)}</select></label><label className="field">Исходный путь<input value={redirectPath} onChange={(event) => setRedirectPath(event.target.value)} placeholder="/old-page" required /></label><label className="field">Целевой HTTPS-адрес<input value={redirectTarget} onChange={(event) => setRedirectTarget(event.target.value)} placeholder={`https://${sites.find((site) => site.id === redirectSiteId)?.domain || "example.ru"}/new-page`} type="url" required /></label><label className="field">Код<select value={redirectCode} onChange={(event) => setRedirectCode(event.target.value)}><option value="301">301 — постоянно</option><option value="302">302 — временно</option><option value="303">303 — другой ресурс</option><option value="307">307 — временно, метод сохранён</option><option value="308">308 — постоянно, метод сохранён</option></select></label><p className="muted" style={{ margin: 0 }}>Целевой URL должен использовать HTTPS и домен выбранного сайта.</p><button className="btn" type="submit" disabled={busy !== null || !redirectSiteId}>{busy === "redirect-create" ? "Создание…" : "Создать перенаправление"}</button></form>}
         <DataTable headers={["Сайт", "Откуда", "Куда", "Код", ""]}>
           {redirects.map((redirect) => <tr key={redirect.id}><td className="muted">{redirect.site_domain}</td><td><strong>{redirect.from_path}</strong></td><td className="muted">{redirect.to_url}</td><td><StatusPill tone="accent">{redirect.code}</StatusPill></td><td><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => setRedirectToRemove(redirect)}>{busy === `redirect-delete:${redirect.id}` ? "Удаление…" : "Удалить"}</button></td></tr>)}
           {redirects.length === 0 && <tr><td colSpan={5}><EmptyState title="Правил пока нет" hint="Используйте 301 для постоянного переноса страниц." /></td></tr>}
@@ -180,8 +184,8 @@ export function DomainsPage() {
       </Surface>
       <ConfirmDialog
         open={redirectToRemove !== null}
-        title="Удалить redirect rule?"
-        description={`Будет удален редирект ${redirectToRemove?.from_path || ""} для ${redirectToRemove?.site_domain || ""}.`}
+        title="Удалить правило перенаправления?"
+        description={`Будет удалено перенаправление ${redirectToRemove?.from_path || ""} для ${redirectToRemove?.site_domain || ""}.`}
         confirmLabel="Удалить"
         dangerous
         onCancel={() => setRedirectToRemove(null)}
