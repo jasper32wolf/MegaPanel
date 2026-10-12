@@ -354,7 +354,9 @@ def test_worker_delivery_uses_postgres_redis_and_no_external_webhook(monkeypatch
                 db.add(site)
                 await db.flush()
                 project.site_id = site.id
-                db.add_all([policy, destination])
+                db.add(policy)
+                await db.flush()
+                db.add(destination)
                 await db.commit()
 
             form = await asyncio.to_thread(
