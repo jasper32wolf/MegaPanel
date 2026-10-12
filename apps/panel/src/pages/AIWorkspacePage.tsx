@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { api, useAuth } from "../lib/auth";
 import { PageHeader, Surface } from "../components/ui";
+import { getPromptGuide } from "../content/promptGuides";
 
 type Provider = { id: string; label: string; provider_id: string; enabled: boolean };
 type ProjectChoice = { id: string; name: string; domain: string | null; site_id: string | null; current_fact_revision_id: string | null };
@@ -46,6 +47,17 @@ type RunSummary = {
   cost_usd: number | null;
   error_code: string | null;
   created_at: string | null;
+};
+
+const runStatusLabels: Record<string, string> = {
+  reserved: "Зарезервирован",
+  queued: "В очереди",
+  running: "Выполняется",
+  pending_approval: "Ожидает решения",
+  approved: "Одобрен",
+  rejected: "Отклонён",
+  completed: "Завершён",
+  failed: "Ошибка",
 };
 
 const contextLabels: Record<string, string> = {
@@ -138,7 +150,7 @@ export function AIWorkspacePage() {
         token,
       );
       setQuote(result);
-      setMessage("Предварительная оценка рассчитана локальным API; внешний provider не вызывался.");
+      setMessage("Предварительная оценка рассчитана локальным API; внешний провайдер не вызывался.");
     } catch (cause) {
       setQuote(null);
       setError(cause instanceof Error ? cause.message : "Не удалось рассчитать стоимость");
@@ -180,7 +192,7 @@ export function AIWorkspacePage() {
       );
       setProposal(result);
       await loadRuns();
-      setMessage("Предложение создано и остановлено на human-approval gate.");
+      setMessage("Предложение создано и ожидает отдельного решения оператора.");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Не удалось создать предложение");
     } finally {
@@ -202,7 +214,7 @@ export function AIWorkspacePage() {
       await loadRuns();
       setMessage(
         decision === "approve"
-          ? "Предложение одобрено. Следующий шаг — отдельный импорт в draft Site Structure Revision."
+          ? "Предложение одобрено. Следующий шаг — отдельный импорт в черновик структуры сайта."
           : "Предложение отклонено; проект не изменён.",
       );
     } catch (cause) {
@@ -215,20 +227,20 @@ export function AIWorkspacePage() {
   return (
     <div>
       <PageHeader
-        title="AI workspace"
-        description="AI анализирует только подтверждённые данные проекта и создаёт проверяемое предложение. PagePlan, публикация и live-сайт не меняются автоматически."
+        title="Предложения ИИ"
+        description="ИИ анализирует только подтверждённые данные проекта и создаёт проверяемое предложение. План страниц, публикация и работающий сайт не меняются автоматически."
       />
       {error && <p className="error" role="alert">{error}</p>}
       {message && <p className="success" role="status">{message}</p>}
-      <Surface title="История AI runs">
+      <Surface title="История запусков ИИ">
         <div className="row">
           <label className="field">Проект<select value={runProjectId} onChange={(event) => setRunProjectId(event.target.value)}><option value="">Все проекты</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}{project.domain ? ` · ${project.domain}` : ""}</option>)}</select></label>
-          <label className="field">Действие<select value={runAction} onChange={(event) => setRunAction(event.target.value)}><option value="">Все</option><option value="architecture.site-map">Архитектура</option><option value="seo.create-brief">SEO brief</option><option value="content.page-draft-copy">PageDraft copy</option><option value="content.block-slot-copy">Текст curated-блока</option></select></label>
+          <label className="field">Действие<select value={runAction} onChange={(event) => setRunAction(event.target.value)}><option value="">Все</option><option value="architecture.site-map">Архитектура</option><option value="seo.create-brief">SEO-задание</option><option value="content.page-draft-copy">Текст черновика страницы</option><option value="content.block-slot-copy">Текст отобранного блока</option></select></label>
           <label className="field">Статус<select value={runStatus} onChange={(event) => setRunStatus(event.target.value)}><option value="">Все</option><option value="reserved">Зарезервирован</option><option value="queued">В очереди</option><option value="running">Выполняется</option><option value="pending_approval">Ожидает решения</option><option value="approved">Одобрен</option><option value="rejected">Отклонён</option><option value="completed">Завершён</option><option value="failed">Ошибка</option></select></label>
-          <button className="btn btn-ghost" type="button" disabled={busy} onClick={() => void loadRuns().catch((cause) => setError(cause instanceof Error ? cause.message : "Не удалось обновить AI runs"))}>Применить фильтры</button>
+          <button className="btn btn-ghost" type="button" disabled={busy} onClick={() => void loadRuns().catch((cause) => setError(cause instanceof Error ? cause.message : "Не удалось обновить историю запусков ИИ"))}>Применить фильтры</button>
         </div>
-        <p className="muted">{runs.length} последних runs; входной контекст и ответы моделей не показываются в списке.</p>
-        {runs.length === 0 ? <p className="muted">AI-запусков пока нет.</p> : <div className="table-wrap"><table className="table"><thead><tr><th>Действие</th><th>Статус</th><th>Провайдер / модель</th><th>Токены</th><th>Стоимость</th><th>Когда</th></tr></thead><tbody>{runs.map((run) => <tr key={run.id}><td>{run.action}</td><td>{run.status}{run.error_code && <p className="error">{run.error_code}</p>}</td><td>{run.provider_id || "—"} / {run.model_id || "—"}</td><td>{run.usage.input_tokens ?? 0} / {run.usage.output_tokens ?? 0}</td><td>{run.cost_usd === null ? "—" : `$${run.cost_usd.toFixed(6)}`}</td><td className="muted">{run.created_at?.slice(0, 19) || "—"}</td></tr>)}</tbody></table></div>}
+        <p className="muted">Последних запусков: {runs.length}. Входной контекст и ответы моделей не показываются в списке.</p>
+        {runs.length === 0 ? <p className="muted">Запусков ИИ пока нет.</p> : <div className="table-wrap"><table className="table"><thead><tr><th>Действие</th><th>Статус</th><th>Провайдер / модель</th><th>Токены</th><th>Стоимость</th><th>Время</th></tr></thead><tbody>{runs.map((run) => <tr key={run.id}><td>{getPromptGuide(run.action).title}<p className="muted">{run.action}</p></td><td>{runStatusLabels[run.status] || run.status}<p className="muted">{run.status}</p>{run.error_code && <p className="error">{run.error_code}</p>}</td><td>{run.provider_id || "—"} / {run.model_id || "—"}</td><td>{run.usage.input_tokens ?? 0} / {run.usage.output_tokens ?? 0}</td><td>{run.cost_usd === null ? "—" : `$${run.cost_usd.toFixed(6)}`}</td><td className="muted">{run.created_at?.slice(0, 19) || "—"}</td></tr>)}</tbody></table></div>}
       </Surface>
       <Surface title="Предложить структуру сайта">
         <form className="stack" onSubmit={requestProposal}>
@@ -246,7 +258,7 @@ export function AIWorkspacePage() {
           <button className="btn" type="submit" disabled={busy || !providerId || !consented || !quote}>{busy ? "Генерация…" : "Подтвердить оценку и создать предложение"}</button>
         </form>
       </Surface>
-      {proposal && <Surface title="Результат и approval gate"><div className="detail-grid"><div><strong>Статус</strong><p>{proposal.status}</p></div><div><strong>Провайдер / модель</strong><p>{proposal.provider_id} / {proposal.model_id}</p></div><div><strong>Расчётная стоимость</strong><p>${proposal.estimated_cost_usd?.toFixed(6) ?? "—"} / ${proposal.max_cost_usd?.toFixed(6) ?? "—"}</p></div><div><strong>Prompt</strong><p>{proposal.prompt_id} · v{proposal.prompt_version}</p></div><div><strong>Prompt hash</strong><p><code>{proposal.prompt_hash.slice(0, 16)}…</code></p></div><div><strong>Input snapshot</strong><p><code>{proposal.input_snapshot_hash.slice(0, 16)}…</code></p></div></div>{proposal.error_code && <p className="error" role="alert">Run остановлен: {proposal.error_code}. Проверьте расчёт/лимит провайдера; предложение не утверждено.</p>}<p className="muted">Предложений страниц: {proposal.pages.length}. Результат остаётся отдельным от PagePlan.</p>{proposal.pages.length > 0 && <pre className="code-block">{JSON.stringify(proposal.pages, null, 2)}</pre>}{proposal.status === "pending_approval" && <div className="stack"><p className="muted">Решение только принимает или отклоняет предложение. Оно не импортирует структуру, не создаёт PagePlan, не запускает сборку и не публикует сайт.</p><div className="row"><button className="btn" type="button" disabled={busy} onClick={() => decide("approve")}>Одобрить предложение без импорта</button><button className="btn btn-ghost" type="button" disabled={busy} onClick={() => decide("reject")}>Отклонить</button></div></div>}{proposal.status === "approved" && projectId && <div className="stack"><p className="muted">AI approval не создаёт PagePlan. Импортируйте результат в отдельную draft-версию структуры, затем independently выполните review, approval и materialization.</p><Link className="btn" to={`/projects/${projectId}/site-structure`}>Открыть структуру сайта для импорта</Link></div>}</Surface>}
+      {proposal && <Surface title="Результат и approval gate"><div className="detail-grid"><div><strong>Статус</strong><p>{runStatusLabels[proposal.status] || proposal.status}</p><p className="muted">{proposal.status}</p></div><div><strong>Провайдер / модель</strong><p>{proposal.provider_id} / {proposal.model_id}</p></div><div><strong>Расчётная стоимость</strong><p>${proposal.estimated_cost_usd?.toFixed(6) ?? "—"} / ${proposal.max_cost_usd?.toFixed(6) ?? "—"}</p></div><div><strong>Prompt</strong><p>{proposal.prompt_id} · v{proposal.prompt_version}</p></div><div><strong>Prompt hash</strong><p><code>{proposal.prompt_hash.slice(0, 16)}…</code></p></div><div><strong>Input snapshot</strong><p><code>{proposal.input_snapshot_hash.slice(0, 16)}…</code></p></div></div>{proposal.error_code && <p className="error" role="alert">Run остановлен: {proposal.error_code}. Проверьте расчёт/лимит провайдера; предложение не утверждено.</p>}<p className="muted">Предложений страниц: {proposal.pages.length}. Результат остаётся отдельным от PagePlan.</p>{proposal.pages.length > 0 && <pre className="code-block">{JSON.stringify(proposal.pages, null, 2)}</pre>}{proposal.status === "pending_approval" && <div className="stack"><p className="muted">Решение только принимает или отклоняет предложение. Оно не импортирует структуру, не создаёт PagePlan, не запускает сборку и не публикует сайт.</p><div className="row"><button className="btn" type="button" disabled={busy} onClick={() => decide("approve")}>Одобрить предложение без импорта</button><button className="btn btn-ghost" type="button" disabled={busy} onClick={() => decide("reject")}>Отклонить</button></div></div>}{proposal.status === "approved" && projectId && <div className="stack"><p className="muted">AI approval не создаёт PagePlan. Импортируйте результат в отдельную draft-версию структуры, затем independently выполните review, approval и materialization.</p><Link className="btn" to={`/projects/${projectId}/site-structure`}>Открыть структуру сайта для импорта</Link></div>}</Surface>}
     </div>
   );
 }

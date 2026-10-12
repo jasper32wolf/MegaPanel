@@ -26,13 +26,13 @@ const factLabels: Record<string, string> = {
   mission: "Миссия",
   legal_entities: "Для юридических лиц",
   payment_terms: "Оплата",
-  allowed_claims: "Подтверждённые claims",
+  allowed_claims: "Подтверждённые утверждения",
   phone: "Телефон",
   address: "Адрес",
   work_hours: "Часы работы",
   org: "Юридическое наименование",
   inn: "ИНН",
-  privacy_email: "Публичный email для privacy/DSAR",
+  privacy_email: "Публичный адрес для конфиденциальности и запросов DSAR",
   jurisdiction: "Юрисдикция",
 };
 
@@ -58,25 +58,25 @@ export function ProjectFactsPage() {
     ]).then(([nextProject, nextRevisions]) => {
       setProject(nextProject);
       setRevisions(nextRevisions);
-    }).catch((cause) => setError(cause instanceof Error ? cause.message : "Не удалось загрузить facts"));
+    }).catch((cause) => setError(cause instanceof Error ? cause.message : "Не удалось загрузить данные проекта"));
   }, [projectId, token]);
 
   return (
     <ProjectWorkspaceLayout projectId={projectId}>
       <PageHeader
-        title={project ? `Facts · ${project.name}` : "Project facts"}
-        description="Read-only history of public business facts. The private lead recipient is never displayed; edits and confirmation remain in the candidate-first workspace."
-        actions={<Link className="btn btn-ghost" to={`/projects/${projectId}`}>Открыть workspace</Link>}
+        title={project ? `Данные · ${project.name}` : "Данные проекта"}
+        description="История публичных данных о бизнесе доступна только для чтения. Приватный получатель заявок не показывается; изменение и подтверждение выполняются в основной рабочей области."
+        actions={<Link className="btn btn-ghost" to={`/projects/${projectId}`}>Открыть рабочую область</Link>}
       />
       {error && <p className="error" role="alert">{error}</p>}
-      {!revisions && !error ? <p className="muted" aria-live="polite">Загрузка facts…</p> : null}
+      {!revisions && !error ? <p className="muted" aria-live="polite">Загрузка данных…</p> : null}
       {revisions && <>
-        <Surface title="Версии facts">
-          {revisions.length === 0 ? <EmptyState title="Facts ещё не сохранены" hint="Создайте и подтвердите первую версию в полном workspace." /> : <DataTable headers={["Версия", "Статус", "Подтверждена", "Private recipient", "Hash"]}>{revisions.map((revision) => <tr key={revision.id}><td>v{revision.version}</td><td><StatusPill tone={revision.state === "confirmed" ? "ok" : "warn"}>{revision.state}</StatusPill></td><td>{revision.confirmed_at ? new Date(revision.confirmed_at).toLocaleString() : "—"}</td><td><StatusPill tone={revision.has_private_lead_email ? "ok" : "warn"}>{revision.has_private_lead_email ? "configured" : "not configured"}</StatusPill></td><td className="muted">{revision.facts_hash.slice(0, 16)}</td></tr>)}</DataTable>}
+        <Surface title="Версии данных">
+          {revisions.length === 0 ? <EmptyState title="Данные ещё не сохранены" hint="Создайте и подтвердите первую версию в основной рабочей области." /> : <DataTable headers={["Версия", "Статус", "Подтверждена", "Приватный получатель", "Хеш"]}>{revisions.map((revision) => <tr key={revision.id}><td>v{revision.version}</td><td><StatusPill tone={revision.state === "confirmed" ? "ok" : "warn"}>{revision.state === "confirmed" ? "Подтверждено" : revision.state}</StatusPill></td><td>{revision.confirmed_at ? new Date(revision.confirmed_at).toLocaleString() : "—"}</td><td><StatusPill tone={revision.has_private_lead_email ? "ok" : "warn"}>{revision.has_private_lead_email ? "Настроен" : "Не настроен"}</StatusPill></td><td className="muted">{revision.facts_hash.slice(0, 16)}</td></tr>)}</DataTable>}
         </Surface>
-        {revisions[0] && <Surface title={`Публичные facts · v${revisions[0].version}`}>
-          <p className="muted">Показываются только публичные поля текущей версии. Private lead email, webhook URLs и secrets не загружаются в этот экран.</p>
-          {Object.keys(revisions[0].facts).length === 0 ? <EmptyState title="В версии нет публичных facts" /> : <DataTable headers={["Поле", "Значение"]}>{Object.entries(revisions[0].facts).map(([key, value]) => <tr key={key}><td>{factLabels[key] || key}</td><td>{formatFactValue(value)}</td></tr>)}</DataTable>}
+        {revisions[0] && <Surface title={`Публичные данные · v${revisions[0].version}`}>
+          <p className="muted">Показываются только публичные поля текущей версии. Приватный адрес для заявок, URL вебхуков и секреты не загружаются на этот экран.</p>
+          {Object.keys(revisions[0].facts).length === 0 ? <EmptyState title="В версии нет публичных данных" /> : <DataTable headers={["Поле", "Значение"]}>{Object.entries(revisions[0].facts).map(([key, value]) => <tr key={key}><td>{factLabels[key] || key}</td><td>{formatFactValue(value)}</td></tr>)}</DataTable>}
         </Surface>}
       </>}
     </ProjectWorkspaceLayout>

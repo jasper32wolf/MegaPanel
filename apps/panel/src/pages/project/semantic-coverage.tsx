@@ -22,6 +22,13 @@ type Signals = {
   policy: { mode: string; read_only: boolean; blocks_candidate: boolean; basis: string };
 };
 
+const coverageLabels: Record<CoverageRow["status"], string> = {
+  covered: "Покрыто",
+  planned: "Запланировано",
+  uncovered: "Не покрыто",
+  unbound: "Не привязано",
+};
+
 function statusTone(status: CoverageRow["status"]) {
   if (status === "covered") return "ok" as const;
   if (status === "uncovered" || status === "unbound") return "warn" as const;
@@ -43,36 +50,36 @@ export function SemanticCoveragePage() {
     ]).then(([nextProject, nextSignals]) => {
       setProject(nextProject);
       setSignals(nextSignals);
-    }).catch((cause) => setError(cause instanceof Error ? cause.message : "Не удалось загрузить semantic coverage"));
+    }).catch((cause) => setError(cause instanceof Error ? cause.message : "Не удалось загрузить покрытие семантики"));
   }, [projectId, token]);
 
   return (
     <ProjectWorkspaceLayout projectId={projectId}>
       <PageHeader
-        title={project ? `${project.name}: semantic coverage` : "Semantic coverage"}
-        description="Read-only advisory view of approved semantic collection bindings and persisted PagePlan snapshots."
-        actions={<Link className="btn btn-ghost" to={`/projects/${projectId}`}>Открыть workspace</Link>}
+        title={project ? `${project.name}: покрытие семантики` : "Покрытие семантики"}
+        description="Справочный обзор привязок одобренных семантических коллекций и сохранённых снимков планов страниц."
+        actions={<Link className="btn btn-ghost" to={`/projects/${projectId}`}>Открыть рабочую область</Link>}
       />
       {error && <p className="error" role="alert">{error}</p>}
-      {!signals && !error ? <p className="muted" aria-live="polite">Загрузка semantic coverage…</p> : null}
+      {!signals && !error ? <p className="muted" aria-live="polite">Загрузка покрытия семантики…</p> : null}
       {signals && <>
-        <Surface title="Advisory policy">
-          <p className="muted">Этот обзор только информирует: он не создаёт drafts, не применяет изменения, не запускает build и не публикует сайт. Uncovered, unbound и collision не блокируют candidate workflow.</p>
+        <Surface title="Справочная политика">
+          <p className="muted">Этот обзор только информирует: он не создаёт черновики, не применяет изменения, не запускает сборку и не публикует сайт. Непокрытые, непривязанные и конфликтующие элементы не блокируют процесс пробной сборки.</p>
           <div className="detail-grid">
-            <div><strong>{signals.totals.covered}</strong><span className="muted"> covered (approved plan)</span></div>
-            <div><strong>{signals.totals.planned}</strong><span className="muted"> planned (draft/review)</span></div>
-            <div><strong>{signals.totals.uncovered}</strong><span className="muted"> uncovered</span></div>
-            <div><strong>{signals.totals.unbound}</strong><span className="muted"> unbound</span></div>
-            <div><strong>{signals.collisions.length}</strong><span className="muted"> collision warnings</span></div>
+            <div><strong>{signals.totals.covered}</strong><span className="muted"> покрыто одобренным планом</span></div>
+            <div><strong>{signals.totals.planned}</strong><span className="muted"> запланировано (черновик/проверка)</span></div>
+            <div><strong>{signals.totals.uncovered}</strong><span className="muted"> не покрыто</span></div>
+            <div><strong>{signals.totals.unbound}</strong><span className="muted"> не привязано</span></div>
+            <div><strong>{signals.collisions.length}</strong><span className="muted"> предупреждений о конфликтах</span></div>
           </div>
         </Surface>
-        <Surface title="Coverage by approved semantic binding">
-          {signals.coverage.length === 0 ? <EmptyState title="Нет approved semantic collection" hint="Создайте и одобрите collection в полном workspace; этот экран ничего не создаёт." /> : <DataTable headers={["Collection member", "Geo binding", "Signal", "Linked PagePlan"]}>{signals.coverage.map((item) => <tr key={`${item.collection_keyword_id}:${item.geo_binding_id || "unbound"}`}><td><code>{item.collection_keyword_id.slice(0, 8)}</code></td><td>{item.geo_binding_id ? <code>{item.geo_binding_id.slice(0, 8)}</code> : "Нет geography binding"}</td><td><StatusPill tone={statusTone(item.status)}>{item.status}</StatusPill></td><td>{item.plans.length ? item.plans.map((plan) => `${plan.slug} (${plan.state})`).join(", ") : "—"}</td></tr>)}</DataTable>}
+        <Surface title="Покрытие по одобренным семантическим привязкам">
+          {signals.coverage.length === 0 ? <EmptyState title="Нет одобренной семантической коллекции" hint="Создайте и одобрите коллекцию в основной рабочей области; этот экран ничего не создаёт." /> : <DataTable headers={["Элемент коллекции", "Географическая привязка", "Сигнал", "Связанный план страницы"]}>{signals.coverage.map((item) => <tr key={`${item.collection_keyword_id}:${item.geo_binding_id || "unbound"}`}><td><code>{item.collection_keyword_id.slice(0, 8)}</code></td><td>{item.geo_binding_id ? <code>{item.geo_binding_id.slice(0, 8)}</code> : "Нет географической привязки"}</td><td><StatusPill tone={statusTone(item.status)}>{coverageLabels[item.status]}</StatusPill></td><td>{item.plans.length ? item.plans.map((plan) => `${plan.slug} (${plan.state})`).join(", ") : "—"}</td></tr>)}</DataTable>}
         </Surface>
-        <Surface title="Advisory findings">
-          {signals.collisions.length === 0 && signals.unmapped_plans.length === 0 ? <EmptyState title="Нет дополнительных сигналов" hint="Это не означает готовность к публикации; обычные candidate gates остаются отдельными." /> : <div className="stack">
-            {signals.collisions.map((collision) => <p className="muted" key={`${collision.target.collection_keyword_id}:${collision.target.geo_binding_id}`}>Collision: {collision.reason}. Plans: {collision.plans.map((plan) => `${plan.slug} (${plan.state})`).join(", ")}.</p>)}
-            {signals.unmapped_plans.length > 0 && <p className="muted">Unmapped plans: {signals.unmapped_plans.map((plan) => `${plan.slug} (${plan.state})`).join(", ")}. They do not count as semantic coverage.</p>}
+        <Surface title="Справочные замечания">
+          {signals.collisions.length === 0 && signals.unmapped_plans.length === 0 ? <EmptyState title="Нет дополнительных сигналов" hint="Это не означает готовность к публикации: обычные условия пробной сборки остаются отдельными." /> : <div className="stack">
+            {signals.collisions.map((collision) => <p className="muted" key={`${collision.target.collection_keyword_id}:${collision.target.geo_binding_id}`}>Конфликт: {collision.reason}. Планы: {collision.plans.map((plan) => `${plan.slug} (${plan.state})`).join(", ")}.</p>)}
+            {signals.unmapped_plans.length > 0 && <p className="muted">Непривязанные планы: {signals.unmapped_plans.map((plan) => `${plan.slug} (${plan.state})`).join(", ")}. Они не учитываются в покрытии семантики.</p>}
           </div>}
         </Surface>
       </>}

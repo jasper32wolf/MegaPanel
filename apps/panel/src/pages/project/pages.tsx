@@ -68,18 +68,18 @@ export function ProjectPagesPage() {
   return (
     <ProjectWorkspaceLayout projectId={projectId}>
       <PageHeader
-        title={project ? `Pages · ${project.name}` : "Project pages"}
-        description="Read-only PagePlan and draft lineage. Generation, QA, review and apply remain explicit actions in the candidate-first workspace."
-        actions={<Link className="btn btn-ghost" to={`/projects/${projectId}`}>Открыть workspace</Link>}
+        title={project ? `Страницы · ${project.name}` : "Страницы проекта"}
+        description="История планов и черновиков страниц доступна только для чтения. Генерация, проверка качества, одобрение и применение остаются явными действиями в основной рабочей области."
+        actions={<Link className="btn btn-ghost" to={`/projects/${projectId}`}>Открыть рабочую область</Link>}
       />
       {error && <p className="error" role="alert">{error}</p>}
-      {!plans && !error ? <p className="muted" aria-live="polite">Загрузка PagePlan и drafts…</p> : null}
+      {!plans && !error ? <p className="muted" aria-live="polite">Загрузка планов и черновиков страниц…</p> : null}
       {plans && <>
-        <Surface title="PagePlan">
-          {plans.length === 0 ? <EmptyState title="PagePlan пока нет" hint="Создайте и проверьте план в полном workspace." /> : <DataTable headers={["Путь", "Цель", "Версия", "Статус", "Решение"]}>{plans.map((plan) => <tr key={plan.id}><td>{plan.slug}</td><td>{plan.objective}</td><td>v{plan.version}</td><td><StatusPill tone={tone(plan.state)}>{plan.state}</StatusPill></td><td>{plan.decision_reason || (plan.reviewed_at ? new Date(plan.reviewed_at).toLocaleString() : "—")}</td></tr>)}</DataTable>}
+        <Surface title="Планы страниц">
+          {plans.length === 0 ? <EmptyState title="Планов страниц пока нет" hint="Создайте и проверьте план в основной рабочей области." /> : <DataTable headers={["Путь", "Цель", "Версия", "Статус", "Решение"]}>{plans.map((plan) => <tr key={plan.id}><td>{plan.slug}</td><td>{plan.objective}</td><td>v{plan.version}</td><td><StatusPill tone={tone(plan.state)}>{plan.state}</StatusPill></td><td>{plan.decision_reason || (plan.reviewed_at ? new Date(plan.reviewed_at).toLocaleString() : "—")}</td></tr>)}</DataTable>}
         </Surface>
-        <Surface title="Последние drafts и QA">
-          {plans.length === 0 ? <EmptyState title="Черновиков пока нет" hint="После одобрения PagePlan создайте детерминированный или approved AI draft в полном workspace." /> : <DataTable headers={["Страница", "Revision", "Draft", "QA", "Hash"]}>{plans.map((plan) => {
+        <Surface title="Последние черновики и проверка качества">
+          {plans.length === 0 ? <EmptyState title="Черновиков пока нет" hint="После одобрения плана создайте детерминированный или одобренный черновик ИИ в основной рабочей области." /> : <DataTable headers={["Страница", "Версия", "Черновик", "Проверка качества", "Хеш"]}>{plans.map((plan) => {
             const draft = latestDrafts.get(plan.id);
             return <tr key={plan.id}><td>{plan.slug}</td>{draft ? <><td>v{draft.revision}</td><td><StatusPill tone={tone(draft.state)}>{draft.state}</StatusPill>{draft.failure_message && <p className="error">{draft.failure_message}</p>}</td><td><StatusPill tone={tone(draft.last_qa_verdict)}>{draft.last_qa_verdict || "не запускалась"}</StatusPill><span className="muted"> · {draft.qa_runs.length} run(s)</span></td><td className="muted">{draft.content_hash?.slice(0, 16) || "—"}</td></> : <><td>—</td><td><span className="muted">не создан</span></td><td>—</td><td>—</td></>}</tr>;
           })}</DataTable>}

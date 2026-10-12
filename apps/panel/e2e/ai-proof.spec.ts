@@ -74,8 +74,8 @@ test("оператор обновляет ограниченный список 
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(models) }),
   );
 
-  await page.getByRole("link", { name: "Провайдеры" }).click();
-  await expect(page.getByRole("heading", { name: "AI-провайдеры" })).toBeVisible();
+  await page.getByRole("link", { name: "Подключения к ИИ" }).click();
+  await expect(page.getByRole("heading", { name: "Подключения к ИИ" })).toBeVisible();
   await expect(page.getByText("••••6789")).toBeVisible();
 
   await page.getByRole("button", { name: "Запросить список моделей у провайдера" }).click();
@@ -102,11 +102,11 @@ test("замена ключа не объявляется неуспешной �
     return route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
   });
 
-  await page.getByRole("link", { name: "Провайдеры" }).click();
+  await page.getByRole("link", { name: "Подключения к ИИ" }).click();
   await page.getByRole("button", { name: "Заменить ключ" }).click();
-  await page.getByLabel("Новый API key").fill("controlled-replacement-key");
+  await page.getByLabel("Новый ключ API").fill("controlled-replacement-key");
   await page.getByRole("button", { name: "Сохранить новый ключ" }).click();
-  await expect(page.getByRole("status")).toContainText("API key для Mock gateway заменён");
+  await expect(page.getByRole("status")).toContainText("Ключ API для Mock gateway заменён");
   await expect(page.getByRole("alert")).toContainText("Действие выполнено, но список подключений не обновился");
   await expect(page.getByText("controlled-replacement-key")).toHaveCount(0);
   expect(mutations).toEqual([JSON.stringify({ api_key: "controlled-replacement-key" })]);
@@ -123,7 +123,7 @@ test("ошибка discovery не раскрывает секрет и оста�
     }),
   );
 
-  await page.getByRole("link", { name: "Провайдеры" }).click();
+  await page.getByRole("link", { name: "Подключения к ИИ" }).click();
   await page.getByRole("button", { name: "Запросить список моделей у провайдера" }).click();
   await expect(page.getByRole("alert").filter({ hasText: "Model discovery unavailable" })).toBeVisible();
   await expect(page.getByText("sk-live-never-render-this-secret", { exact: true })).not.toBeVisible();
@@ -157,10 +157,10 @@ test("semantic coverage остаётся read-only advisory обзором", asy
     window.history.pushState({}, "", path);
     window.dispatchEvent(new PopStateEvent("popstate"));
   }, `/projects/${projectId}/semantic-coverage`);
-  await expect(page.getByRole("heading", { name: "Coverage proof: semantic coverage" })).toBeVisible();
-  await expect(page.getByText("planned (draft/review)")).toBeVisible();
-  await expect(page.getByText("Unmapped plans: /legacy (draft). They do not count as semantic coverage.")).toBeVisible();
-  await expect(page.getByText("не создаёт drafts, не применяет изменения, не запускает build и не публикует сайт")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Coverage proof: покрытие семантики" })).toBeVisible();
+  await expect(page.getByText("запланировано (черновик/проверка)")).toBeVisible();
+  await expect(page.getByText("Непривязанные планы: /legacy (draft). Они не учитываются в покрытии семантики.")).toBeVisible();
+  await expect(page.getByText("не создаёт черновики, не применяет изменения, не запускает сборку и не публикует сайт")).toBeVisible();
   await expect(page.getByRole("button", { name: /Создать|Применить|Собрать|Опубликовать/ })).toHaveCount(0);
 });
 
@@ -207,9 +207,9 @@ test("facts deep link shows redacted revisions without mutation", async ({ page 
     window.dispatchEvent(new PopStateEvent("popstate"));
   }, `/projects/${projectId}/facts`);
 
-  await expect(page.getByRole("heading", { name: "Facts · Facts proof" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Данные · Facts proof" })).toBeVisible();
   await expect(page.getByText("Proof Organization", { exact: true })).toBeVisible();
-  await expect(page.getByText("configured", { exact: true })).toBeVisible();
+  await expect(page.getByText("Настроен", { exact: true })).toBeVisible();
   await expect(page.getByText("private-recipient@example.test", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /Сохранить|Подтвердить/ })).toHaveCount(0);
   expect(mutationRequests).toEqual([]);
@@ -248,7 +248,7 @@ test("pages deep link shows PagePlan and QA lineage without mutation", async ({ 
     window.dispatchEvent(new PopStateEvent("popstate"));
   }, `/projects/${projectId}/pages`);
 
-  await expect(page.getByRole("heading", { name: "Pages · Pages proof" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Страницы · Pages proof" })).toBeVisible();
   await expect(page.getByText("/repair", { exact: true })).toHaveCount(2);
   await expect(page.getByText("pass", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: /Создать|Проверить|Применить|Одобрить|Опубликовать/ })).toHaveCount(0);
@@ -659,7 +659,7 @@ test("legal rejection сохраняет reason и manual remediation без п�
 
 test("prompt history показывает stale evidence и блокирует активацию", async ({ page }) => {
   await mockAuth(page);
-  const promptId = "architecture/propose-site-map";
+  const promptId = "architecture.site-map";
   const revisionId = "44444444-4444-4444-8444-444444444444";
   await page.route("**/api/v1/ai/prompts", (route) =>
     route.fulfill({
@@ -726,18 +726,49 @@ test("prompt history показывает stale evidence и блокирует �
     }),
   );
 
-  await page.getByRole("link", { name: "Шаблоны запросов AI" }).click();
-  await expect(page.getByRole("heading", { name: "Системные prompts" })).toBeVisible();
-  await expect(page.getByText("Сохранённая evaluation относится к предыдущей версии fixture.")).toBeVisible();
+  await page.getByRole("link", { name: "Системные промпты ИИ" }).click();
+  await expect(page.getByRole("heading", { name: "Системные промпты" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Карта сайта" })).toBeVisible();
+  await expect(page.getByText("За что отвечает промпт")).toBeVisible();
+  await expect(page.getByText("Пример допустимого уточнения")).toBeVisible();
+  await expect(page.getByText("Сохранённая проверка относится к предыдущей версии контрольных примеров.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Активировать" })).toBeDisabled();
-  await page.getByRole("button", { name: "Показать history" }).click();
-  await expect(page.getByText("Evaluation history · 2 run(s)")).toBeVisible();
-  await page.getByText("Evaluation history · 2 run(s)").click();
+  await page.getByRole("button", { name: "Показать историю" }).click();
+  await expect(page.getByText("История проверок · 2")).toBeVisible();
+  await page.getByText("История проверок · 2").click();
   await expect(page.getByText("fixture contract failed")).toBeVisible();
-  await page.getByText("Fixture cases").first().click();
-  await page.getByText("Fixture cases").nth(1).click();
+  await page.getByText("Контрольные случаи").first().click();
+  await page.getByText("Контрольные случаи").nth(1).click();
   await expect(page.getByText("current-contract")).toBeVisible();
   await expect(page.getByText("old-contract")).toBeVisible();
+});
+
+test("системные промпты дают операторские пояснения без скрытых действий", async ({ page }) => {
+  await mockAuth(page);
+  const mutations: string[] = [];
+  await page.route("**/api/v1/ai/prompts", (route) => {
+    if (route.request().method() !== "GET") mutations.push(`${route.request().method()} ${new URL(route.request().url()).pathname}`);
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([
+        { id: "architecture.site-map", baseline_version: "1.1.0", baseline_hash: "a".repeat(64), path: "architecture/propose-site-map.md", revisions: [] },
+        { id: "seo.create-brief", baseline_version: "1.0.0", baseline_hash: "b".repeat(64), path: "seo/create-seo-brief.md", revisions: [] },
+      ]),
+    });
+  });
+
+  await page.goto("/ai/prompts");
+  await expect(page.getByRole("heading", { name: "Карта сайта" })).toBeVisible();
+  await expect(page.getByText("Какой результат вы получите")).toBeVisible();
+  await expect(page.getByText("Что не происходит автоматически")).toBeVisible();
+  await expect(page.getByText("Сохранённых версий для этой задачи пока нет.")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Открыть справку о системных промптах" })).toHaveAttribute("href", "/help?topic=system-prompts");
+  await page.getByLabel("Системный промпт").selectOption("seo.create-brief");
+  await expect(page.getByRole("heading", { name: "SEO-задание для страницы" })).toBeVisible();
+  await page.getByText("Пример допустимого уточнения").click();
+  await expect(page.getByText("При нехватке подтверждённых фактов выберите noindex,follow")).toBeVisible();
+  expect(mutations).toEqual([]);
 });
 
 test("releases center renders immutable index-promotion provenance without mutation", async ({ page }) => {
@@ -804,7 +835,7 @@ test("AI workspace раскрывает безопасный состав кон
     });
   });
 
-  await page.getByRole("link", { name: "AI-предложения" }).click();
+  await page.getByRole("link", { name: "Предложения ИИ" }).click();
   const proposalForm = page.locator("form");
   await proposalForm.getByLabel("Проект").selectOption(projectId);
   await proposalForm.getByLabel("Model ID").fill("mock-small");
@@ -855,8 +886,8 @@ test("AI workspace показывает queued, running и pending approval че
     });
   });
 
-  await page.getByRole("link", { name: "AI-предложения" }).click();
-  await expect(page.getByRole("heading", { name: "AI workspace" })).toBeVisible();
+  await page.getByRole("link", { name: "Предложения ИИ" }).click();
+  await expect(page.getByRole("heading", { name: "Предложения ИИ" })).toBeVisible();
   await expect(page.getByText("queued", { exact: true })).toBeVisible();
   await expect.poll(() => runRequests, { timeout: 7000 }).toBeGreaterThanOrEqual(4);
   await expect(page.getByText("pending_approval", { exact: true })).toBeVisible();

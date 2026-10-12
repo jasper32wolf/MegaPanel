@@ -28,11 +28,11 @@ const groups = [
     ],
   },
   {
-    label: "Подготовка с AI",
+    label: "Подготовка с ИИ",
     links: [
-      { to: "/ai", label: "AI-предложения" },
-      { to: "/ai/providers", label: "Провайдеры AI" },
-      { to: "/ai/prompts", label: "Шаблоны запросов AI" },
+      { to: "/ai", label: "Предложения ИИ" },
+      { to: "/ai/providers", label: "Подключения к ИИ" },
+      { to: "/ai/prompts", label: "Системные промпты ИИ" },
     ],
   },
   {
