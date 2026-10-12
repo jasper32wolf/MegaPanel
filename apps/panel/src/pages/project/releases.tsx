@@ -147,7 +147,7 @@ export function ProjectReleasesPage() {
   }
 
   function showLoadError(cause: unknown) {
-    setLoadError(cause instanceof Error ? cause.message : "Не удалось обновить candidate-сборки");
+    setLoadError(cause instanceof Error ? cause.message : "Не удалось обновить пробные сборки");
     setScheduledWork(null);
     setQueueError("Очередь сборки недоступна. Её состояние неизвестно, управление очередью отключено; повторите загрузку.");
   }
@@ -208,7 +208,7 @@ export function ProjectReleasesPage() {
     await run(
       `retry:${build.id}`,
       () => api(`/api/v1/projects/${projectId}/builds/${build.id}/retry`, { method: "POST" }, token),
-      "Повтор поставлен в очередь и использует тот же зафиксированный snapshot.",
+      "Повтор поставлен в очередь и использует тот же зафиксированный снимок.",
     );
   }
 
@@ -234,7 +234,7 @@ export function ProjectReleasesPage() {
 
   async function reviewLegal(build: Build, decision: "approved" | "rejected") {
     if (!evidenceRef.trim()) {
-      setError("Укажите ссылку или внутренний идентификатор evidence.");
+      setError("Укажите ссылку или внутренний идентификатор подтверждения.");
       return;
     }
     if (decision === "rejected" && (!rejectionReason.trim() || !rejectionGuidance.trim())) {
@@ -266,7 +266,7 @@ export function ProjectReleasesPage() {
   function publish(build: Build) {
     if (!build.build_hash) return;
     setConfirmation({
-      title: "Опубликовать candidate-сборку?",
+      title: "Опубликовать пробную сборку?",
       description: `Сборка ${build.build_hash} станет публичной для домена проекта. Это единственный путь публикации; завершение queue-задачи не публикует сайт.`,
       confirmLabel: "Опубликовать",
       dangerous: true,
@@ -340,7 +340,7 @@ export function ProjectReleasesPage() {
           Перед постановкой сохраняется неизменяемый снимок контента, индексации и файлов. Сборка не публикует сайт и не запускает IndexNow.
         </p>
         <div className="detail-grid">
-          <label className="field">Важность сборки<select value={queuePriority} onChange={(event) => setQueuePriority(event.target.value)} disabled={busy !== null}><option value="80">Срочно</option><option value="50">Обычно</option><option value="20">Можно ночью</option></select><span className="muted">Влияет только на порядок работы очереди. Проверки, preview и публикация остаются отдельными шагами.</span></label>
+          <label className="field">Важность сборки<select value={queuePriority} onChange={(event) => setQueuePriority(event.target.value)} disabled={busy !== null}><option value="80">Срочно</option><option value="50">Обычно</option><option value="20">Можно ночью</option></select><span className="muted">Влияет только на порядок работы очереди. Проверки, предпросмотр и публикация остаются отдельными шагами.</span></label>
           <label className="field">Начать не раньше<input type="datetime-local" value={notBefore} onChange={(event) => setNotBefore(event.target.value)} disabled={busy !== null} /><span className="muted">Необязательно. Время указано для вашего компьютера.</span></label>
         </div>
         <div className="row">
@@ -351,21 +351,21 @@ export function ProjectReleasesPage() {
             DNS: {project?.domain_check_meta.dns_status || "не проверен"}
           </StatusPill>
           <button className="btn" type="button" disabled={busy !== null || !project?.site_id} onClick={() => void createCandidate()}>
-            {busy === "build" ? "Постановка…" : "Создать candidate-сборку"}
+            {busy === "build" ? "Постановка…" : "Создать пробную сборку"}
           </button>
         </div>
       </Surface>
 
       <Surface title="Очередь сборки">
-        <p className="muted">Очередь распределяет только запуск immutable candidate-сборок. Пауза, продолжение и отмена не применяют черновик, не меняют индексацию и не публикуют сайт.</p>
+        <p className="muted">Очередь распределяет только запуск неизменяемых пробных сборок. Пауза, продолжение и отмена не применяют черновик, не меняют индексацию и не публикуют сайт.</p>
         {queueError ? <p className="error" role="alert">{queueError}</p> : null}
-        {scheduledWork === null ? (!queueError ? <p className="muted" aria-live="polite">Загрузка очереди…</p> : null) : scheduledWork.length === 0 ? <EmptyState title="В очереди нет сборок" hint="После создания candidate появится отдельная запись планировщика." /> : <DataTable headers={["Тип", "Состояние", "Порядок", "Попытки", "Действия"]}>{scheduledWork.map((job) => <tr key={job.id}><td>{job.work_type === "site_build" ? "Candidate-сборка" : job.work_type}</td><td><StatusPill tone={tone(job.state)}>{stateLabel(job.state)}</StatusPill>{job.failure_code ? <p className="error">{job.failure_code}</p> : null}</td><td>важность: {job.priority}{job.not_before ? <p className="muted">не раньше: {stamp(job.not_before)}</p> : null}</td><td>{job.attempt_count}{job.lease_expires_at ? <p className="muted">lease до: {stamp(job.lease_expires_at)}</p> : null}</td><td className="row">{job.state === "queued" ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void controlScheduledWork(job, "pause")}>Пауза</button> : null}{job.state === "paused" ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void controlScheduledWork(job, "resume")}>Продолжить</button> : null}{["queued", "paused", "leased"].includes(job.state) ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void controlScheduledWork(job, "cancel")}>Отменить</button> : null}</td></tr>)}</DataTable>}
+        {scheduledWork === null ? (!queueError ? <p className="muted" aria-live="polite">Загрузка очереди…</p> : null) : scheduledWork.length === 0 ? <EmptyState title="В очереди нет сборок" hint="После создания candidate появится отдельная запись планировщика." /> : <DataTable headers={["Тип", "Состояние", "Порядок", "Попытки", "Действия"]}>{scheduledWork.map((job) => <tr key={job.id}><td>{job.work_type === "site_build" ? "Пробная сборка" : job.work_type}</td><td><StatusPill tone={tone(job.state)}>{stateLabel(job.state)}</StatusPill>{job.failure_code ? <p className="error">{job.failure_code}</p> : null}</td><td>важность: {job.priority}{job.not_before ? <p className="muted">не раньше: {stamp(job.not_before)}</p> : null}</td><td>{job.attempt_count}{job.lease_expires_at ? <p className="muted">lease до: {stamp(job.lease_expires_at)}</p> : null}</td><td className="row">{job.state === "queued" ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void controlScheduledWork(job, "pause")}>Пауза</button> : null}{job.state === "paused" ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void controlScheduledWork(job, "resume")}>Продолжить</button> : null}{["queued", "paused", "leased"].includes(job.state) ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void controlScheduledWork(job, "cancel")}>Отменить</button> : null}</td></tr>)}</DataTable>}
       </Surface>
 
       {builds ? (
         <Surface title="Очередь и история">
           {builds.length === 0 ? (
-            <EmptyState title="Сборок пока нет" hint="После применения черновика создайте candidate-сборку." />
+            <EmptyState title="Сборок пока нет" hint="После применения черновика создайте пробную сборку." />
           ) : (
             <DataTable headers={["Статус", "Сборка", "Публикация", "Создана", "Действия"]}>
               {builds.map((build) => (
@@ -451,13 +451,13 @@ export function ProjectReleasesPage() {
               {selectedBuild.legal_review.status === "block" ? (
                 <div className="stack">
                   <div className="row">
-                    <button className="btn btn-ghost" type="button" disabled={busy !== null || evidenceRef.trim().length < 3} onClick={() => void reviewLegal(selectedBuild, "approved")}>Одобрить legal review</button>
+                    <button className="btn btn-ghost" type="button" disabled={busy !== null || evidenceRef.trim().length < 3} onClick={() => void reviewLegal(selectedBuild, "approved")}>Одобрить юридическую проверку</button>
                   </div>
                   <label className="field">Причина отклонения<input value={rejectionReason} onChange={(event) => setRejectionReason(event.target.value)} minLength={3} maxLength={2000} /></label>
                   <label className="field">Рекомендация по исправлению<input value={rejectionGuidance} onChange={(event) => setRejectionGuidance(event.target.value)} minLength={3} maxLength={2000} /></label>
-                  <button className="btn btn-ghost" type="button" disabled={busy !== null || evidenceRef.trim().length < 3 || rejectionReason.trim().length < 3 || rejectionGuidance.trim().length < 3} onClick={() => void reviewLegal(selectedBuild, "rejected")}>Отклонить legal review</button>
+                  <button className="btn btn-ghost" type="button" disabled={busy !== null || evidenceRef.trim().length < 3 || rejectionReason.trim().length < 3 || rejectionGuidance.trim().length < 3} onClick={() => void reviewLegal(selectedBuild, "rejected")}>Отклонить юридическую проверку</button>
                 </div>
-              ) : <StatusPill tone="ok">legal review: approved</StatusPill>}
+              ) : <StatusPill tone="ok">Юридическая проверка одобрена</StatusPill>}
               <button className="btn" type="button" disabled={busy !== null || selectedBuild.release_gate?.status === "block" || selectedBuild.legal_review.status === "block"} onClick={() => publish(selectedBuild)}>
                 Опубликовать выбранную сборку
               </button>

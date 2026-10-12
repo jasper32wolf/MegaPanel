@@ -417,10 +417,10 @@ test("releases center shows queued candidate details without mutation", async ({
     window.dispatchEvent(new PopStateEvent("popstate"));
   }, `/projects/${projectId}/releases`);
 
-  await expect(page.getByRole("heading", { name: "Candidate-сборки · Releases proof" })).toBeVisible();
-  await expect(page.getByText("queued", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Пробные сборки · Releases proof" })).toBeVisible();
+  await expect(page.getByText("в очереди", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Безопасная история выполнения · 1")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Создать candidate-сборку" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Создать пробную сборку" })).toBeVisible();
   expect(mutationRequests).toEqual([]);
 });
 
@@ -456,7 +456,7 @@ test("releases keep candidate history visible when scheduler is unavailable", as
   });
 
   await page.goto(`/projects/${projectId}/releases`);
-  await expect(page.getByRole("heading", { name: "Candidate-сборки · Scheduler outage proof" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Пробные сборки · Scheduler outage proof" })).toBeVisible();
   await expect(page.getByText("Сборок пока нет")).toBeVisible();
   await expect(page.getByRole("alert")).toContainText("Её состояние неизвестно");
   await expect(page.getByText("В очереди нет сборок")).toHaveCount(0);
@@ -501,7 +501,7 @@ test("candidate action reports success even when refresh fails", async ({ page }
   });
 
   await page.goto(`/projects/${projectId}/releases`);
-  await page.getByRole("button", { name: "Создать candidate-сборку" }).click();
+  await page.getByRole("button", { name: "Создать пробную сборку" }).click();
   await expect(page.getByText("Снимок зафиксирован. Очередь начнёт сборку в указанное время и не публикует сайт автоматически.")).toBeVisible();
   await expect(page.getByRole("alert").first()).toContainText("Действие выполнено, но история сборок не обновилась");
   await expect(page.getByRole("button", { name: "Пауза" })).toHaveCount(0);
@@ -603,11 +603,11 @@ test("routing deep link shows redacted policy metadata without mutation", async 
     window.dispatchEvent(new PopStateEvent("popstate"));
   }, `/projects/${projectId}/routing`);
 
-  await expect(page.getByRole("heading", { name: "Routing · Routing proof" })).toBeVisible();
-  await expect(page.getByText("primary-email · required", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Маршрутизация заявок · Routing proof" })).toBeVisible();
+  await expect(page.getByText("primary-email · обязательный", { exact: true })).toBeVisible();
   await expect(page.getByText("private-recipient@example.test", { exact: true })).toHaveCount(0);
   await expect(page.getByText("never-render-this-routing-secret", { exact: true })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: /Создать|На review|Активировать|Отклонить/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Создать|На проверку|Активировать|Отклонить/ })).toHaveCount(0);
   expect(mutationRequests).toEqual([]);
 });
 
@@ -643,17 +643,17 @@ test("legal rejection сохраняет reason и manual remediation без п�
   });
 
   await page.goto(`/projects/${projectId}/releases`);
-  await expect(page.getByRole("heading", { name: "Candidate-сборки · Legal proof" })).toBeVisible();
-  await page.getByLabel("Ссылка или внутренний идентификатор evidence").fill("LEGAL-PROOF-1");
+  await expect(page.getByRole("heading", { name: "Пробные сборки · Legal proof" })).toBeVisible();
+  await page.getByLabel("Ссылка или внутренний идентификатор подтверждения").fill("LEGAL-PROOF-1");
   await page.getByLabel("Причина отклонения").fill("Юридический адрес требует подтверждения.");
-  await page.getByLabel("Рекомендация по исправлению").fill("Обновите подтверждённые facts и создайте новый candidate.");
-  await page.getByRole("button", { name: "Отклонить legal review" }).click();
+  await page.getByLabel("Рекомендация по исправлению").fill("Обновите подтверждённые данные и создайте новую пробную сборку.");
+  await page.getByRole("button", { name: "Отклонить юридическую проверку" }).click();
   await expect.poll(() => legalReviewBody).not.toBeNull();
   expect(legalReviewBody).toMatchObject({
     decision: "rejected",
     evidence_ref: "LEGAL-PROOF-1",
     reason: "Юридический адрес требует подтверждения.",
-    replacement_guidance: "Обновите подтверждённые facts и создайте новый candidate.",
+    replacement_guidance: "Обновите подтверждённые данные и создайте новую пробную сборку.",
   });
 });
 
