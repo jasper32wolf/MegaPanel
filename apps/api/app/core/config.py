@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+from email.utils import parseaddr
 from functools import lru_cache
 from typing import Literal
 from urllib.parse import urlparse
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _is_safe_email_address(value: str) -> bool:
+    if not value or "\r" in value or "\n" in value:
+        return False
+    display_name, address = parseaddr(value)
+    local_part, separator, domain = address.rpartition("@")
+    return not display_name and address == value and bool(local_part and separator and domain)
 
 
 class Settings(BaseSettings):
@@ -55,6 +64,8 @@ class Settings(BaseSettings):
     smtp_username: str = ""
     smtp_password: str = ""
     smtp_from_email: str = ""
+    # VPS-owned recipient for the central lead-delivery default. Never expose it via API.
+    smtp_lead_recipient: str = ""
     smtp_use_ssl: bool = False
     smtp_starttls: bool = True
 
@@ -102,6 +113,10 @@ class Settings(BaseSettings):
         return bool(self.smtp_host and self.smtp_from_email)
 
     @property
+    def smtp_lead_delivery_ready(self) -> bool:
+        return bool(self.smtp_configured and self.smtp_lead_recipient)
+
+    @property
     def telegram_configured(self) -> bool:
         return bool(self.telegram_bot_token and self.telegram_chat_id)
 
@@ -117,14 +132,22 @@ class Settings(BaseSettings):
             )
         if self.telemetry_aggregate_retention_days < self.telemetry_raw_retention_days:
             raise ValueError("Aggregate telemetry retention must cover raw telemetry retention")
-        smtp_values = (self.smtp_host, self.smtp_username, self.smtp_password, self.smtp_from_email)
+        smtp_values = (
+            self.smtp_host,
+            self.smtp_username,
+            self.smtp_password,
+            self.smtp_from_email,
+            self.smtp_lead_recipient,
+        )
         if any(smtp_values):
             if not self.smtp_configured:
                 raise ValueError("SMTP_HOST and SMTP_FROM_EMAIL must be configured together")
             if bool(self.smtp_username) != bool(self.smtp_password):
                 raise ValueError("SMTP_USERNAME and SMTP_PASSWORD must be configured together")
-            if "@" not in self.smtp_from_email:
+            if not _is_safe_email_address(self.smtp_from_email):
                 raise ValueError("SMTP_FROM_EMAIL must be a valid email address")
+            if self.smtp_lead_recipient and not _is_safe_email_address(self.smtp_lead_recipient):
+                raise ValueError("SMTP_LEAD_RECIPIENT must be a valid email address")
             if self.smtp_use_ssl and self.smtp_starttls:
                 raise ValueError("SMTP_USE_SSL and SMTP_STARTTLS cannot both be enabled")
         if bool(self.telegram_bot_token) != bool(self.telegram_chat_id):

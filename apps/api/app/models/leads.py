@@ -6,6 +6,7 @@ from datetime import date, datetime
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Integer,
@@ -57,6 +58,10 @@ class LeadRoutingPolicy(Base):
     __tablename__ = "lead_routing_policies"
     __table_args__ = (
         UniqueConstraint("project_id", "version", name="uq_lead_routing_policy_version"),
+        CheckConstraint(
+            "delivery_mode IN ('append_global', 'replace_global')",
+            name="ck_lead_routing_policies_delivery_mode",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -70,6 +75,9 @@ class LeadRoutingPolicy(Base):
         UUID(as_uuid=True), ForeignKey("sites.id", ondelete="CASCADE"), index=True
     )
     version: Mapped[int] = mapped_column(Integer, nullable=False)
+    delivery_mode: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="append_global"
+    )
     state: Mapped[str] = mapped_column(String(16), nullable=False, default="draft", index=True)
     policy_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     supersedes_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -135,6 +143,10 @@ class WebhookDelivery(Base):
     __tablename__ = "webhook_deliveries"
     __table_args__ = (
         UniqueConstraint("lead_id", "target_key", name="uq_webhook_delivery_lead_target"),
+        CheckConstraint(
+            "routing_source IN ('global_default', 'project_policy', 'legacy')",
+            name="ck_webhook_deliveries_routing_source",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -154,6 +166,7 @@ class WebhookDelivery(Base):
     )
     routing_policy_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     routing_policy_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    routing_source: Mapped[str] = mapped_column(String(16), nullable=False, default="legacy")
     required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     target_key: Mapped[str] = mapped_column(String(64), nullable=False)
     channel: Mapped[str] = mapped_column(String(16), default="webhook", nullable=False)

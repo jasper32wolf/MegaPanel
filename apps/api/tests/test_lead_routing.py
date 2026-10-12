@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,6 +10,7 @@ from uuid import uuid4
 import pytest
 from app.api.v1.lead_routing import _serialize_policy
 from app.main import app
+from app.models.leads import LeadRoutingPolicy, WebhookDelivery
 from app.schemas.lead_routing import LeadRoutingPolicyCreate
 from app.services.leads import get_encryptor
 from app.services.webhook_delivery import (
@@ -218,3 +220,79 @@ def test_routing_migration_and_routes_are_registered():
     assert "get" in paths["/api/v1/projects/{project_id}/lead-routing"]
     assert "post" in paths["/api/v1/projects/{project_id}/lead-routing/{policy_id}/activate"]
     assert "post" in paths["/api/v1/projects/{project_id}/lead-routing/{policy_id}/reject"]
+
+
+def test_central_lead_delivery_models_constrain_routing_metadata():
+    policy_delivery_mode = LeadRoutingPolicy.__table__.c.delivery_mode
+    delivery_routing_source = WebhookDelivery.__table__.c.routing_source
+    policy_constraints = {
+        constraint.name: str(constraint.sqltext)
+        for constraint in LeadRoutingPolicy.__table__.constraints
+        if constraint.name and constraint.name.startswith("ck_")
+    }
+    delivery_constraints = {
+        constraint.name: str(constraint.sqltext)
+        for constraint in WebhookDelivery.__table__.constraints
+        if constraint.name and constraint.name.startswith("ck_")
+    }
+
+    assert policy_delivery_mode.default and policy_delivery_mode.default.arg == "append_global"
+    assert delivery_routing_source.default and delivery_routing_source.default.arg == "legacy"
+    assert policy_constraints["ck_lead_routing_policies_delivery_mode"] == (
+        "delivery_mode IN ('append_global', 'replace_global')"
+    )
+    assert delivery_constraints["ck_webhook_deliveries_routing_source"] == (
+        "routing_source IN ('global_default', 'project_policy', 'legacy')"
+    )
+
+
+def test_central_lead_delivery_migration_backfills_and_constrains_routes(monkeypatch):
+    path = (
+        Path(__file__).parents[1]
+        / "alembic"
+        / "versions"
+        / "0068_central_lead_delivery_defaults.py"
+    )
+    spec = importlib.util.spec_from_file_location("central_lead_delivery_migration", path)
+    assert spec and spec.loader
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+
+    calls: list[tuple[str, tuple[object, ...]]] = []
+    monkeypatch.setattr(
+        migration.op, "add_column", lambda *args: calls.append(("add_column", args))
+    )
+    monkeypatch.setattr(migration.op, "execute", lambda *args: calls.append(("execute", args)))
+    monkeypatch.setattr(
+        migration.op, "alter_column", lambda *args, **kwargs: calls.append(("alter_column", args))
+    )
+    monkeypatch.setattr(
+        migration.op,
+        "create_check_constraint",
+        lambda *args: calls.append(("create_check_constraint", args)),
+    )
+
+    migration.upgrade()
+
+    assert migration.revision == "0068_central_lead_delivery_defaults"
+    assert migration.down_revision == "0067_project_branding_assets"
+    assert [(args[0], args[1].name) for name, args in calls if name == "add_column"] == [
+        ("lead_routing_policies", "delivery_mode"),
+        ("webhook_deliveries", "routing_source"),
+    ]
+    backfills = [args[0] for name, args in calls if name == "execute"]
+    assert "delivery_mode = 'replace_global'" in backfills[0]
+    assert "WHEN routing_policy_id IS NULL THEN 'legacy'" in backfills[1]
+    constraints = [args for name, args in calls if name == "create_check_constraint"]
+    assert constraints == [
+        (
+            "ck_lead_routing_policies_delivery_mode",
+            "lead_routing_policies",
+            "delivery_mode IN ('append_global', 'replace_global')",
+        ),
+        (
+            "ck_webhook_deliveries_routing_source",
+            "webhook_deliveries",
+            "routing_source IN ('global_default', 'project_policy', 'legacy')",
+        ),
+    ]

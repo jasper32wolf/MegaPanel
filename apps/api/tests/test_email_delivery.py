@@ -149,6 +149,31 @@ def test_smtp_setting_contract_rejects_half_configured_or_double_tls():
         )
 
 
+def test_smtp_lead_recipient_requires_safe_complete_smtp_configuration():
+    assert Settings().smtp_lead_delivery_ready is False
+    assert (
+        Settings(smtp_host="smtp.example.test", smtp_from_email="sender@example.test")
+        .smtp_lead_delivery_ready
+        is False
+    )
+
+    settings = Settings(
+        smtp_host="smtp.example.test",
+        smtp_from_email="sender@example.test",
+        smtp_lead_recipient="private-leads@example.test",
+    )
+    assert settings.smtp_lead_delivery_ready is True
+
+    with pytest.raises(ValidationError, match="SMTP_HOST and SMTP_FROM_EMAIL"):
+        Settings(smtp_lead_recipient="private-leads@example.test")
+    with pytest.raises(ValidationError, match="SMTP_LEAD_RECIPIENT must be a valid email address"):
+        Settings(
+            smtp_host="smtp.example.test",
+            smtp_from_email="sender@example.test",
+            smtp_lead_recipient="private-leads@example.test\\nBcc: attacker@example.test",
+        )
+
+
 def test_email_delivery_migration_adds_encrypted_target_fields(monkeypatch: pytest.MonkeyPatch):
     migration = _email_delivery_migration()
     calls: list[tuple[str, tuple[object, ...]]] = []
