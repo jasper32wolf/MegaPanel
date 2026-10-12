@@ -5,18 +5,21 @@ import { api, useAuth } from "../../lib/auth";
 import { ProjectWorkspaceLayout } from "./ProjectWorkspaceLayout";
 
 type Project = { id: string; name: string };
+type DeliveryMode = "append_global" | "replace_global";
+type CentralDelivery = { configured: boolean; effective_mode: string };
 type Destination = { id: string; target_key: string; channel: "email" | "webhook"; required: boolean; configured: boolean };
 type Policy = {
   id: string;
   version: number;
   state: string;
+  delivery_mode?: DeliveryMode;
   destinations: Destination[];
   submitted_at: string | null;
   reviewed_at: string | null;
   decision_reason: string | null;
   created_at: string | null;
 };
-type Policies = { items: Policy[] };
+type Policies = { items: Policy[]; central_delivery?: CentralDelivery };
 
 function tone(state: string) {
   if (state === "active") return "ok" as const;
@@ -32,11 +35,22 @@ function channelLabel(channel: Destination["channel"]) {
   return channel === "email" ? "электронная почта" : "вебхук";
 }
 
+function deliveryModeLabel(mode: DeliveryMode | undefined) {
+  if (!mode) return "режим не указан (историческая policy)";
+  return mode === "replace_global" ? "заменяет central SMTP" : "добавляет к central SMTP";
+}
+
+function centralDeliveryModeLabel(mode: string) {
+  if (mode === "append_global" || mode === "replace_global") return deliveryModeLabel(mode);
+  return mode;
+}
+
 export function ProjectRoutingPage() {
   const { projectId = "" } = useParams();
   const { token } = useAuth();
   const [project, setProject] = useState<Project | null>(null);
   const [policies, setPolicies] = useState<Policy[] | null>(null);
+  const [centralDelivery, setCentralDelivery] = useState<CentralDelivery | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -47,6 +61,7 @@ export function ProjectRoutingPage() {
     ]).then(([nextProject, nextPolicies]) => {
       setProject(nextProject);
       setPolicies(nextPolicies.items);
+      setCentralDelivery(nextPolicies.central_delivery || null);
     }).catch((cause) => setError(cause instanceof Error ? cause.message : "Не удалось загрузить правила маршрутизации заявок"));
   }, [projectId, token]);
 
@@ -60,7 +75,8 @@ export function ProjectRoutingPage() {
       {error && <p className="error" role="alert">{error}</p>}
       {!policies && !error ? <p className="muted" aria-live="polite">Загрузка правил маршрутизации…</p> : null}
       {policies && <Surface title="Маршрутизация заявок">
-        {policies.length === 0 ? <EmptyState title="Правил маршрутизации пока нет" hint="Создайте черновик правила, затем отдельно отправьте его на проверку и активируйте в рабочем пространстве." /> : <DataTable headers={["Версия", "Статус", "Каналы", "Проверка", "Создано"]}>{policies.map((policy) => <tr key={policy.id}><td>v{policy.version}</td><td><StatusPill tone={tone(policy.state)}>{stateLabel(policy.state)}</StatusPill></td><td>{policy.destinations.map((destination) => <div className="row" key={destination.id}><StatusPill tone={destination.configured ? "ok" : "danger"}>{channelLabel(destination.channel)}</StatusPill><span>{destination.target_key} · {destination.required ? "обязательный" : "необязательный"}</span></div>)}</td><td>{policy.decision_reason || (policy.reviewed_at ? new Date(policy.reviewed_at).toLocaleString() : "—")}</td><td>{policy.created_at ? new Date(policy.created_at).toLocaleString() : "—"}</td></tr>)}</DataTable>}
+        <div className="row"><StatusPill tone={centralDelivery?.configured ? "ok" : centralDelivery ? "danger" : "accent"}>{centralDelivery?.configured ? "central SMTP готова" : centralDelivery ? "central SMTP не настроена" : "central SMTP: статус неизвестен"}</StatusPill><span className="muted">{centralDelivery?.configured ? `Получатель не отображается. Активный режим: ${centralDeliveryModeLabel(centralDelivery.effective_mode)}.` : centralDelivery ? "Центральная SMTP-доставка недоступна для новых policy." : "API пока не предоставил статус центральной SMTP-доставки."}</span></div>
+        {policies.length === 0 ? <EmptyState title="Правил маршрутизации пока нет" hint="Создайте черновик с central SMTP, затем отдельно отправьте его на проверку и активируйте в рабочем пространстве." /> : <DataTable headers={["Версия", "Доставка", "Статус", "Пользовательские маршруты", "Проверка", "Создано"]}>{policies.map((policy) => <tr key={policy.id}><td>v{policy.version}</td><td>{deliveryModeLabel(policy.delivery_mode)}</td><td><StatusPill tone={tone(policy.state)}>{stateLabel(policy.state)}</StatusPill></td><td>{policy.destinations.length ? policy.destinations.map((destination) => <div className="row" key={destination.id}><StatusPill tone={destination.configured ? "ok" : "danger"}>{channelLabel(destination.channel)}</StatusPill><span>{destination.target_key} · {destination.required ? "обязательный" : "необязательный"}</span></div>) : <span className="muted">Только central SMTP</span>}</td><td>{policy.decision_reason || (policy.reviewed_at ? new Date(policy.reviewed_at).toLocaleString() : "—")}</td><td>{policy.created_at ? new Date(policy.created_at).toLocaleString() : "—"}</td></tr>)}</DataTable>}
       </Surface>}
     </ProjectWorkspaceLayout>
   );

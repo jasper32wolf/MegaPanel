@@ -6,7 +6,10 @@ import { ProjectWorkspaceLayout } from "./project/ProjectWorkspaceLayout";
 
 type Project = { id: string; name: string; domain: string | null; niche: string | null; site_id: string | null; current_fact_revision_id: string | null; domain_check_meta: { dns_status?: string; ssl_status?: string; checked_at?: string } };
 type FactRevision = { id: string; version: number; state: string; facts: Record<string, unknown>; has_private_lead_email: boolean; source_notes: string | null };
-type LeadRoutingPolicy = { id: string; version: number; state: string; destinations: { id: string; target_key: string; channel: "email" | "webhook"; required: boolean; configured: boolean }[]; submitted_at: string | null; reviewed_at: string | null; decision_reason: string | null; created_at: string | null };
+type DeliveryMode = "append_global" | "replace_global";
+type CentralDelivery = { configured: boolean; effective_mode: string };
+type LeadRoutingPolicy = { id: string; version: number; state: string; delivery_mode?: DeliveryMode; destinations: { id: string; target_key: string; channel: "email" | "webhook"; required: boolean; configured: boolean }[]; submitted_at: string | null; reviewed_at: string | null; decision_reason: string | null; created_at: string | null };
+type LeadRoutingResponse = { items: LeadRoutingPolicy[]; central_delivery?: CentralDelivery };
 type Keyword = { id: string; phrase: string; meta: Record<string, string> };
 type ProjectKeyword = { id: string; keyword_id: string; phrase: string; cluster: string | null; intent: string | null; priority: number | null };
 type SemanticCollection = { id: string; name: string; state: string; version: number; source_refs: { evidence?: unknown[]; manual_source_run_ids?: string[] }; members: { id: string; project_keyword_id: string; keyword_id: string; cluster: string | null; intent: string | null; geo_bindings: { id: string; project_geo_place_id: string; scope: string }[] }[] };
@@ -67,6 +70,22 @@ function stateLabel(state: string) {
     cancelled: "отменён",
     pending_approval: "ожидает решения",
   } as Record<string, string>)[state] || state;
+}
+
+function deliveryModeLabel(mode: DeliveryMode | undefined) {
+  if (!mode) return "режим не указан (историческая policy)";
+  return mode === "replace_global" ? "заменяет центральную SMTP-доставку" : "добавляет к центральной SMTP-доставке";
+}
+
+function centralDeliveryModeLabel(mode: string) {
+  if (mode === "append_global" || mode === "replace_global") return deliveryModeLabel(mode);
+  return mode;
+}
+
+function centralDeliveryLabel(delivery: CentralDelivery | null) {
+  if (!delivery) return "Статус центральной SMTP-доставки пока не предоставлен API.";
+  if (!delivery.configured) return "Центральная SMTP-доставка не настроена";
+  return `Центральная SMTP-доставка готова; активный режим: ${centralDeliveryModeLabel(delivery.effective_mode)}.`;
 }
 
 export function ProjectWorkspacePage() {
@@ -154,8 +173,11 @@ export function ProjectWorkspacePage() {
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
   const [workHours, setWorkHours] = useState("");
-  const [privateLeadEmail, setPrivateLeadEmail] = useState("");
   const [routingPolicies, setRoutingPolicies] = useState<LeadRoutingPolicy[]>([]);
+  const [centralDelivery, setCentralDelivery] = useState<CentralDelivery | null>(null);
+  const [customRoutingOpen, setCustomRoutingOpen] = useState(false);
+  const [routingDeliveryMode, setRoutingDeliveryMode] = useState<DeliveryMode>("append_global");
+  const [replaceGlobalConfirmed, setReplaceGlobalConfirmed] = useState(false);
   const [routingEmail, setRoutingEmail] = useState("");
   const [routingWebhookUrl, setRoutingWebhookUrl] = useState("");
   const [routingWebhookSecret, setRoutingWebhookSecret] = useState("");
@@ -273,12 +295,13 @@ export function ProjectWorkspacePage() {
     setSemanticSourceRuns(nextSourceRuns);
     setAuthorProfiles(nextAuthors);
     if (nextProject.site_id) {
-      const routing = await api<{ items: LeadRoutingPolicy[] }>(
+      const routing = await api<LeadRoutingResponse>(
         `/api/v1/projects/${projectId}/lead-routing`,
         {},
         token,
       );
       setRoutingPolicies(routing.items);
+      setCentralDelivery(routing.central_delivery || null);
       try {
         setTelemetrySummary(
           await api<TelemetrySummary>(
@@ -292,6 +315,7 @@ export function ProjectWorkspacePage() {
       }
     } else {
       setRoutingPolicies([]);
+      setCentralDelivery(null);
       setTelemetrySummary(null);
     }
   }
@@ -408,7 +432,6 @@ export function ProjectWorkspacePage() {
                   .map((item) => item.trim())
                   .filter(Boolean),
               },
-              private_lead_email: privateLeadEmail || undefined,
               source_notes: sourceNotes || null,
             }),
           },
@@ -1076,22 +1099,44 @@ export function ProjectWorkspacePage() {
 
   async function createRoutingPolicy() {
     const destinations = [] as { target_key: string; channel: "email" | "webhook"; required: boolean; recipient?: string; webhook_url?: string; webhook_secret?: string }[];
-    if (routingEmail.trim()) {
+    if (customRoutingOpen && routingEmail.trim()) {
       destinations.push({ target_key: "private_email", channel: "email", required: true, recipient: routingEmail.trim() });
     }
-    if (routingWebhookUrl.trim() || routingWebhookSecret.trim()) {
+    if (customRoutingOpen && (routingWebhookUrl.trim() || routingWebhookSecret.trim())) {
       destinations.push({ target_key: "site_webhook", channel: "webhook", required: false, webhook_url: routingWebhookUrl.trim(), webhook_secret: routingWebhookSecret });
     }
-    if (!destinations.length) {
-      setError("Добавьте private email или полные URL и secret webhook-получателя.");
+    if (!centralDelivery?.configured && routingDeliveryMode === "append_global") {
+      setError("Центральная SMTP-доставка не настроена. Настройте её в панели перед созданием правила с центральной доставкой.");
+      return;
+    }
+    if (customRoutingOpen && !destinations.length) {
+      setError("Добавьте email получателя или полный URL и секрет webhook-получателя.");
+      return;
+    }
+    if (routingDeliveryMode === "replace_global" && !destinations.length) {
+      setError("Для замены центральной SMTP-доставки добавьте хотя бы один пользовательский маршрут.");
+      return;
+    }
+    if (routingDeliveryMode === "replace_global" && !replaceGlobalConfirmed) {
+      setError("Подтвердите замену центральной SMTP-доставки перед созданием правила.");
       return;
     }
     const created = await run(
       "routing-create",
-      () => api(`/api/v1/projects/${projectId}/lead-routing`, { method: "POST", body: JSON.stringify({ destinations }) }, token),
+      () => api(`/api/v1/projects/${projectId}/lead-routing`, {
+        method: "POST",
+        body: JSON.stringify({
+          destinations,
+          delivery_mode: routingDeliveryMode,
+          replace_global_confirmed: routingDeliveryMode === "replace_global" && replaceGlobalConfirmed,
+        }),
+      }, token),
       "Создана draft policy маршрутизации. Отправьте её на review перед активацией.",
     );
-    if (created) setRoutingWebhookSecret("");
+    if (created) {
+      setRoutingWebhookSecret("");
+      setReplaceGlobalConfirmed(false);
+    }
   }
 
   async function submitRoutingPolicy(policy: LeadRoutingPolicy) {
@@ -1157,7 +1202,6 @@ export function ProjectWorkspacePage() {
           <label className="field">Публичный телефон<input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="+7 (900) 000-00-00" required /><span className="muted">Может отображаться на сайте и используется в форме заявки.</span></label>
           <label className="field">Публичный адрес<input value={address} onChange={(event) => setAddress(event.target.value)} placeholder="Город, улица, дом" /><span className="muted">Отображается только в блоках, где адрес включён шаблоном.</span></label>
           <label className="field">Часы работы<input value={workHours} onChange={(event) => setWorkHours(event.target.value)} placeholder="Пн–Вс, 09:00–20:00" /></label>
-          <label className="field">Email для заявок<input type="email" value={privateLeadEmail} onChange={(event) => setPrivateLeadEmail(event.target.value)} placeholder="leads@example.com" /><span className="muted">Приватный маршрут доставки. Не публикуется на сайте и не отправляется AI-провайдерам.</span></label>
           <label className="field">Публичный email для вопросов конфиденциальности и запросов субъектов данных<input type="email" value={privacyEmail} onChange={(event) => setPrivacyEmail(event.target.value)} placeholder="privacy@example.ru" /><span className="muted">Публичный юридический контакт для правовых страниц. Не используйте адрес для заявок, если он должен оставаться приватным.</span></label>
           <label className="field">Юридическое наименование<input value={legal} onChange={(event) => setLegal(event.target.value)} placeholder="ООО «Организация»" /></label>
           <label className="field">Юрисдикция для правовых страниц<input value={legalJurisdiction} onChange={(event) => setLegalJurisdiction(event.target.value)} placeholder="Например: Российская Федерация" /><span className="muted">Обязательна перед публичной публикацией; предпросмотр и пробная сборка доступны для проверки без неё.</span></label>
@@ -1174,15 +1218,26 @@ export function ProjectWorkspacePage() {
         {facts.length === 0 ? <EmptyState title="Факты ещё не сохранены" hint="Без подтверждённых фактов план страницы не перейдёт на проверку." /> : <div className="row"><StatusPill tone={latestFact?.state === "confirmed" ? "ok" : "warn"}>версия {latestFact?.version}: {stateLabel(latestFact?.state || "")}</StatusPill>{latestFact?.state === "draft" ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => run(`confirm:${latestFact.id}`, () => api(`/api/v1/projects/${projectId}/facts/${latestFact.id}/confirm`, { method: "POST" }, token), "Факты подтверждены.")}>Подтвердить факты</button> : null}{latestFact?.state === "confirmed" ? <button className="btn btn-ghost" type="button" disabled={busy !== null || !approvedStructure} onClick={() => void createCommercialPagePlans()}>{busy === "commercial-pages" ? "Создание…" : "Создать коммерческие PagePlan"}</button> : null}</div>}
       </Surface>
       <Surface title="2. Маршрутизация заявок">
-        <p className="muted">Правило хранит зашифрованные данные получателей и применяется только к новым заявкам после явной активации. Сохранённые адреса и секрет вебхука повторно не отображаются.</p>
+        <p className="muted">Обычный путь использует центральную SMTP-доставку. Панель показывает только её готовность, а не адрес получателя. Правило применяется только к новым заявкам после явной активации.</p>
         {!project.site_id ? <EmptyState title="Сначала примените черновик к манифесту" hint="После создания сайта можно настроить маршрутизацию заявок до пробной сборки и публикации." /> : <>
           <div className="stack">
-            <label className="field">Приватный email получателя<input type="email" value={routingEmail} onChange={(event) => setRoutingEmail(event.target.value)} placeholder="leads@example.com" /><span className="muted">Отличается от публичного email для вопросов конфиденциальности и никогда не показывается на сайте или во входящих сообщениях.</span></label>
-            <label className="field">URL вебхука (необязательно)<input value={routingWebhookUrl} onChange={(event) => setRoutingWebhookUrl(event.target.value)} placeholder="https://hooks.example.com/lead" /></label>
-            <label className="field">Секрет вебхука (необязательно)<input type="password" value={routingWebhookSecret} onChange={(event) => setRoutingWebhookSecret(event.target.value)} placeholder="Минимум 16 символов" autoComplete="new-password" /></label>
-            <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void createRoutingPolicy()}>{busy === "routing-create" ? "Сохранение…" : "Создать черновик правила"}</button>
+            <div className="row"><StatusPill tone={centralDelivery?.configured ? "ok" : centralDelivery ? "danger" : "accent"}>{centralDelivery?.configured ? "central SMTP готова" : centralDelivery ? "central SMTP не готова" : "central SMTP: статус неизвестен"}</StatusPill><span className="muted">{centralDeliveryLabel(centralDelivery)}</span></div>
+            <p className="muted">Новая policy по умолчанию добавляет пользовательские маршруты к центральной SMTP-доставке. Получатель центральной доставки здесь не вводится и не отображается.</p>
+            <button className="btn btn-ghost" type="button" disabled={busy !== null || !centralDelivery?.configured} onClick={() => void createRoutingPolicy()}>{busy === "routing-create" ? "Сохранение…" : "Создать черновик с central SMTP"}</button>
+            <button className="btn btn-ghost" type="button" disabled={busy !== null} aria-expanded={customRoutingOpen} onClick={() => setCustomRoutingOpen((current) => !current)}>{customRoutingOpen ? "Скрыть дополнительные маршруты" : "Настроить дополнительные маршруты"}</button>
+            {customRoutingOpen && <div className="stack">
+              <strong>Дополнительные маршруты</strong>
+              <label className="field"><span><input type="radio" name="routing-delivery-mode" checked={routingDeliveryMode === "append_global"} onChange={() => { setRoutingDeliveryMode("append_global"); setReplaceGlobalConfirmed(false); }} /> Добавить к central SMTP (рекомендуется)</span><span className="muted">Центральная SMTP-доставка сохранится, а указанные ниже маршруты получат дополнительную копию.</span></label>
+              <label className="field"><span><input type="radio" name="routing-delivery-mode" checked={routingDeliveryMode === "replace_global"} onChange={() => setRoutingDeliveryMode("replace_global")} /> Заменить central SMTP пользовательскими маршрутами</span><span className="muted">Используйте только если новые маршруты проверены и должны стать единственным способом доставки для этой policy.</span></label>
+              {routingDeliveryMode === "replace_global" && <p className="error" role="alert">Внимание: эта policy не будет отправлять новые заявки через central SMTP. Уже созданные доставки не изменятся.</p>}
+              <label className="field">Приватный email получателя<input type="email" value={routingEmail} onChange={(event) => setRoutingEmail(event.target.value)} placeholder="leads@example.com" /><span className="muted">Зашифрованный пользовательский маршрут. Не публикуется на сайте и не повторно отображается после сохранения.</span></label>
+              <label className="field">URL вебхука (необязательно)<input value={routingWebhookUrl} onChange={(event) => setRoutingWebhookUrl(event.target.value)} placeholder="https://hooks.example.com/lead" /></label>
+              <label className="field">Секрет вебхука (необязательно)<input type="password" value={routingWebhookSecret} onChange={(event) => setRoutingWebhookSecret(event.target.value)} placeholder="Минимум 16 символов" autoComplete="new-password" /></label>
+              {routingDeliveryMode === "replace_global" && <label className="field"><span><input type="checkbox" checked={replaceGlobalConfirmed} onChange={(event) => setReplaceGlobalConfirmed(event.target.checked)} /> Подтверждаю замену central SMTP для новых заявок этой policy.</span></label>}
+              <button className="btn btn-ghost" type="button" disabled={busy !== null || (routingDeliveryMode === "append_global" && !centralDelivery?.configured) || (routingDeliveryMode === "replace_global" && !replaceGlobalConfirmed)} onClick={() => void createRoutingPolicy()}>{busy === "routing-create" ? "Сохранение…" : routingDeliveryMode === "replace_global" ? "Создать правило с заменой central SMTP" : "Создать правило с дополнительными маршрутами"}</button>
+            </div>}
           </div>
-          {routingPolicies.length === 0 ? <EmptyState title="Активной policy пока нет" hint="До явной активации сохраняется legacy delivery compatibility; настройте policy перед следующей публикацией." /> : <DataTable headers={["Версия", "Получатели", "Статус", "Действия"]}>{routingPolicies.map((policy) => <tr key={policy.id}><td>v{policy.version}</td><td>{policy.destinations.map((destination) => <span key={destination.id} className="row"><StatusPill tone={destination.configured ? "ok" : "danger"}>{destination.channel}</StatusPill><span>{destination.target_key}{destination.required ? " · required" : " · optional"}</span></span>)}</td><td><StatusPill tone={tone(policy.state)}>{stateLabel(policy.state)}</StatusPill></td><td className="row">{policy.state === "draft" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void submitRoutingPolicy(policy)}>На review</button>}{policy.state === "review" && <><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => rejectRoutingPolicy(policy)}>Отклонить</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => activateRoutingPolicy(policy)}>Активировать</button></>}</td></tr>)}</DataTable>}
+          {routingPolicies.length === 0 ? <EmptyState title="Активной policy пока нет" hint="Создайте черновик с central SMTP, отправьте его на review и отдельно активируйте." /> : <DataTable headers={["Версия", "Доставка", "Пользовательские маршруты", "Статус", "Действия"]}>{routingPolicies.map((policy) => <tr key={policy.id}><td>v{policy.version}</td><td>{deliveryModeLabel(policy.delivery_mode)}</td><td>{policy.destinations.length ? policy.destinations.map((destination) => <span key={destination.id} className="row"><StatusPill tone={destination.configured ? "ok" : "danger"}>{destination.channel}</StatusPill><span>{destination.target_key}{destination.required ? " · required" : " · optional"}</span></span>) : <span className="muted">Нет — только central SMTP</span>}</td><td><StatusPill tone={tone(policy.state)}>{stateLabel(policy.state)}</StatusPill></td><td className="row">{policy.state === "draft" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void submitRoutingPolicy(policy)}>На review</button>}{policy.state === "review" && <><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => rejectRoutingPolicy(policy)}>Отклонить</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => activateRoutingPolicy(policy)}>Активировать</button></>}</td></tr>)}</DataTable>}
         </>}
       </Surface>
       </section>

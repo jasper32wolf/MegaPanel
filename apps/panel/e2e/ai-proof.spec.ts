@@ -588,12 +588,15 @@ test("routing deep link shows redacted policy metadata without mutation", async 
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ id: projectId, name: "Routing proof" }) });
     }
     if (url.pathname === `/api/v1/projects/${projectId}/lead-routing`) {
-      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [{
-        id: "11111111-2222-4333-8444-555555555555", version: 4, state: "active", submitted_at: "2026-10-01T10:00:00Z", reviewed_at: "2026-10-01T11:00:00Z", decision_reason: null, created_at: "2026-10-01T09:00:00Z",
-        destinations: [{ id: "66666666-7777-4888-8999-000000000000", target_key: "primary-email", channel: "email", required: true, configured: true }],
-        unsafe_recipient: "private-recipient@example.test",
-        unsafe_secret: "never-render-this-routing-secret",
-      }] }) });
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+        central_delivery: { configured: true, effective_mode: "append_global" },
+        items: [{
+          id: "11111111-2222-4333-8444-555555555555", version: 4, state: "active", delivery_mode: "append_global", submitted_at: "2026-10-01T10:00:00Z", reviewed_at: "2026-10-01T11:00:00Z", decision_reason: null, created_at: "2026-10-01T09:00:00Z",
+          destinations: [{ id: "66666666-7777-4888-8999-000000000000", target_key: "primary-email", channel: "email", required: true, configured: true }],
+          unsafe_recipient: "private-recipient@example.test",
+          unsafe_secret: "never-render-this-routing-secret",
+        }],
+      }) });
     }
     return route.fulfill({ status: 404, contentType: "application/json", body: '{"detail":"not used by proof"}' });
   });
@@ -604,11 +607,66 @@ test("routing deep link shows redacted policy metadata without mutation", async 
   }, `/projects/${projectId}/routing`);
 
   await expect(page.getByRole("heading", { name: "Маршрутизация заявок · Routing proof" })).toBeVisible();
+  await expect(page.getByText("central SMTP готова", { exact: true })).toBeVisible();
+  await expect(page.getByText("Получатель не отображается. Активный режим: добавляет к central SMTP.", { exact: true })).toBeVisible();
   await expect(page.getByText("primary-email · обязательный", { exact: true })).toBeVisible();
   await expect(page.getByText("private-recipient@example.test", { exact: true })).toHaveCount(0);
   await expect(page.getByText("never-render-this-routing-secret", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /Создать|На проверку|Активировать|Отклонить/ })).toHaveCount(0);
   expect(mutationRequests).toEqual([]);
+});
+
+test("central SMTP is the recipient-free default and replacing it requires explicit confirmation", async ({ page }) => {
+  await mockAuth(page);
+  const projectId = "12121212-1212-4121-8121-121212121212";
+  const routingRequests: unknown[] = [];
+  await page.route("**/api/v1/**", (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    const json = (body: unknown) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+    if (path === "/api/v1/security/me" || path === "/api/v1/auth/refresh") return json({});
+    if (path === `/api/v1/projects/${projectId}`) return json({ id: projectId, name: "Central SMTP proof", domain: null, site_id: "site-central", current_fact_revision_id: null, domain_check_meta: {} });
+    if (path === `/api/v1/projects/${projectId}/lead-routing`) {
+      if (request.method() === "POST") {
+        routingRequests.push(request.postDataJSON());
+        return json({});
+      }
+      return json({ central_delivery: { configured: true, effective_mode: "append_global" }, items: [] });
+    }
+    if (path === "/api/v1/keywords") return json({ items: [] });
+    if (path === `/api/v1/projects/${projectId}/coverage`) return json({ selected: 0, covered: 0, uncovered: [], plans: 0 });
+    if (path === `/api/v1/projects/${projectId}/semantic-signals`) return json({ totals: { members: 0, bindings: 0, covered: 0, planned: 0, uncovered: 0, unbound: 0 }, cannibalization: [], unmapped_plans: [] });
+    if (path === `/api/v1/projects/${projectId}/semantic-sources/bukvarix/status`) return json({ enabled: true, status: "https_public_free", message: "HTTPS public free-mode", personal_credentials_supported: false, max_seed_keywords: 10, max_results_per_run: 1000, non_publish_policy: true });
+    if (path === `/api/v1/geo` || path.startsWith(`/api/v1/projects/${projectId}/`) || path === "/api/v1/media" || path === "/api/v1/ai/providers") return json([]);
+    return route.fulfill({ status: 404, contentType: "application/json", body: '{"detail":"not used by proof"}' });
+  });
+
+  await page.goto(`/projects/${projectId}`);
+  await expect(page.getByRole("heading", { name: "Central SMTP proof" })).toBeVisible();
+  await expect(page.getByText("central SMTP готова", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Приватный email получателя")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Создать черновик с central SMTP" }).click();
+  await expect.poll(() => routingRequests.length).toBe(1);
+  expect(routingRequests[0]).toEqual({
+    destinations: [],
+    delivery_mode: "append_global",
+    replace_global_confirmed: false,
+  });
+
+  await page.getByRole("button", { name: "Настроить дополнительные маршруты" }).click();
+  await page.getByLabel("Приватный email получателя").fill("operator-route@example.test");
+  await page.getByLabel("Заменить central SMTP пользовательскими маршрутами").check();
+  await expect(page.getByRole("alert").filter({ hasText: "не будет отправлять новые заявки через central SMTP" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Создать правило с заменой central SMTP" })).toBeDisabled();
+  await page.getByLabel("Подтверждаю замену central SMTP для новых заявок этой policy.").check();
+  await page.getByRole("button", { name: "Создать правило с заменой central SMTP" }).click();
+  await expect.poll(() => routingRequests.length).toBe(2);
+  expect(routingRequests[1]).toEqual({
+    destinations: [{ target_key: "private_email", channel: "email", required: true, recipient: "operator-route@example.test" }],
+    delivery_mode: "replace_global",
+    replace_global_confirmed: true,
+  });
 });
 
 test("legal rejection сохраняет reason и manual remediation без публикации", async ({ page }) => {
