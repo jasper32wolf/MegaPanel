@@ -267,7 +267,7 @@ export function ProjectReleasesPage() {
     if (!build.build_hash) return;
     setConfirmation({
       title: "Опубликовать пробную сборку?",
-      description: `Сборка ${build.build_hash} станет публичной для домена проекта. Это единственный путь публикации; завершение queue-задачи не публикует сайт.`,
+      description: `Сборка ${build.build_hash} станет публичной для домена проекта. Это единственный путь публикации; завершение задачи очереди не публикует сайт.`,
       confirmLabel: "Опубликовать",
       dangerous: true,
       onConfirm: () => {
@@ -289,8 +289,8 @@ export function ProjectReleasesPage() {
     if (!build.build_hash) return;
     const requiredValue = `ROLLBACK ${build.build_hash}`;
     setConfirmation({
-      title: "Откатить публичный сайт на historical release?",
-      description: `Текущий release будет заменён hash ${build.build_hash}. Введите точную фразу ниже; сервер независимо проверит цель, DNS, gate, legal review и routing.`,
+      title: "Откатить публичный сайт к историческому выпуску?",
+      description: `Текущий выпуск будет заменён сборкой с хешем ${build.build_hash}. Введите точную фразу ниже; сервер независимо проверит цель, DNS, контрольные условия, юридическую проверку и маршрутизацию.`,
       confirmLabel: "Выполнить откат",
       inputLabel: `Введите: ${requiredValue}`,
       inputMinLength: requiredValue.length,
@@ -419,7 +419,7 @@ export function ProjectReleasesPage() {
                   ))}
                 </ul>
               </details>
-            ) : <p className="muted">У legacy-сборки нет новой event history.</p>}
+            ) : <p className="muted">У устаревшей сборки нет новой истории событий.</p>}
             {selectedBuild.release_gate ? (
               <>
                 <p><StatusPill tone={tone(selectedBuild.release_gate.status)}>release gate: {selectedBuild.release_gate.status}</StatusPill></p>
@@ -465,12 +465,12 @@ export function ProjectReleasesPage() {
           ) : null}
 
           {selectedBuild.rollback_eligible ? (
-            <Surface title="Безопасный rollback">
+            <Surface title="Безопасный откат">
               <InlineAlert severity="warning" title="Публичная версия будет заменена">
-                Выбран historical published release. Откат не доступен для never-published candidate и никогда не выбирает цель автоматически.
+                Выбран исторический опубликованный выпуск. Откат недоступен для никогда не публиковавшейся пробной сборки и никогда не выбирает цель автоматически.
               </InlineAlert>
               <button className="btn btn-danger" type="button" disabled={busy !== null} onClick={() => rollback(selectedBuild)}>
-                Откатить на выбранный hash
+                Откатить к выбранному хешу
               </button>
             </Surface>
           ) : null}
