@@ -11,7 +11,11 @@ from app.api.v1.leads import _serialize_delivery
 from app.core.config import Settings
 from app.services import webhook_delivery
 from app.services.leads import get_encryptor
-from app.services.webhook_delivery import create_smtp_delivery
+from app.services.webhook_delivery import (
+    create_global_smtp_delivery,
+    create_lead_deliveries,
+    create_smtp_delivery,
+)
 from pydantic import ValidationError
 
 
@@ -74,6 +78,118 @@ def test_email_delivery_snapshots_an_encrypted_private_recipient(monkeypatch: py
     assert delivery.status == "queued"
 
 
+def test_central_smtp_delivery_readiness_uses_the_configured_server_route(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        webhook_delivery,
+        "get_settings",
+        lambda: SimpleNamespace(smtp_lead_delivery_ready=True),
+    )
+
+    assert webhook_delivery.central_smtp_delivery_configured() is True
+
+
+def test_central_smtp_delivery_snapshots_server_recipient(monkeypatch: pytest.MonkeyPatch):
+    recipient = "central-leads@example.test"
+    monkeypatch.setattr(
+        webhook_delivery,
+        "get_settings",
+        lambda: SimpleNamespace(
+            smtp_lead_delivery_ready=True,
+            smtp_lead_recipient=recipient,
+        ),
+    )
+    lead = _lead()
+    db = FakeDatabase()
+
+    delivery = create_global_smtp_delivery(db, lead=lead, site=_site())
+
+    assert delivery is db.added[0]
+    assert delivery.channel == "email"
+    assert delivery.target_key == "global_smtp_default"
+    assert delivery.routing_source == "global_default"
+    assert delivery.required is True
+    assert delivery.target_recipient_enc != recipient
+    assert recipient not in str(delivery.payload)
+    assert delivery.status == "queued"
+
+
+def test_central_smtp_delivery_preserves_lead_when_server_route_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        webhook_delivery,
+        "get_settings",
+        lambda: SimpleNamespace(
+            smtp_lead_delivery_ready=False,
+            smtp_lead_recipient="",
+        ),
+    )
+    db = FakeDatabase()
+
+    delivery = create_global_smtp_delivery(db, lead=_lead(), site=_site())
+
+    assert delivery.status == "dead_letter"
+    assert delivery.required is True
+    assert delivery.target_recipient_enc is None
+    assert delivery.last_error == "Central SMTP delivery is not configured"
+
+
+@pytest.mark.parametrize(
+    ("delivery_mode", "expected_sources"),
+    [
+        (None, ["global_default"]),
+        ("append_global", ["global_default", "project_policy"]),
+        ("replace_global", ["project_policy"]),
+    ],
+)
+def test_new_leads_use_central_delivery_unless_policy_replaces_it(
+    monkeypatch: pytest.MonkeyPatch, delivery_mode: str | None, expected_sources: list[str]
+):
+    recipient = "central-leads@example.test"
+    monkeypatch.setattr(
+        webhook_delivery,
+        "get_settings",
+        lambda: SimpleNamespace(
+            smtp_configured=True,
+            smtp_lead_delivery_ready=True,
+            smtp_lead_recipient=recipient,
+        ),
+    )
+
+    async def active_policy(_db, *, site):
+        if delivery_mode is None:
+            return None
+        return (
+            SimpleNamespace(
+                id=uuid4(),
+                version=3,
+                policy_hash="a" * 64,
+                delivery_mode=delivery_mode,
+            ),
+            [
+                SimpleNamespace(
+                    target_key="custom_email",
+                    channel="email",
+                    required=True,
+                    target_recipient_enc=get_encryptor().encrypt("custom@example.test"),
+                    target_url=None,
+                    target_secret_enc=None,
+                )
+            ],
+        )
+
+    monkeypatch.setattr(webhook_delivery, "active_routing_policy", active_policy)
+    db = FakeDatabase()
+
+    deliveries = asyncio.run(create_lead_deliveries(db, lead=_lead(), site=_site()))
+
+    assert [delivery.routing_source for delivery in deliveries] == expected_sources
+    assert all(recipient not in str(delivery.payload) for delivery in deliveries)
+    assert all(delivery.target_key != "private_email" for delivery in deliveries)
+
+
 def test_email_delivery_never_serializes_the_recipient():
     recipient = "private-leads@example.test"
     delivery = SimpleNamespace(
@@ -94,6 +210,29 @@ def test_email_delivery_never_serializes_the_recipient():
     assert payload["target"] == "private_email"
     assert recipient not in str(payload)
     assert "recipient" not in payload
+
+
+def test_central_delivery_serialization_never_exposes_the_recipient():
+    recipient = "central-leads@example.test"
+    delivery = SimpleNamespace(
+        id=uuid4(),
+        channel="email",
+        routing_source="global_default",
+        target_url=None,
+        target_recipient_enc=get_encryptor().encrypt(recipient),
+        status="queued",
+        attempt_count=0,
+        max_attempts=5,
+        next_attempt_at=None,
+        last_error=None,
+        last_http_status=None,
+    )
+
+    payload = _serialize_delivery(delivery)
+
+    assert payload["target"] == "central_smtp"
+    assert payload["routing_source"] == "global_default"
+    assert recipient not in str(payload)
 
 
 def test_email_delivery_dispatches_only_through_fake_transport(monkeypatch: pytest.MonkeyPatch):

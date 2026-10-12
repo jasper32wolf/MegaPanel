@@ -8,7 +8,8 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from app.api.v1.lead_routing import _serialize_policy
+from app.api.v1 import lead_routing
+from app.api.v1.lead_routing import _central_delivery_status, _serialize_policy
 from app.main import app
 from app.models.leads import LeadRoutingPolicy, WebhookDelivery
 from app.schemas.lead_routing import LeadRoutingPolicyCreate
@@ -109,6 +110,57 @@ def test_routing_policy_schema_requires_exactly_one_safe_channel_target():
         )
 
 
+def test_routing_policy_schema_reserves_the_central_delivery_target_and_confirms_replacement():
+    with pytest.raises(ValidationError, match="reserved"):
+        LeadRoutingPolicyCreate(
+            destinations=[
+                {
+                    "target_key": "global_smtp_default",
+                    "channel": "email",
+                    "recipient": "lead@example.com",
+                }
+            ]
+        )
+    with pytest.raises(ValidationError, match="Explicit confirmation"):
+        LeadRoutingPolicyCreate(
+            delivery_mode="replace_global",
+            destinations=[
+                {
+                    "target_key": "project_email",
+                    "channel": "email",
+                    "recipient": "lead@example.com",
+                }
+            ],
+        )
+
+
+def test_central_delivery_status_exposes_only_safe_effective_route(monkeypatch):
+    site = _site()
+
+    async def no_policy(_db, *, site):
+        return None
+
+    monkeypatch.setattr(lead_routing, "active_routing_policy", no_policy)
+    monkeypatch.setattr(lead_routing, "central_smtp_delivery_configured", lambda: True)
+
+    assert asyncio.run(_central_delivery_status(object(), site)) == {
+        "configured": True,
+        "effective_mode": "central_default",
+        "uses_central_delivery": True,
+    }
+
+    async def replacement_policy(_db, *, site):
+        return (SimpleNamespace(delivery_mode="replace_global"), [])
+
+    monkeypatch.setattr(lead_routing, "active_routing_policy", replacement_policy)
+
+    assert asyncio.run(_central_delivery_status(object(), site)) == {
+        "configured": True,
+        "effective_mode": "replace_global",
+        "uses_central_delivery": False,
+    }
+
+
 def test_policy_delivery_snapshots_encrypted_destination_without_pii_payload(monkeypatch):
     monkeypatch.setattr(
         "app.services.webhook_delivery.get_settings", lambda: SimpleNamespace(smtp_configured=True)
@@ -175,6 +227,7 @@ def test_policy_serialization_redacts_destinations_and_hash_is_stable():
         id=uuid4(),
         version=1,
         state="draft",
+        delivery_mode="append_global",
         submitted_at=None,
         reviewed_at=None,
         decision_reason=None,
@@ -202,8 +255,12 @@ def test_policy_serialization_redacts_destinations_and_hash_is_stable():
         }
     ]
     assert recipient not in str(payload)
-    assert policy_hash([{"target_key": "email", "channel": "email"}]) == policy_hash(
-        [{"channel": "email", "target_key": "email"}]
+    destinations = [{"target_key": "email", "channel": "email"}]
+    assert policy_hash(destinations, delivery_mode="append_global") == policy_hash(
+        [{"channel": "email", "target_key": "email"}], delivery_mode="append_global"
+    )
+    assert policy_hash(destinations, delivery_mode="append_global") != policy_hash(
+        destinations, delivery_mode="replace_global"
     )
 
 

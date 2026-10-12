@@ -5,6 +5,7 @@ from uuid import UUID
 
 from app.api.deps import AuthContext, require_roles
 from app.api.v1.sites import validate_webhook_target
+from app.core.config import get_settings
 from app.db.session import get_db
 from app.models import Site
 from app.models.leads import LeadRoutingDestination, LeadRoutingPolicy
@@ -12,7 +13,11 @@ from app.models.project import Project
 from app.schemas.lead_routing import LeadRoutingDecisionIn, LeadRoutingPolicyCreate
 from app.services.audit import append_audit
 from app.services.leads import get_encryptor
-from app.services.webhook_delivery import policy_hash
+from app.services.webhook_delivery import (
+    active_routing_policy,
+    central_smtp_delivery_configured,
+    policy_hash,
+)
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -62,6 +67,7 @@ def _serialize_policy(
         "id": str(policy.id),
         "version": policy.version,
         "state": policy.state,
+        "delivery_mode": policy.delivery_mode,
         "destinations": [_serialize_destination(destination) for destination in destinations],
         "submitted_at": policy.submitted_at.isoformat() if policy.submitted_at else None,
         "reviewed_at": policy.reviewed_at.isoformat() if policy.reviewed_at else None,
@@ -86,13 +92,23 @@ async def _policy_destinations(
     )
 
 
+async def _central_delivery_status(db: AsyncSession, site: Site) -> dict:
+    routing = await active_routing_policy(db, site=site)
+    effective_mode = routing[0].delivery_mode if routing else "central_default"
+    return {
+        "configured": central_smtp_delivery_configured(),
+        "effective_mode": effective_mode,
+        "uses_central_delivery": effective_mode != "replace_global",
+    }
+
+
 @router.get("/{project_id}/lead-routing")
 async def list_lead_routing_policies(
     project_id: UUID,
     auth: AuthContext = Depends(require_roles("superadmin", "tenant_admin", "manager", "editor")),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    project, _site = await _project_site(db, project_id, auth)
+    project, site = await _project_site(db, project_id, auth)
     policies = list(
         (
             await db.execute(
@@ -107,7 +123,8 @@ async def list_lead_routing_policies(
     return {
         "items": [
             _serialize_policy(policy, await _policy_destinations(db, policy)) for policy in policies
-        ]
+        ],
+        "central_delivery": await _central_delivery_status(db, site),
     }
 
 
@@ -144,7 +161,8 @@ async def create_lead_routing_policy(
         site_id=site.id,
         version=next_version,
         state="draft",
-        policy_hash=policy_hash(source_destinations),
+        delivery_mode=body.delivery_mode,
+        policy_hash=policy_hash(source_destinations, delivery_mode=body.delivery_mode),
         created_by=auth.user.id,
     )
     db.add(policy)
@@ -181,6 +199,7 @@ async def create_lead_routing_policy(
             "project_id": str(project.id),
             "policy_id": str(policy.id),
             "version": policy.version,
+            "delivery_mode": policy.delivery_mode,
             "destinations": [
                 {
                     "target_key": destination.target_key,
@@ -229,6 +248,7 @@ async def submit_lead_routing_policy(
             "project_id": str(project.id),
             "policy_id": str(policy.id),
             "version": policy.version,
+            "delivery_mode": policy.delivery_mode,
         },
         tenant_id=project.tenant_id,
         actor_id=auth.user.id,
@@ -273,6 +293,7 @@ async def reject_lead_routing_policy(
             "project_id": str(project.id),
             "policy_id": str(policy.id),
             "version": policy.version,
+            "delivery_mode": policy.delivery_mode,
         },
         tenant_id=project.tenant_id,
         actor_id=auth.user.id,
@@ -310,6 +331,16 @@ async def activate_lead_routing_policy(
     destinations = await _policy_destinations(db, policy)
     if not destinations:
         raise HTTPException(status_code=409, detail="Routing policy requires a destination")
+    if policy.delivery_mode == "replace_global" and not body.replace_global_confirmed:
+        raise HTTPException(
+            status_code=422,
+            detail="Explicit confirmation is required to replace central delivery",
+        )
+    if policy.delivery_mode == "append_global" and not central_smtp_delivery_configured():
+        raise HTTPException(status_code=409, detail="Central SMTP delivery is not configured")
+    has_email_destination = any(destination.channel == "email" for destination in destinations)
+    if has_email_destination and not get_settings().smtp_configured:
+        raise HTTPException(status_code=409, detail="SMTP transport is not configured")
     active = (
         await db.execute(
             select(LeadRoutingPolicy)
@@ -319,6 +350,7 @@ async def activate_lead_routing_policy(
     ).scalar_one_or_none()
     if active:
         active.state = "superseded"
+        policy.supersedes_id = active.id
     policy.state = "active"
     policy.reviewed_by = auth.user.id
     policy.reviewed_at = datetime.now(UTC)
@@ -330,6 +362,7 @@ async def activate_lead_routing_policy(
             "project_id": str(project.id),
             "policy_id": str(policy.id),
             "version": policy.version,
+            "delivery_mode": policy.delivery_mode,
             "destination_count": len(destinations),
         },
         tenant_id=project.tenant_id,

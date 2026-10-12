@@ -36,8 +36,10 @@ function channelLabel(channel: Destination["channel"]) {
 }
 
 function deliveryModeLabel(mode: DeliveryMode | undefined) {
-  if (!mode) return "режим не указан (историческая policy)";
-  return mode === "replace_global" ? "заменяет central SMTP" : "добавляет к central SMTP";
+  if (!mode) return "режим не указан (историческое правило)";
+  return mode === "replace_global"
+    ? "заменяет центральную SMTP-доставку"
+    : "добавляет к центральной SMTP-доставке";
 }
 
 function centralDeliveryModeLabel(mode: string) {
@@ -75,8 +77,8 @@ export function ProjectRoutingPage() {
       {error && <p className="error" role="alert">{error}</p>}
       {!policies && !error ? <p className="muted" aria-live="polite">Загрузка правил маршрутизации…</p> : null}
       {policies && <Surface title="Маршрутизация заявок">
-        <div className="row"><StatusPill tone={centralDelivery?.configured ? "ok" : centralDelivery ? "danger" : "accent"}>{centralDelivery?.configured ? "central SMTP готова" : centralDelivery ? "central SMTP не настроена" : "central SMTP: статус неизвестен"}</StatusPill><span className="muted">{centralDelivery?.configured ? `Получатель не отображается. Активный режим: ${centralDeliveryModeLabel(centralDelivery.effective_mode)}.` : centralDelivery ? "Центральная SMTP-доставка недоступна для новых policy." : "API пока не предоставил статус центральной SMTP-доставки."}</span></div>
-        {policies.length === 0 ? <EmptyState title="Правил маршрутизации пока нет" hint="Создайте черновик с central SMTP, затем отдельно отправьте его на проверку и активируйте в рабочем пространстве." /> : <DataTable headers={["Версия", "Доставка", "Статус", "Пользовательские маршруты", "Проверка", "Создано"]}>{policies.map((policy) => <tr key={policy.id}><td>v{policy.version}</td><td>{deliveryModeLabel(policy.delivery_mode)}</td><td><StatusPill tone={tone(policy.state)}>{stateLabel(policy.state)}</StatusPill></td><td>{policy.destinations.length ? policy.destinations.map((destination) => <div className="row" key={destination.id}><StatusPill tone={destination.configured ? "ok" : "danger"}>{channelLabel(destination.channel)}</StatusPill><span>{destination.target_key} · {destination.required ? "обязательный" : "необязательный"}</span></div>) : <span className="muted">Только central SMTP</span>}</td><td>{policy.decision_reason || (policy.reviewed_at ? new Date(policy.reviewed_at).toLocaleString() : "—")}</td><td>{policy.created_at ? new Date(policy.created_at).toLocaleString() : "—"}</td></tr>)}</DataTable>}
+        <div className="row"><StatusPill tone={centralDelivery?.configured ? "ok" : centralDelivery ? "danger" : "accent"}>{centralDelivery?.configured ? "Центральная SMTP-доставка готова" : centralDelivery ? "Центральная SMTP-доставка не настроена" : "Статус центральной SMTP-доставки неизвестен"}</StatusPill><span className="muted">{centralDelivery?.configured ? `Получатель не отображается. Активный режим: ${centralDeliveryModeLabel(centralDelivery.effective_mode)}.` : centralDelivery ? "Центральная SMTP-доставка недоступна для новых правил." : "API пока не предоставил статус центральной SMTP-доставки."}</span></div>
+        {policies.length === 0 ? <EmptyState title="Дополнительных правил маршрутизации пока нет" hint="Новые заявки уже используют центральную SMTP-доставку. Создайте правило только для дополнительного или заменяющего маршрута." /> : <DataTable headers={["Версия", "Доставка", "Статус", "Пользовательские маршруты", "Проверка", "Создано"]}>{policies.map((policy) => <tr key={policy.id}><td>v{policy.version}</td><td>{deliveryModeLabel(policy.delivery_mode)}</td><td><StatusPill tone={tone(policy.state)}>{stateLabel(policy.state)}</StatusPill></td><td>{policy.destinations.map((destination) => <div className="row" key={destination.id}><StatusPill tone={destination.configured ? "ok" : "danger"}>{channelLabel(destination.channel)}</StatusPill><span>{destination.target_key} · {destination.required ? "обязательный" : "необязательный"}</span></div>)}</td><td>{policy.decision_reason || (policy.reviewed_at ? new Date(policy.reviewed_at).toLocaleString() : "—")}</td><td>{policy.created_at ? new Date(policy.created_at).toLocaleString() : "—"}</td></tr>)}</DataTable>}
       </Surface>}
     </ProjectWorkspaceLayout>
   );

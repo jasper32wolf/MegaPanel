@@ -96,9 +96,14 @@ def _delivery_payload(lead: Lead, site: Site) -> dict:
     }
 
 
-def policy_hash(destinations: list[dict]) -> str:
+def policy_hash(destinations: list[dict], *, delivery_mode: str = "replace_global") -> str:
     return sha256(
-        json.dumps(destinations, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        json.dumps(
+            {"delivery_mode": delivery_mode, "destinations": destinations},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
     ).hexdigest()
 
 
@@ -201,6 +206,7 @@ async def create_lead_delivery(
         lead_id=lead.id,
         target_key="site_webhook",
         channel="webhook",
+        routing_source="legacy",
         target_url=url,
         target_secret_enc=target_secret_enc,
         payload=payload,
@@ -243,6 +249,7 @@ def create_smtp_delivery(
         lead_id=lead.id,
         target_key="private_email",
         channel="email",
+        routing_source="legacy",
         target_recipient_enc=recipient_enc,
         payload=payload,
         idempotency_key=payload["idempotency_key"],
@@ -250,6 +257,34 @@ def create_smtp_delivery(
         max_attempts=MAX_ATTEMPTS,
         next_attempt_at=_now() if configured else None,
         last_error=None if configured else "SMTP transport is not configured",
+        dead_lettered_at=None if configured else _now(),
+    )
+    db.add(delivery)
+    return delivery
+
+
+def create_global_smtp_delivery(
+    db: AsyncSession, *, lead: Lead, site: Site
+) -> WebhookDelivery:
+    payload = _delivery_payload(lead, site)
+    settings = get_settings()
+    configured = settings.smtp_lead_delivery_ready
+    recipient_enc = get_encryptor().encrypt(settings.smtp_lead_recipient) if configured else None
+    delivery = WebhookDelivery(
+        tenant_id=lead.tenant_id,
+        site_id=site.id,
+        lead_id=lead.id,
+        target_key="global_smtp_default",
+        channel="email",
+        routing_source="global_default",
+        required=True,
+        target_recipient_enc=recipient_enc,
+        payload=payload,
+        idempotency_key=payload["idempotency_key"],
+        status="queued" if configured else "dead_letter",
+        max_attempts=MAX_ATTEMPTS,
+        next_attempt_at=_now() if configured else None,
+        last_error=None if configured else "Central SMTP delivery is not configured",
         dead_lettered_at=None if configured else _now(),
     )
     db.add(delivery)
@@ -274,6 +309,7 @@ def create_policy_delivery(
             routing_policy_id=policy.id,
             routing_policy_version=policy.version,
             routing_policy_hash=policy.policy_hash,
+            routing_source="project_policy",
             required=destination.required,
             target_key=destination.target_key,
             channel="webhook",
@@ -296,6 +332,7 @@ def create_policy_delivery(
             routing_policy_id=policy.id,
             routing_policy_version=policy.version,
             routing_policy_hash=policy.policy_hash,
+            routing_source="project_policy",
             required=destination.required,
             target_key=destination.target_key,
             channel="email",
@@ -318,23 +355,30 @@ async def create_lead_deliveries(
     db: AsyncSession, *, lead: Lead, site: Site
 ) -> list[WebhookDelivery]:
     routing = await active_routing_policy(db, site=site)
-    if routing is not None:
-        policy, destinations = routing
-        return [
-            create_policy_delivery(db, lead=lead, site=site, policy=policy, destination=destination)
-            for destination in destinations
-        ]
+    if routing is None:
+        return [create_global_smtp_delivery(db, lead=lead, site=site)]
 
-    deliveries = []
-    webhook = await create_lead_delivery(db, lead=lead, site=site)
-    if webhook:
-        deliveries.append(webhook)
-    recipient_enc = await _private_lead_email_enc(db, site)
-    if recipient_enc:
-        deliveries.append(
-            create_smtp_delivery(db, lead=lead, site=site, recipient_enc=recipient_enc)
-        )
+    policy, destinations = routing
+    deliveries: list[WebhookDelivery] = []
+    if policy.delivery_mode == "append_global":
+        deliveries.append(create_global_smtp_delivery(db, lead=lead, site=site))
+    deliveries.extend(
+        create_policy_delivery(db, lead=lead, site=site, policy=policy, destination=destination)
+        for destination in destinations
+    )
     return deliveries
+
+
+async def effective_lead_route(db: AsyncSession, *, site: Site) -> str:
+    routing = await active_routing_policy(db, site=site)
+    if routing is None:
+        return "central_default"
+    policy, _destinations = routing
+    return policy.delivery_mode
+
+
+def central_smtp_delivery_configured() -> bool:
+    return get_settings().smtp_lead_delivery_ready
 
 
 async def enqueue_delivery(delivery_id: UUID, *, trigger: str = "automatic") -> bool:

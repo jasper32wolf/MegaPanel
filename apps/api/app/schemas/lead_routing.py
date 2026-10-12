@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 _TARGET_KEY = re.compile(r"[a-z][a-z0-9_-]{0,63}")
+_RESERVED_TARGET_KEYS = {"global_smtp_default"}
 
 
 class LeadRoutingDestinationIn(BaseModel):
@@ -24,6 +25,8 @@ class LeadRoutingDestinationIn(BaseModel):
             raise ValueError(
                 "Target key must use lowercase letters, digits, hyphens and underscores"
             )
+        if normalized in _RESERVED_TARGET_KEYS:
+            raise ValueError("Target key is reserved for server delivery")
         return normalized
 
     @model_validator(mode="after")
@@ -38,18 +41,23 @@ class LeadRoutingDestinationIn(BaseModel):
 
 class LeadRoutingPolicyCreate(BaseModel):
     destinations: list[LeadRoutingDestinationIn] = Field(min_length=1, max_length=10)
+    delivery_mode: Literal["append_global", "replace_global"] = "append_global"
+    replace_global_confirmed: bool = False
 
     @model_validator(mode="after")
-    def require_unique_target_keys(self) -> LeadRoutingPolicyCreate:
+    def validate_policy(self) -> LeadRoutingPolicyCreate:
         keys = [destination.target_key for destination in self.destinations]
         if len(keys) != len(set(keys)):
             raise ValueError("Routing destination keys must be unique")
+        if self.delivery_mode == "replace_global" and not self.replace_global_confirmed:
+            raise ValueError("Explicit confirmation is required to replace central delivery")
         return self
 
 
 class LeadRoutingDecisionIn(BaseModel):
     confirmed: bool
     reason: str | None = Field(default=None, max_length=2000)
+    replace_global_confirmed: bool = False
 
     @model_validator(mode="after")
     def require_confirmation(self) -> LeadRoutingDecisionIn:

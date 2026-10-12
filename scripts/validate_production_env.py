@@ -138,6 +138,13 @@ def validate(values: dict[str, str]) -> list[str]:
         ):
             errors.append("conflicting_SMTP_TLS")
 
+    lead_recipient = values.get("SMTP_LEAD_RECIPIENT", "").strip()
+    if lead_recipient:
+        if not EMAIL_RE.fullmatch(lead_recipient):
+            errors.append("invalid_SMTP_LEAD_RECIPIENT")
+        if not smtp_values["SMTP_HOST"] or not smtp_values["SMTP_FROM_EMAIL"]:
+            errors.append("SMTP_LEAD_RECIPIENT_requires_SMTP_transport")
+
     for key in (
         "POSTGRES_PASSWORD",
         "APP_SECRET_KEY",

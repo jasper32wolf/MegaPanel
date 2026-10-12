@@ -76,3 +76,41 @@ def test_production_validator_rejects_inconsistent_public_origin(tmp_path: Path)
 
     assert result.returncode == 1
     assert "cors_origins_must_equal_panel_origin" in result.stderr
+
+
+def test_production_validator_rejects_invalid_central_lead_recipient_without_echoing_it(
+    tmp_path: Path,
+):
+    recipient = "invalid recipient@example.test"
+    env_file = tmp_path / "shared.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "APP_ENV=production",
+                "PANEL_DOMAIN=panel.acme.test",
+                "API_DOMAIN=api.acme.test",
+                "CADDY_EMAIL=ops@acme.test",
+                "PANEL_PUBLIC_URL=https://panel.acme.test",
+                "API_PUBLIC_URL=https://api.acme.test",
+                "CORS_ORIGINS=https://panel.acme.test",
+                "POSTGRES_DB=site_panel",
+                "POSTGRES_USER=site_panel",
+                f"POSTGRES_PASSWORD={'p' * 16}",
+                f"APP_SECRET_KEY={'a' * 16}",
+                f"APP_PEPPER={'b' * 16}",
+                f"BLIND_INDEX_PEPPER={'c' * 16}",
+                f"FIELD_ENCRYPTION_KEY={'d' * 16}",
+                "SMTP_HOST=smtp.acme.test",
+                "SMTP_FROM_EMAIL=sender@acme.test",
+                f"SMTP_LEAD_RECIPIENT={recipient}",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = run(str(VALIDATOR), "--env-file", str(env_file))
+
+    assert result.returncode == 1
+    assert "invalid_SMTP_LEAD_RECIPIENT" in result.stderr
+    assert recipient not in result.stderr

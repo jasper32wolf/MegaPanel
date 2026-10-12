@@ -597,10 +597,21 @@ async def reveal_lead_pii(
 
 
 def _serialize_delivery(delivery: WebhookDelivery) -> dict:
+    routing_source = getattr(delivery, "routing_source", "legacy")
+    target = (
+        "central_smtp"
+        if routing_source == "global_default"
+        else "project_email"
+        if delivery.channel == "email" and routing_source == "project_policy"
+        else "private_email"
+        if delivery.channel == "email"
+        else "webhook"
+    )
     return {
         "id": str(delivery.id),
         "channel": delivery.channel,
-        "target": delivery.channel if delivery.channel == "webhook" else "private_email",
+        "target": target,
+        "routing_source": routing_source,
         "required": getattr(delivery, "required", True),
         "routing_policy_version": getattr(delivery, "routing_policy_version", None),
         "status": delivery.status,

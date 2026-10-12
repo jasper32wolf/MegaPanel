@@ -96,6 +96,7 @@ from app.services.scheduler import create_site_build_job, requeue_site_build_job
 from app.services.site_build_metadata import validate_page_metadata_snapshot
 from app.services.site_build_queue import append_site_build_event
 from app.services.telemetry import telemetry_token
+from app.services.webhook_delivery import central_smtp_delivery_configured
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
 from site_panel_blocks import list_kits
@@ -206,13 +207,19 @@ async def _compensate_release_activation(
         return False
 
 
-async def _lead_routing_publish_blockers(db: AsyncSession, site: Site) -> list[str]:
-    if getattr(site, "project_id", None) is None:
+def _manifest_has_lead_form(manifest: SiteManifest) -> bool:
+    return any(block.type == "lead_form" for page in manifest.pages for block in page.blocks)
+
+
+async def _lead_routing_publish_blockers(
+    db: AsyncSession, site: Site, manifest: SiteManifest
+) -> list[str]:
+    if getattr(site, "project_id", None) is None or not _manifest_has_lead_form(manifest):
         return []
-    states = list(
+    policies = list(
         (
             await db.execute(
-                select(LeadRoutingPolicy.state).where(
+                select(LeadRoutingPolicy).where(
                     LeadRoutingPolicy.tenant_id == site.tenant_id,
                     LeadRoutingPolicy.site_id == site.id,
                 )
@@ -221,8 +228,13 @@ async def _lead_routing_publish_blockers(db: AsyncSession, site: Site) -> list[s
         .scalars()
         .all()
     )
-    if states and "active" not in states:
+    active = next((policy for policy in policies if policy.state == "active"), None)
+    if policies and active is None:
         return ["Activate the reviewed lead routing policy before publish"]
+    if active and active.delivery_mode == "replace_global":
+        return []
+    if not central_smtp_delivery_configured():
+        return ["Configure central SMTP lead delivery before publish"]
     return []
 
 
@@ -3959,7 +3971,7 @@ async def publish_project_build(
         raise HTTPException(status_code=409, detail={"blockers": [str(exc)]}) from exc
     gate_evaluation = evaluate_build_release_gate(build, site)
     legal_review = legal_review_status(build)
-    routing_blockers = await _lead_routing_publish_blockers(db, site)
+    routing_blockers = await _lead_routing_publish_blockers(db, site, manifest)
     media_blockers = await _manifest_media_compliance_blockers(
         db, manifest=manifest, tenant_id=project.tenant_id
     )
@@ -4088,7 +4100,7 @@ async def rollback_project_build(
         raise HTTPException(status_code=409, detail={"blockers": [str(exc)]}) from exc
     gate_evaluation = evaluate_build_release_gate(target, site)
     legal_review = legal_review_status(target)
-    routing_blockers = await _lead_routing_publish_blockers(db, site)
+    routing_blockers = await _lead_routing_publish_blockers(db, site, manifest)
     media_blockers = await _manifest_media_compliance_blockers(
         db, manifest=manifest, tenant_id=project.tenant_id
     )

@@ -1298,21 +1298,50 @@ def test_rollback_caddy_failure_restores_release_without_projection_mutation(mon
 
 
 @pytest.mark.parametrize(
-    ("states", "expected"),
+    ("policies", "central_ready", "expected"),
     [
-        ([], []),
-        (["review"], ["Activate the reviewed lead routing policy before publish"]),
-        (["active"], []),
+        ([], True, []),
+        ([], False, ["Configure central SMTP lead delivery before publish"]),
+        (
+            [SimpleNamespace(state="review", delivery_mode="append_global")],
+            True,
+            ["Activate the reviewed lead routing policy before publish"],
+        ),
+        ([SimpleNamespace(state="active", delivery_mode="append_global")], True, []),
+        (
+            [SimpleNamespace(state="active", delivery_mode="append_global")],
+            False,
+            ["Configure central SMTP lead delivery before publish"],
+        ),
+        ([SimpleNamespace(state="active", delivery_mode="replace_global")], False, []),
     ],
 )
-def test_publish_requires_activation_after_a_routing_policy_exists(states, expected):
+def test_form_build_publish_requires_an_effective_lead_route(
+    monkeypatch, policies, central_ready, expected
+):
     site = SimpleNamespace(id=uuid4(), tenant_id=uuid4(), project_id=uuid4())
+    manifest = SimpleNamespace(pages=[SimpleNamespace(blocks=[SimpleNamespace(type="lead_form")])])
 
     class Database:
         async def execute(self, _statement):
-            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: states))
+            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: policies))
 
-    assert asyncio.run(_lead_routing_publish_blockers(Database(), site)) == expected
+    monkeypatch.setattr(projects, "central_smtp_delivery_configured", lambda: central_ready)
+
+    assert asyncio.run(_lead_routing_publish_blockers(Database(), site, manifest)) == expected
+
+
+def test_build_without_a_lead_form_does_not_require_central_delivery(monkeypatch):
+    site = SimpleNamespace(id=uuid4(), tenant_id=uuid4(), project_id=uuid4())
+    manifest = SimpleNamespace(pages=[SimpleNamespace(blocks=[SimpleNamespace(type="contacts")])])
+
+    class Database:
+        async def execute(self, _statement):
+            raise AssertionError("routing policy must not be queried")
+
+    monkeypatch.setattr(projects, "central_smtp_delivery_configured", lambda: False)
+
+    assert asyncio.run(_lead_routing_publish_blockers(Database(), site, manifest)) == []
 
 
 def test_current_qa_run_requires_the_current_content_hash():

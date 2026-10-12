@@ -607,8 +607,8 @@ test("routing deep link shows redacted policy metadata without mutation", async 
   }, `/projects/${projectId}/routing`);
 
   await expect(page.getByRole("heading", { name: "Маршрутизация заявок · Routing proof" })).toBeVisible();
-  await expect(page.getByText("central SMTP готова", { exact: true })).toBeVisible();
-  await expect(page.getByText("Получатель не отображается. Активный режим: добавляет к central SMTP.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Центральная SMTP-доставка готова", { exact: true })).toBeVisible();
+  await expect(page.getByText("Получатель не отображается. Активный режим: добавляет к центральной SMTP-доставке.", { exact: true })).toBeVisible();
   await expect(page.getByText("primary-email · обязательный", { exact: true })).toBeVisible();
   await expect(page.getByText("private-recipient@example.test", { exact: true })).toHaveCount(0);
   await expect(page.getByText("never-render-this-routing-secret", { exact: true })).toHaveCount(0);
@@ -616,7 +616,7 @@ test("routing deep link shows redacted policy metadata without mutation", async 
   expect(mutationRequests).toEqual([]);
 });
 
-test("central SMTP is the recipient-free default and replacing it requires explicit confirmation", async ({ page }) => {
+test("центральная SMTP-доставка не требует получателя в проекте и её замена требует подтверждения", async ({ page }) => {
   await mockAuth(page);
   const projectId = "12121212-1212-4121-8121-121212121212";
   const routingRequests: unknown[] = [];
@@ -643,24 +643,26 @@ test("central SMTP is the recipient-free default and replacing it requires expli
 
   await page.goto(`/projects/${projectId}`);
   await expect(page.getByRole("heading", { name: "Central SMTP proof" })).toBeVisible();
-  await expect(page.getByText("central SMTP готова", { exact: true })).toBeVisible();
+  await expect(page.getByText("Центральная SMTP-доставка готова", { exact: true })).toBeVisible();
   await expect(page.getByLabel("Приватный email получателя")).toHaveCount(0);
+  await expect(page.getByText("Новые заявки уже используют центральную SMTP-доставку.")).toBeVisible();
+  expect(routingRequests).toEqual([]);
 
-  await page.getByRole("button", { name: "Создать черновик с central SMTP" }).click();
+  await page.getByRole("button", { name: "Настроить дополнительные маршруты" }).click();
+  await page.getByLabel("Приватный email получателя").fill("operator-route@example.test");
+  await page.getByRole("button", { name: "Создать правило с дополнительными маршрутами" }).click();
   await expect.poll(() => routingRequests.length).toBe(1);
   expect(routingRequests[0]).toEqual({
-    destinations: [],
+    destinations: [{ target_key: "private_email", channel: "email", required: true, recipient: "operator-route@example.test" }],
     delivery_mode: "append_global",
     replace_global_confirmed: false,
   });
 
-  await page.getByRole("button", { name: "Настроить дополнительные маршруты" }).click();
-  await page.getByLabel("Приватный email получателя").fill("operator-route@example.test");
-  await page.getByLabel("Заменить central SMTP пользовательскими маршрутами").check();
-  await expect(page.getByRole("alert").filter({ hasText: "не будет отправлять новые заявки через central SMTP" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Создать правило с заменой central SMTP" })).toBeDisabled();
-  await page.getByLabel("Подтверждаю замену central SMTP для новых заявок этой policy.").check();
-  await page.getByRole("button", { name: "Создать правило с заменой central SMTP" }).click();
+  await page.getByLabel("Заменить центральную SMTP-доставку пользовательскими маршрутами").check();
+  await expect(page.getByRole("alert").filter({ hasText: "не будет отправлять новые заявки через центральную SMTP" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Создать правило с заменой центральной SMTP-доставки" })).toBeDisabled();
+  await page.getByLabel("Подтверждаю замену центральной SMTP-доставки для новых заявок этого правила.").check();
+  await page.getByRole("button", { name: "Создать правило с заменой центральной SMTP-доставки" }).click();
   await expect.poll(() => routingRequests.length).toBe(2);
   expect(routingRequests[1]).toEqual({
     destinations: [{ target_key: "private_email", channel: "email", required: true, recipient: "operator-route@example.test" }],
