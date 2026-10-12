@@ -136,15 +136,15 @@ export function AlertsPage() {
       <Surface title="Каналы доставки">
         <div className="row">
           <StatusPill tone={channels?.enabled ? "ok" : "warn"}>Оповещения: {channels?.enabled ? "включены" : "выключены"}</StatusPill>
-          <StatusPill tone={channels?.email ? "ok" : "warn"}>Email: {channels?.email ? transportLabel(alertSettings?.transport?.selected || "none") : "не настроен"}</StatusPill>
+          <StatusPill tone={channels?.email ? "ok" : "warn"}>Эл. почта: {channels?.email ? transportLabel(alertSettings?.transport?.selected || "none") : "не настроена"}</StatusPill>
           <StatusPill tone={channels?.telegram ? "ok" : "warn"}>Telegram: {channels?.telegram ? "готов" : "не настроен"}</StatusPill>
           <StatusPill tone={recipientConfigured ? "ok" : "warn"}>Получатель: {recipientConfigured ? "настроен" : "не указан"}</StatusPill>
         </div>
-        <p className="muted">Получатель задаётся в настройках панели: {alertSettings?.recipient.masked_email || "не указан"}. SMTP-параметры, Telegram bot token и chat ID не выводятся в панели.</p>
-        {!recipientConfigured && <Link className="btn btn-ghost" to="/settings">Указать email получателя</Link>}
+        <p className="muted">Получатель задаётся в настройках панели: {alertSettings?.recipient.masked_email || "не указан"}. SMTP-параметры, токен бота Telegram и идентификатор чата не выводятся в панели.</p>
+        {!recipientConfigured && <Link className="btn btn-ghost" to="/settings">Указать адрес получателя</Link>}
         <button className="btn" type="button" disabled={busy !== null || !channels?.enabled || !recipientConfigured} onClick={() => setConfirmTest(true)}>{busy === "test" ? "Отправка…" : "Отправить проверочное оповещение"}</button>
       </Surface>
-      <Surface title={`Входящие (${summary?.unread ?? 0} непрочитанных)`}>
+      <Surface title={`Входящие оповещения (${summary?.unread ?? 0} непрочитанных)`}>
         <div className="row" role="group" aria-label="Фильтр оповещений">
           {(["", "security", "site", "system"] as const).map((value) => <button key={value || "all"} className={category === value ? "btn" : "btn btn-ghost"} type="button" onClick={() => setCategory(value)}>{value ? categoryLabel(value) : "Все"}</button>)}
         </div>
@@ -153,13 +153,13 @@ export function AlertsPage() {
           <p>{alert.body}</p>
           {alert.subject_label && <p className="muted">Объект: {alert.subject_label}</p>}
           <p className="muted">{alert.created_at ? new Date(alert.created_at).toLocaleString() : "—"} · код: {alert.signal_code || "—"}</p>
-          <div className="row"><StatusPill tone={tone(alert.deliveries.smtp_bz_smtp || alert.deliveries.smtp_bz_api)}>Email: {deliveryLabel(alert.deliveries.smtp_bz_smtp || alert.deliveries.smtp_bz_api, alert.delivery_errors?.smtp_bz_smtp || alert.delivery_errors?.smtp_bz_api)}</StatusPill><StatusPill tone={tone(alert.deliveries.telegram)}>Telegram: {deliveryLabel(alert.deliveries.telegram, alert.delivery_errors?.telegram)}</StatusPill>{!alert.read && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void markRead(alert)}>{busy === alert.id ? "Сохранение…" : "Прочитано"}</button>}</div>
+          <div className="row"><StatusPill tone={tone(alert.deliveries.smtp_bz_smtp || alert.deliveries.smtp_bz_api)}>Эл. почта: {deliveryLabel(alert.deliveries.smtp_bz_smtp || alert.deliveries.smtp_bz_api, alert.delivery_errors?.smtp_bz_smtp || alert.delivery_errors?.smtp_bz_api)}</StatusPill><StatusPill tone={tone(alert.deliveries.telegram)}>Telegram: {deliveryLabel(alert.deliveries.telegram, alert.delivery_errors?.telegram)}</StatusPill>{!alert.read && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void markRead(alert)}>{busy === alert.id ? "Сохранение…" : "Прочитано"}</button>}</div>
         </article>)}</div>}
       </Surface>
       <ConfirmDialog
         open={confirmTest}
         title="Отправить проверочное оповещение?"
-        description="Будет создано тестовое inbox-сообщение и отправлено через настроенные каналы. Оно не меняет сайты, публикации или инфраструктуру."
+        description="Будет создано тестовое сообщение в панели и отправлено через настроенные каналы. Оно не меняет сайты, публикации или инфраструктуру."
         confirmLabel="Отправить"
         onCancel={() => setConfirmTest(false)}
         onConfirm={() => void sendTest()}

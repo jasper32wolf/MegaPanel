@@ -85,7 +85,7 @@ export function ProjectOverviewPage() {
     <ProjectWorkspaceLayout projectId={projectId}>
       <PageHeader
         title={project?.name || "Обзор проекта"}
-        description="Наблюдаемые артефакты и следующий ручной шаг. Обзор не изменяет данные и не заменяет серверные QA, legal и release gates."
+        description="Сохранённые результаты работы и следующий ручной шаг. Обзор не изменяет данные и не заменяет серверные проверки качества, юридические проверки и условия выпуска."
       />
       {error && <p className="error" role="alert">{error}</p>}
       {(!project || !summary || !plan) && !error ? <p className="muted" aria-live="polite">Загрузка проекта…</p> : null}
@@ -97,7 +97,7 @@ export function ProjectOverviewPage() {
             <div><strong>DNS</strong><StatusPill tone={project.domain_check_meta?.dns_status === "ok" ? "ok" : "warn"}>{project.domain_check_meta?.dns_status || "не проверен"}</StatusPill></div>
             <div><strong>Публикация</strong><StatusPill tone={summary.published ? "ok" : "warn"}>{summary.published ? "записана в БД" : "не опубликован"}</StatusPill></div>
           </div>
-          <p className="muted">Счётчики показывают наличие артефактов, а не пригодность конкретной версии к публикации. При изменении facts, структуры, прав на media или legal-политики проверяйте новый candidate.</p>
+          <p className="muted">Счётчики показывают наличие результатов работы, а не пригодность конкретной версии к публикации. При изменении данных бизнеса, структуры, прав на медиафайлы или юридической политики проверяйте новую пробную сборку.</p>
         </Surface>
         <Surface title="План развёртывания">
           <p className="muted">Это только подсказка по сохранённым артефактам. Она не создаёт черновики, не одобряет данные, не публикует сайт и не подтверждает внешнюю инфраструктуру.</p>
