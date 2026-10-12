@@ -54,6 +54,26 @@ type SmtpForm = {
 };
 
 type ApiForm = { sender_email: string; authorization: string };
+type LeadSmtpTransport = {
+  configured: boolean;
+  enabled: boolean;
+  sender: string | null;
+  recipient: string | null;
+  host: string | null;
+  port: number | null;
+  tls_mode: "starttls" | "implicit_tls" | null;
+  revision: number | null;
+  updated_at: string | null;
+};
+type LeadSmtpForm = {
+  host: string;
+  port: number;
+  tls_mode: "starttls" | "implicit_tls";
+  sender_email: string;
+  recipient: string;
+  username: string;
+  password: string;
+};
 
 function alertChannelLabel(configured: boolean) {
   return configured ? "готов" : "не настроен";
@@ -68,6 +88,17 @@ function transportTestError(result: string) {
     unavailable: "SMTP.bz временно недоступен. Повторите проверку позже.",
   };
   return messages[result] || "SMTP.bz не подтвердил соединение. Проверьте настройки и повторите попытку.";
+}
+
+function leadSmtpTestError(result: string) {
+  const messages: Record<string, string> = {
+    authentication_failed: "SMTP-сервер отклонил учётные данные. Проверьте логин и пароль и сохраните их повторно.",
+    invalid_config: "Параметры SMTP-сервера неполны или несовместимы. Проверьте хост, порт и TLS.",
+    tls_failed: "Не удалось установить защищённое TLS-соединение с SMTP-сервером.",
+    timeout: "SMTP-сервер не ответил вовремя. Проверьте хост, порт и доступ VPS к серверу.",
+    unavailable: "SMTP-сервер временно недоступен. Повторите проверку позже.",
+  };
+  return messages[result] || "SMTP-сервер не подтвердил соединение. Проверьте настройки и повторите попытку.";
 }
 
 function sessionTone(status: Session["status"]) {
@@ -88,23 +119,27 @@ export function SettingsPage() {
   const [alertChannels, setAlertChannels] = useState<AlertChannels | null>(null);
   const [alertRecipient, setAlertRecipient] = useState<{ configured: boolean; masked_email: string | null } | null>(null);
   const [alertTransport, setAlertTransport] = useState<AlertTransport | null>(null);
+  const [leadSmtpTransport, setLeadSmtpTransport] = useState<LeadSmtpTransport | null>(null);
   const [recipientEmail, setRecipientEmail] = useState("");
   const [smtpForm, setSmtpForm] = useState<SmtpForm>({ sender_email: "", port: 587, tls_mode: "starttls", username: "", password: "" });
   const [apiForm, setApiForm] = useState<ApiForm>({ sender_email: "", authorization: "" });
+  const [leadSmtpForm, setLeadSmtpForm] = useState<LeadSmtpForm>({ host: "", port: 587, tls_mode: "starttls", sender_email: "", recipient: "", username: "", password: "" });
   const [setup, setSetup] = useState<TotpSetup | null>(null);
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [sessionToRevoke, setSessionToRevoke] = useState<Session | null>(null);
+  const [leadSmtpToDisable, setLeadSmtpToDisable] = useState(false);
 
   async function load() {
-    const [me, apiHealth, apiReadiness, sessionSummary, alertSettings] = await Promise.all([
+    const [me, apiHealth, apiReadiness, sessionSummary, alertSettings, leadSmtp] = await Promise.all([
       api<Operator>("/api/v1/security/me", {}, token),
       api<Health>("/api/v1/health/live", {}, token),
       api<Readiness>("/api/v1/health/ready", {}, token).catch(() => null),
       api<SessionSummary>("/api/v1/security/sessions", {}, token),
       api<AlertSettings>("/api/v1/panel/alert-settings", {}, token),
+      api<LeadSmtpTransport>("/api/v1/panel/lead-smtp-transport", {}, token),
     ]);
     setOperator(me);
     setHealth(apiHealth);
@@ -114,6 +149,7 @@ export function SettingsPage() {
     setAlertChannels(alertSettings.channels);
     setAlertRecipient(alertSettings.recipient);
     setAlertTransport(alertSettings.transport);
+    setLeadSmtpTransport(leadSmtp);
   }
 
   useEffect(() => {
@@ -216,6 +252,64 @@ export function SettingsPage() {
     }
   }
 
+  async function saveLeadSmtpTransport(event: FormEvent) {
+    event.preventDefault();
+    setBusy("lead-smtp-save");
+    setError(null);
+    setMessage(null);
+    try {
+      await api(
+        "/api/v1/panel/lead-smtp-transport",
+        { method: "PUT", body: JSON.stringify(leadSmtpForm) },
+        token,
+      );
+      setLeadSmtpForm((current) => ({ ...current, username: "", password: "" }));
+      await load();
+      setMessage("Настройки центральной SMTP-доставки сохранены. Логин и пароль очищены из формы.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Не удалось сохранить центральную SMTP-доставку");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function testLeadSmtpTransport() {
+    setBusy("lead-smtp-test");
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await api<{ result?: string }>(
+        "/api/v1/panel/lead-smtp-transport/test",
+        { method: "POST" },
+        token,
+      );
+      if (result.result && result.result !== "ok") {
+        setError(leadSmtpTestError(result.result));
+      } else {
+        setMessage("Соединение с SMTP-сервером и авторизация проверены. Заявка и письмо о заявке не отправлялись.");
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Не удалось проверить центральную SMTP-доставку");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function disableLeadSmtpTransport() {
+    setBusy("lead-smtp-disable");
+    setError(null);
+    setMessage(null);
+    try {
+      await api("/api/v1/panel/lead-smtp-transport", { method: "DELETE" }, token);
+      await load();
+      setMessage("Центральная SMTP-доставка заявок отключена. Новые заявки не будут отправляться на email.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Не удалось отключить центральную SMTP-доставку");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function revokeSession(session: Session) {
     setBusy(`session:${session.id}`);
     setError(null);
@@ -313,6 +407,39 @@ export function SettingsPage() {
         <p className="muted">Панель отправляет email ровно одним активным способом; SMTP и API не дублируют одно и то же сообщение. Тестовое оповещение создаётся отдельно в разделе «Оповещения».</p>
         <Link className="btn btn-ghost" to="/alerts">Открыть оповещения</Link>
       </Surface>
+      <Surface title="Центральная SMTP-доставка заявок">
+        <div className="row">
+          <StatusPill tone={leadSmtpTransport?.enabled ? "ok" : "warn"}>Доставка заявок: {leadSmtpTransport?.enabled ? "включена" : "выключена"}</StatusPill>
+          <StatusPill tone={leadSmtpTransport?.configured ? "ok" : "warn"}>SMTP: {leadSmtpTransport?.configured ? "настроен" : "не настроен"}</StatusPill>
+        </div>
+        <p className="muted">Это отдельный канал для отправки заявок с сайтов на указанный email. Он не заменяет SMTP.bz для системных оповещений и не использует его настройки.</p>
+        {leadSmtpTransport?.configured ? (
+          <div className="detail-grid">
+            <div><strong>SMTP-сервер</strong><p>{leadSmtpTransport.host || "—"}</p></div>
+            <div><strong>Порт и защита</strong><p>{leadSmtpTransport.port || "—"}{leadSmtpTransport.tls_mode ? ` · ${leadSmtpTransport.tls_mode === "starttls" ? "STARTTLS" : "SSL/TLS"}` : ""}</p></div>
+            <div><strong>Отправитель</strong><p>{leadSmtpTransport.sender || "—"}</p></div>
+            <div><strong>Получатель заявок</strong><p>{leadSmtpTransport.recipient || "—"}</p></div>
+          </div>
+        ) : null}
+        <form className="stack" onSubmit={saveLeadSmtpTransport}>
+          <p className="muted" style={{ margin: 0 }}>Введите параметры SMTP-сервера для заявок. Логин и пароль — write-only: после сохранения они очищаются из формы и больше не выводятся. При изменении настроек введите их повторно.</p>
+          <label className="field">Хост SMTP-сервера<input value={leadSmtpForm.host} onChange={(event) => setLeadSmtpForm((current) => ({ ...current, host: event.target.value }))} autoComplete="off" placeholder="smtp.example.com" required /></label>
+          <div className="detail-grid">
+            <label className="field">Порт центрального SMTP<input type="number" min={1} max={65535} value={leadSmtpForm.port || ""} onChange={(event) => setLeadSmtpForm((current) => ({ ...current, port: Number(event.target.value) }))} inputMode="numeric" required /></label>
+            <label className="field">TLS-режим<select value={leadSmtpForm.tls_mode} onChange={(event) => setLeadSmtpForm((current) => ({ ...current, tls_mode: event.target.value as LeadSmtpForm["tls_mode"] }))}><option value="starttls">STARTTLS</option><option value="implicit_tls">SSL/TLS</option></select></label>
+          </div>
+          <label className="field">Адрес отправителя для заявок<input type="email" value={leadSmtpForm.sender_email} onChange={(event) => setLeadSmtpForm((current) => ({ ...current, sender_email: event.target.value }))} autoComplete="email" placeholder="leads@example.com" required /></label>
+          <label className="field">Получатель заявок<input type="email" value={leadSmtpForm.recipient} onChange={(event) => setLeadSmtpForm((current) => ({ ...current, recipient: event.target.value }))} autoComplete="email" placeholder="sales@example.com" required /></label>
+          <label className="field">Логин центрального SMTP<input type="password" value={leadSmtpForm.username} onChange={(event) => setLeadSmtpForm((current) => ({ ...current, username: event.target.value }))} autoComplete="new-password" required /></label>
+          <label className="field">Пароль центрального SMTP<input type="password" value={leadSmtpForm.password} onChange={(event) => setLeadSmtpForm((current) => ({ ...current, password: event.target.value }))} autoComplete="new-password" required /></label>
+          <div className="row">
+            <button className="btn" type="submit" disabled={busy !== null}>{busy === "lead-smtp-save" ? "Сохранение…" : leadSmtpTransport?.enabled ? "Сохранить настройки" : "Сохранить и включить доставку"}</button>
+            {leadSmtpTransport?.configured ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void testLeadSmtpTransport()}>{busy === "lead-smtp-test" ? "Проверка…" : "Проверить центральное SMTP-соединение"}</button> : null}
+            {leadSmtpTransport?.enabled ? <button className="btn btn-danger" type="button" disabled={busy !== null} onClick={() => setLeadSmtpToDisable(true)}>{busy === "lead-smtp-disable" ? "Отключение…" : "Отключить доставку заявок"}</button> : null}
+          </div>
+        </form>
+        <p className="muted" style={{ marginBottom: 0 }}>Проверка подтверждает соединение и авторизацию. Она не создаёт заявку и не отправляет письмо о заявке.</p>
+      </Surface>
       <Surface title="Сессии">
         <p className="muted">Показаны не более десяти последних сессий. Каждая строка соответствует одному устройству: обновление токена сессии не создаёт дубликат. IP-адрес и место фиксируются при входе локальной базой GeoIP и могут быть не определены или неточны. Источник геоданных: <a href="https://db-ip.com" target="_blank" rel="noreferrer">DB-IP Lite</a> · CC BY 4.0.</p>
         <div className="table-wrap">
@@ -337,6 +464,18 @@ export function SettingsPage() {
         {olderSessionTotal > 0 ? <Link className="btn btn-ghost" to="/settings/sessions">{`Открыть журнал прошлых сессий (${olderSessionTotal})`}</Link> : null}
       </Surface>
       <Surface title="Системная диагностика"><div className="row"><StatusPill tone={health?.status === "ok" ? "ok" : "danger"}>API: {health?.status || "недоступен"}</StatusPill><StatusPill tone={readiness?.status === "ok" ? "ok" : "danger"}>PostgreSQL / Redis: {readiness?.status || "недоступны"}</StatusPill><span className="muted">Версия: {health?.version || "—"}</span><span className="muted">Режим: {health?.env || "—"}</span></div><p className="muted" style={{ marginBottom: 0 }}>Резервные копии и внешние сервисы проверяются только на сервере; панель не показывает и не хранит их секреты.</p></Surface>
+      <ConfirmDialog
+        open={leadSmtpToDisable}
+        title="Отключить доставку заявок?"
+        description="Новые заявки с сайтов перестанут отправляться на email. Сохранённые параметры SMTP останутся в панели, чтобы вы могли включить доставку снова после повторного сохранения."
+        confirmLabel="Отключить доставку"
+        dangerous
+        onCancel={() => setLeadSmtpToDisable(false)}
+        onConfirm={() => {
+          setLeadSmtpToDisable(false);
+          void disableLeadSmtpTransport();
+        }}
+      />
       <ConfirmDialog
         open={sessionToRevoke !== null}
         title="Отозвать сессию?"

@@ -138,6 +138,9 @@ test("SMTP.bz credentials stay write-only and connection test does not send an a
       tested = true;
       return route.fulfill({ status: 200, body: '{"result":"ok"}' });
     }
+    if (url.pathname === "/api/v1/panel/lead-smtp-transport" && request.method() === "GET") {
+      return route.fulfill({ status: 200, body: '{"configured":false,"enabled":false,"sender":null,"recipient":null,"host":null,"port":null,"tls_mode":null,"revision":null,"updated_at":null}' });
+    }
     if (url.pathname === "/api/v1/panel/alerts") {
       return route.fulfill({ status: 200, body: '{"items":[],"total":0,"unread":0,"channels":{"enabled":true,"email":false,"telegram":false}}' });
     }
@@ -151,7 +154,7 @@ test("SMTP.bz credentials stay write-only and connection test does not send an a
   await expect(page.getByText(/Текущий: o\*\*\*@example\.test/)).toBeVisible();
 
   await page.getByLabel("Адрес отправителя на подтверждённом домене").first().fill("alerts@osco-servis.ru");
-  await page.getByLabel("Порт").selectOption("465");
+  await page.getByLabel("Порт").first().selectOption("465");
   await expect(page.getByLabel("Защита соединения")).toHaveValue("implicit_tls");
   await page.getByLabel("SMTP.bz логин").fill("write-only-login");
   await page.getByLabel("SMTP.bz пароль").fill("write-only-password");
@@ -162,4 +165,83 @@ test("SMTP.bz credentials stay write-only and connection test does not send an a
   await page.getByRole("button", { name: "Проверить соединение" }).click();
   await expect(page.getByText("Соединение SMTP.bz и авторизация проверены. Письмо не отправлялось.", { exact: true })).toBeVisible();
   expect(tested).toBe(true);
+});
+
+test("central SMTP delivery saves write-only credentials, tests without a lead, and can be disabled", async ({ page }) => {
+  await mockAuth(page);
+  let saved = false;
+  let enabled = false;
+  let tested = false;
+  let disabled = false;
+
+  function leadSmtpTransport() {
+    return {
+      configured: saved,
+      enabled,
+      sender: saved ? "l***@example.test" : null,
+      recipient: saved ? "s***@example.test" : null,
+      host: saved ? "smtp.example.test" : null,
+      port: saved ? 465 : null,
+      tls_mode: saved ? "implicit_tls" : null,
+      revision: saved ? 1 : null,
+      updated_at: null,
+    };
+  }
+
+  await page.route("**/api/v1/**", (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.pathname === "/api/v1/security/me") return route.fulfill({ status: 200, body: JSON.stringify({ email: "operator@example.test", mfa_enabled: true, mfa_pending: false }) });
+    if (url.pathname === "/api/v1/health/live") return route.fulfill({ status: 200, body: '{"status":"ok","version":"test","env":"test"}' });
+    if (url.pathname === "/api/v1/health/ready") return route.fulfill({ status: 200, body: '{"status":"ok"}' });
+    if (url.pathname === "/api/v1/security/sessions") return route.fulfill({ status: 200, body: '{"items":[],"total":0,"older_total":0}' });
+    if (url.pathname === "/api/v1/panel/alert-settings") return route.fulfill({ status: 200, body: JSON.stringify({ channels: { enabled: true, email: false, telegram: false }, recipient: { configured: false, masked_email: null }, transport: { selected: "none", configured: false, smtp_configured: false, api_configured: false, sender_email: null, revision: null, updated_at: null } }) });
+    if (url.pathname === "/api/v1/panel/lead-smtp-transport" && request.method() === "GET") return route.fulfill({ status: 200, body: JSON.stringify(leadSmtpTransport()) });
+    if (url.pathname === "/api/v1/panel/lead-smtp-transport" && request.method() === "PUT") {
+      const body = request.postDataJSON();
+      if (body.host !== "smtp.example.test" || body.port !== 465 || body.tls_mode !== "implicit_tls" || body.sender_email !== "leads@example.test" || body.recipient !== "sales@example.test" || body.username !== "write-only-login" || body.password !== "write-only-password") {
+        return route.fulfill({ status: 422, body: '{"detail":"invalid central SMTP configuration"}' });
+      }
+      saved = true;
+      enabled = true;
+      return route.fulfill({ status: 200, body: JSON.stringify(leadSmtpTransport()) });
+    }
+    if (url.pathname === "/api/v1/panel/lead-smtp-transport/test" && request.method() === "POST") {
+      tested = true;
+      return route.fulfill({ status: 200, body: '{"result":"ok"}' });
+    }
+    if (url.pathname === "/api/v1/panel/lead-smtp-transport" && request.method() === "DELETE") {
+      enabled = false;
+      disabled = true;
+      return route.fulfill({ status: 200, body: JSON.stringify(leadSmtpTransport()) });
+    }
+    if (url.pathname === "/api/v1/auth/refresh") return route.fulfill({ status: 200, body: '{}' });
+    return route.fulfill({ status: 404, body: '{"detail":"not used by proof"}' });
+  });
+
+  await page.goto("/settings");
+  await expect(page.getByRole("heading", { name: "Центральная SMTP-доставка заявок" })).toBeVisible();
+  await expect(page.getByText("Проверка подтверждает соединение и авторизацию. Она не создаёт заявку и не отправляет письмо о заявке.", { exact: true })).toBeVisible();
+  await page.getByLabel("Хост SMTP-сервера").fill("smtp.example.test");
+  await page.getByLabel("Порт центрального SMTP").fill("465");
+  await page.getByLabel("TLS-режим").selectOption("implicit_tls");
+  await page.getByLabel("Адрес отправителя для заявок").fill("leads@example.test");
+  await page.getByLabel("Получатель заявок").fill("sales@example.test");
+  await page.getByLabel("Логин центрального SMTP").fill("write-only-login");
+  await page.getByLabel("Пароль центрального SMTP").fill("write-only-password");
+  await page.getByRole("button", { name: "Сохранить и включить доставку" }).click();
+
+  await expect(page.getByLabel("Логин центрального SMTP")).toHaveValue("");
+  await expect(page.getByLabel("Пароль центрального SMTP")).toHaveValue("");
+  await expect(page.getByText("Доставка заявок: включена", { exact: true })).toBeVisible();
+  await expect(page.getByText("l***@example.test", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Проверить центральное SMTP-соединение" }).click();
+  await expect(page.getByText("Соединение с SMTP-сервером и авторизация проверены. Заявка и письмо о заявке не отправлялись.", { exact: true })).toBeVisible();
+  expect(tested).toBe(true);
+
+  await page.getByRole("button", { name: "Отключить доставку заявок" }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await page.getByRole("button", { name: "Отключить доставку", exact: true }).click();
+  await expect(page.getByText("Доставка заявок: выключена", { exact: true })).toBeVisible();
+  expect(disabled).toBe(true);
 });
