@@ -24,6 +24,14 @@ function tone(state: string) {
   return "warn" as const;
 }
 
+function stateLabel(state: string) {
+  return ({ draft: "черновик", review: "на проверке", active: "активна", rejected: "отклонена" } as Record<string, string>)[state] || state;
+}
+
+function channelLabel(channel: Destination["channel"]) {
+  return channel === "email" ? "электронная почта" : "вебхук";
+}
+
 export function ProjectRoutingPage() {
   const { projectId = "" } = useParams();
   const { token } = useAuth();
@@ -39,20 +47,20 @@ export function ProjectRoutingPage() {
     ]).then(([nextProject, nextPolicies]) => {
       setProject(nextProject);
       setPolicies(nextPolicies.items);
-    }).catch((cause) => setError(cause instanceof Error ? cause.message : "Не удалось загрузить routing policies"));
+    }).catch((cause) => setError(cause instanceof Error ? cause.message : "Не удалось загрузить правила маршрутизации заявок"));
   }, [projectId, token]);
 
   return (
     <ProjectWorkspaceLayout projectId={projectId}>
       <PageHeader
-        title={project ? `Routing · ${project.name}` : "Lead routing"}
-        description="Read-only routing-policy history. Recipient addresses, webhook URLs and secrets are never returned or displayed; policy changes remain explicit workspace actions."
-        actions={<Link className="btn btn-ghost" to={`/projects/${projectId}`}>Открыть workspace</Link>}
+        title={project ? `Маршрутизация заявок · ${project.name}` : "Маршрутизация заявок"}
+        description="История правил доступна только для просмотра. Адреса получателей, URL вебхуков и секреты не возвращаются и не показываются; изменение правила выполняется только явным действием в рабочем пространстве."
+        actions={<Link className="btn btn-ghost" to={`/projects/${projectId}`}>Открыть рабочее пространство</Link>}
       />
       {error && <p className="error" role="alert">{error}</p>}
-      {!policies && !error ? <p className="muted" aria-live="polite">Загрузка routing policies…</p> : null}
+      {!policies && !error ? <p className="muted" aria-live="polite">Загрузка правил маршрутизации…</p> : null}
       {policies && <Surface title="Маршрутизация заявок">
-        {policies.length === 0 ? <EmptyState title="Routing policy пока нет" hint="Создайте draft policy и отдельно проведите её через review/activation в полном workspace." /> : <DataTable headers={["Версия", "Статус", "Каналы", "Review", "Создана"]}>{policies.map((policy) => <tr key={policy.id}><td>v{policy.version}</td><td><StatusPill tone={tone(policy.state)}>{policy.state}</StatusPill></td><td>{policy.destinations.map((destination) => <div className="row" key={destination.id}><StatusPill tone={destination.configured ? "ok" : "danger"}>{destination.channel}</StatusPill><span>{destination.target_key} · {destination.required ? "required" : "optional"}</span></div>)}</td><td>{policy.decision_reason || (policy.reviewed_at ? new Date(policy.reviewed_at).toLocaleString() : "—")}</td><td>{policy.created_at ? new Date(policy.created_at).toLocaleString() : "—"}</td></tr>)}</DataTable>}
+        {policies.length === 0 ? <EmptyState title="Правил маршрутизации пока нет" hint="Создайте черновик правила, затем отдельно отправьте его на проверку и активируйте в рабочем пространстве." /> : <DataTable headers={["Версия", "Статус", "Каналы", "Проверка", "Создано"]}>{policies.map((policy) => <tr key={policy.id}><td>v{policy.version}</td><td><StatusPill tone={tone(policy.state)}>{stateLabel(policy.state)}</StatusPill></td><td>{policy.destinations.map((destination) => <div className="row" key={destination.id}><StatusPill tone={destination.configured ? "ok" : "danger"}>{channelLabel(destination.channel)}</StatusPill><span>{destination.target_key} · {destination.required ? "обязательный" : "необязательный"}</span></div>)}</td><td>{policy.decision_reason || (policy.reviewed_at ? new Date(policy.reviewed_at).toLocaleString() : "—")}</td><td>{policy.created_at ? new Date(policy.created_at).toLocaleString() : "—"}</td></tr>)}</DataTable>}
       </Surface>}
     </ProjectWorkspaceLayout>
   );

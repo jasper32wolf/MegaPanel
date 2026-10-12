@@ -227,7 +227,7 @@ export function ProjectDesignPage() {
           } : null,
         }),
       }, token);
-      setMessage("Логотип и favicon сохранены для будущих candidate-сборок. Уже готовые и опубликованные releases не менялись.");
+      setMessage("Логотип и значок сайта сохранены для будущих пробных сборок. Уже готовые и опубликованные выпуски не изменились.");
       await load();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Не удалось сохранить branding проекта");
@@ -436,18 +436,18 @@ export function ProjectDesignPage() {
     />
     {error && <p className="error" role="alert">{error}</p>}
     {message && <p className="success" role="status">{message}</p>}
-    <Surface title="Логотип и favicon">
-      <p className="muted">Выберите изображения из медиатеки или загрузите свои. Сохранение меняет только будущую candidate-сборку: оно не публикует сайт и не меняет уже готовый release.</p>
+    <Surface title="Логотип и значок сайта">
+      <p className="muted">Выберите изображения из медиатеки или загрузите свои. Сохранение меняет только будущую пробную сборку: оно не публикует сайт и не меняет уже готовый выпуск.</p>
       <div className="detail-grid">
         <label className="field">Логотип<select aria-label="Выбор логотипа" value={logoAssetId} disabled={busy} onChange={(event) => setLogoAssetId(event.target.value)}><option value="">Не использовать логотип</option>{eligibleMedia.map((asset) => <option key={asset.id} value={asset.id}>#{asset.id.slice(0, 8)} · {asset.license || "права подтверждены"}</option>)}</select></label>
         <label className="field">Описание логотипа<input value={logoAlt} disabled={busy || !logoAssetId} onChange={(event) => setLogoAlt(event.target.value)} placeholder="Например: Логотип компании" /></label>
-        <label className="field">Favicon<select aria-label="Выбор favicon" value={faviconAssetId} disabled={busy} onChange={(event) => setFaviconAssetId(event.target.value)}><option value="">Не использовать favicon</option>{eligibleMedia.map((asset) => <option key={asset.id} value={asset.id}>#{asset.id.slice(0, 8)} · {asset.license || "права подтверждены"}</option>)}</select></label>
+        <label className="field">Значок сайта<select aria-label="Выбор значка сайта" value={faviconAssetId} disabled={busy} onChange={(event) => setFaviconAssetId(event.target.value)}><option value="">Не использовать значок сайта</option>{eligibleMedia.map((asset) => <option key={asset.id} value={asset.id}>#{asset.id.slice(0, 8)} · {asset.license || "права подтверждены"}</option>)}</select></label>
       </div>
       <div className="row">
         {logoAsset ? <img src={logoAsset.path} width="120" height="72" alt="Предпросмотр логотипа" style={{ objectFit: "contain" }} /> : null}
-        {faviconAsset ? <img src={faviconAsset.path} width="48" height="48" alt="Предпросмотр favicon" style={{ objectFit: "contain" }} /> : null}
+        {faviconAsset ? <img src={faviconAsset.path} width="48" height="48" alt="Предпросмотр значка сайта" style={{ objectFit: "contain" }} /> : null}
       </div>
-      <button className="btn" type="button" disabled={busy || !branding || (Boolean(logoAssetId) && !logoAlt.trim())} onClick={() => void saveBranding()}>{busy ? "Сохранение…" : "Сохранить branding"}</button>
+      <button className="btn" type="button" disabled={busy || !branding || (Boolean(logoAssetId) && !logoAlt.trim())} onClick={() => void saveBranding()}>{busy ? "Сохранение…" : "Сохранить оформление"}</button>
       <div className="stack">
         <strong>Загрузить новый файл</strong>
         <label className="field">Назначение<select value={uploadTarget} disabled={busy} onChange={(event) => setUploadTarget(event.target.value as "logo" | "favicon")}><option value="logo">Логотип</option><option value="favicon">Favicon</option></select></label>

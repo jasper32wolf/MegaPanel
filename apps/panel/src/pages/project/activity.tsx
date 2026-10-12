@@ -26,15 +26,15 @@ export function ProjectActivityPage() {
 
   useEffect(() => {
     if (!projectId) return;
-    load().catch((cause) => setError(cause instanceof Error ? cause.message : "Не удалось загрузить activity"));
+    load().catch((cause) => setError(cause instanceof Error ? cause.message : "Не удалось загрузить историю действий"));
   }, [projectId, token]);
 
   return (
     <ProjectWorkspaceLayout projectId={projectId}>
-      <PageHeader title={project ? `Activity · ${project.name}` : "Project activity"} description="Metadata-only project audit history. Payloads, private facts, PII, recipients, secrets and provider details are never shown here." />
+      <PageHeader title={project ? `История действий · ${project.name}` : "История действий проекта"} description="Здесь отображается только история метаданных проекта. Данные запросов, приватные факты, персональные данные, получатели, секреты и сведения о провайдерах не показываются." />
       {error && <p className="error" role="alert">{error}</p>}
       <Surface title="История действий">
-        {!activity?.items.length ? <EmptyState title="Событий проекта пока нет" hint="После первых operator actions здесь появится hash-chained metadata history." /> : <><DataTable headers={["Действие", "Время", "Actor", "Hash"]}>{activity.items.map((entry) => <tr key={entry.id}><td><StatusPill tone="accent">{entry.action}</StatusPill></td><td>{entry.created_at ? new Date(entry.created_at).toLocaleString() : "—"}</td><td className="muted">{entry.actor_id?.slice(0, 8) || "system"}</td><td className="muted">{entry.record_hash.slice(0, 16)}</td></tr>)}</DataTable><div className="row"><button className="btn btn-ghost" type="button" disabled={!activity.offset} onClick={() => void load(Math.max(0, activity.offset - activity.limit))}>Назад</button><span className="muted">{activity.offset + 1}–{Math.min(activity.offset + activity.items.length, activity.total)} из {activity.total}</span><button className="btn btn-ghost" type="button" disabled={activity.offset + activity.limit >= activity.total} onClick={() => void load(activity.offset + activity.limit)}>Далее</button></div></>}
+        {!activity?.items.length ? <EmptyState title="Событий проекта пока нет" hint="После первых действий оператора здесь появится связанная хешами история метаданных." /> : <><DataTable headers={["Действие", "Время", "Инициатор", "Хеш"]}>{activity.items.map((entry) => <tr key={entry.id}><td><StatusPill tone="accent">{entry.action}</StatusPill></td><td>{entry.created_at ? new Date(entry.created_at).toLocaleString() : "—"}</td><td className="muted">{entry.actor_id?.slice(0, 8) || "система"}</td><td className="muted">{entry.record_hash.slice(0, 16)}</td></tr>)}</DataTable><div className="row"><button className="btn btn-ghost" type="button" disabled={!activity.offset} onClick={() => void load(Math.max(0, activity.offset - activity.limit))}>Назад</button><span className="muted">{activity.offset + 1}–{Math.min(activity.offset + activity.items.length, activity.total)} из {activity.total}</span><button className="btn btn-ghost" type="button" disabled={activity.offset + activity.limit >= activity.total} onClick={() => void load(activity.offset + activity.limit)}>Далее</button></div></>}
       </Surface>
     </ProjectWorkspaceLayout>
   );

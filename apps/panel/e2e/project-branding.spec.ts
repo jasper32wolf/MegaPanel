@@ -71,12 +71,12 @@ test("project branding saves pinned assets without building or publishing", asyn
 
   await mockAuth(page);
   await page.goto(`/projects/${projectId}/design`);
-  await expect(page.getByRole("heading", { name: "Логотип и favicon" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Логотип и значок сайта" })).toBeVisible();
   await page.getByLabel("Выбор логотипа").selectOption(logoId);
   await page.getByLabel("Описание логотипа", { exact: true }).fill("Логотип мастерской");
-  await page.getByLabel("Выбор favicon").selectOption(faviconId);
-  await page.getByRole("button", { name: "Сохранить branding" }).click();
-  await expect(page.getByText("Логотип и favicon сохранены для будущих candidate-сборок.")).toBeVisible();
+  await page.getByLabel("Выбор значка сайта").selectOption(faviconId);
+  await page.getByRole("button", { name: "Сохранить оформление" }).click();
+  await expect(page.getByText("Логотип и значок сайта сохранены для будущих пробных сборок.")).toBeVisible();
 
   const save = mutations.find((item) => item.path.endsWith("/branding"));
   expect(save?.body).toContain(logoId);

@@ -4,24 +4,24 @@ import { ProjectWorkspaceLayout } from "./ProjectWorkspaceLayout";
 
 const copy = {
   facts: {
-    title: "Project facts",
-    description: "Business facts and private-data boundaries remain in the compatibility workflow.",
-    hint: "Open the legacy workspace to edit or confirm facts. This view intentionally does not issue a second project-data request.",
+    title: "Факты проекта",
+    description: "Сведения о бизнесе и границы приватных данных остаются в существующем рабочем процессе.",
+    hint: "Откройте рабочее пространство, чтобы изменить или подтвердить факты. Эта страница намеренно не отправляет повторный запрос данных проекта.",
   },
   pages: {
-    title: "Project pages",
-    description: "Page plans, drafts, AI proposals and QA remain candidate-first.",
-    hint: "Open the legacy workspace to manage plans and drafts. No mutation is duplicated in this deep link.",
+    title: "Страницы проекта",
+    description: "Планы страниц, черновики, предложения ИИ и проверка качества остаются отдельными этапами до пробной сборки.",
+    hint: "Откройте рабочее пространство для управления планами и черновиками. На этой странице действия не дублируются.",
   },
   releases: {
-    title: "Project releases",
-    description: "Candidate builds, private preview, legal review and publication are separate actions.",
-    hint: "Open the legacy workspace to inspect or operate releases. Publication still requires the existing confirmations.",
+    title: "Выпуски проекта",
+    description: "Пробные сборки, закрытый предпросмотр, юридическая проверка и публикация выполняются раздельно.",
+    hint: "Откройте рабочее пространство, чтобы просмотреть выпуски или управлять ими. Для публикации по-прежнему требуются существующие подтверждения.",
   },
   routing: {
-    title: "Lead routing",
-    description: "Encrypted recipients are kept behind the existing private-data boundary.",
-    hint: "Open the legacy workspace to create, review or activate a routing policy.",
+    title: "Маршрутизация заявок",
+    description: "Зашифрованные данные получателей остаются в пределах существующей границы приватных данных.",
+    hint: "Откройте рабочее пространство, чтобы создать, проверить или активировать правило маршрутизации.",
   },
 } as const;
 
@@ -33,9 +33,9 @@ export function ProjectSectionPage({ section }: { section: Section }) {
   return (
     <ProjectWorkspaceLayout projectId={projectId}>
       <PageHeader title={content.title} description={content.description} />
-      <Surface title="Compatibility workflow">
+      <Surface title="Рабочий процесс">
         <p className="muted">{content.hint}</p>
-        <Link className="btn" to={`/projects/${projectId}`}>Открыть workspace</Link>
+        <Link className="btn" to={`/projects/${projectId}`}>Открыть рабочее пространство</Link>
       </Surface>
     </ProjectWorkspaceLayout>
   );
