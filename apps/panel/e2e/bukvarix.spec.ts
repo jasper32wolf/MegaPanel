@@ -114,7 +114,7 @@ test("Букварикс: HTTPS preview становится импортом т
   await expect(page.getByLabel("Импорт Букварикс: ремонт окон цены")).toBeChecked();
   await expect(page.getByRole("button", { name: "Импортировать выбранные фразы" })).toBeEnabled();
   await page.getByRole("button", { name: "Импортировать выбранные фразы" }).click();
-  await expect(page.getByText("Выбранные фразы импортированы и сохранены с provenance Букварикса. Semantic collection, Structure и публикация не создавались.")).toBeVisible();
+  await expect(page.getByText("Выбранные фразы импортированы и сохранены со сведениями об источнике Букварикса. Семантическая коллекция, структура и публикация не создавались.")).toBeVisible();
   expect(commitAttempts).toBe(2);
 
   const previewRequest = mutations.find((item) => item.path.endsWith("/bukvarix-keyword-runs") && item.method === "POST");

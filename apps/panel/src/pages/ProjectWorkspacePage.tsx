@@ -53,6 +53,22 @@ function tone(state: string) {
   return "accent" as const;
 }
 
+function stateLabel(state: string) {
+  return ({
+    draft: "черновик",
+    review: "на проверке",
+    approved: "одобрен",
+    rejected: "отклонён",
+    confirmed: "подтверждены",
+    applied: "применён",
+    active: "активен",
+    paused: "приостановлен",
+    completed: "завершён",
+    cancelled: "отменён",
+    pending_approval: "ожидает решения",
+  } as Record<string, string>)[state] || state;
+}
+
 export function ProjectWorkspacePage() {
   const { projectId = "" } = useParams();
   const { hash } = useLocation();
@@ -406,7 +422,7 @@ export function ProjectWorkspacePage() {
     await run(
       "commercial-pages",
       () => api(`/api/v1/projects/${projectId}/commercial-page-plans`, { method: "POST" }, token),
-      "Созданы draft PagePlan для заполненных коммерческих facts. Проверьте и одобрите их по обычному workflow.",
+      "Для заполненных коммерческих фактов созданы черновики планов страниц. Проверьте и одобрите их в обычном рабочем процессе.",
     );
   }
 
@@ -477,7 +493,7 @@ export function ProjectWorkspacePage() {
 
   async function queueBukvarixRun() {
     if (!bukvarixSeedIds.length || !bukvarixConfirmed) {
-      setError("Выберите seed keywords и подтвердите HTTPS public free-mode.");
+      setError("Выберите исходные ключевые фразы и подтвердите использование публичного бесплатного HTTPS-режима.");
       return;
     }
     const created = await run(
@@ -489,7 +505,7 @@ export function ProjectWorkspacePage() {
           confirm_https_public_free: true,
         }),
       }, token),
-      "Сбор Букварикса поставлен в очередь. Результаты останутся preview до явного импорта.",
+      "Сбор Букварикса поставлен в очередь. Результаты останутся в предпросмотре до явного импорта.",
     );
     if (!created) return;
     setBukvarixSeedIds([]);
@@ -511,7 +527,7 @@ export function ProjectWorkspacePage() {
           confirm_import_https_public_free: true,
         }),
       }, token),
-      "Выбранные фразы импортированы и сохранены с provenance Букварикса. Semantic collection, Structure и публикация не создавались.",
+      "Выбранные фразы импортированы и сохранены со сведениями об источнике Букварикса. Семантическая коллекция, структура и публикация не создавались.",
     );
     if (!committed) return;
     setBukvarixSelectedResultIds((current) => ({ ...current, [keywordRun.id]: [] }));
@@ -538,7 +554,7 @@ export function ProjectWorkspacePage() {
           confirm_record_manual_export: true,
         }),
       }, token),
-      "Зафиксирован ручной экспорт Букварикса как provenance. Данные не загружались из провайдера и никакие страницы не созданы.",
+      "Ручной экспорт Букварикса сохранён со сведениями об источнике. Данные не загружались из провайдера, и страницы не создавались.",
     );
     if (!recorded) return;
     setSourceKeywordIds([]);
@@ -1125,26 +1141,26 @@ export function ProjectWorkspacePage() {
   return (
     <ProjectWorkspaceLayout projectId={projectId}>
       <div aria-busy={busy !== null}>
-      <PageHeader title={project.name} description="Факты → семантика → география → план страниц → черновик и проверка качества. Публикация не выполняется автоматически." actions={<div className="row"><Link className="btn btn-ghost" to={`/projects/${projectId}/activity`}>Activity</Link><Link className="btn btn-ghost" to="/projects">К проектам</Link></div>} />
+      <PageHeader title={project.name} description="Факты → семантика → география → план страниц → черновик и проверка качества. Публикация не выполняется автоматически." actions={<div className="row"><Link className="btn btn-ghost" to={`/projects/${projectId}/activity`}>История действий</Link><Link className="btn btn-ghost" to="/projects">К проектам</Link></div>} />
       {error && <p className="error" role="alert">{error}</p>}
       {message && <p className="muted" aria-live="polite">{message}</p>}
       <section className="workflow-stage" id="data" aria-label="Исходные данные">
         <div className="workflow-stage-heading"><strong>Исходные данные</strong><span>Сохраните и подтвердите сведения о бизнесе, затем настройте получение заявок.</span><Link to="/help?topic=business-facts">Справка по данным бизнеса</Link></div>
       <Surface title="Подготовка структуры">
-        {approvedStructure ? <p className="muted">Одобрена структура сайта v{approvedStructure.version}. Новые direct PagePlan будут сохранены с её server-owned provenance; для полного дерева используйте materialization в <Link to={`/projects/${projectId}/site-structure`}>разделе структуры</Link>.</p> : <p className="error">Перед созданием новых PagePlan одобрите структуру сайта. Существующие планы, черновики, candidate builds и release workflow остаются доступными. <Link to={`/projects/${projectId}/site-structure`}>Открыть структуру сайта</Link></p>}
+        {approvedStructure ? <p className="muted">Одобрена структура сайта v{approvedStructure.version}. Новые планы страниц будут сохранены с серверной фиксацией происхождения; для полного дерева используйте развёртывание в <Link to={`/projects/${projectId}/site-structure`}>разделе структуры</Link>.</p> : <p className="error">Перед созданием новых планов страниц одобрите структуру сайта. Существующие планы, черновики, пробные сборки и процесс выпуска остаются доступными. <Link to={`/projects/${projectId}/site-structure`}>Открыть структуру сайта</Link></p>}
       </Surface>
       <Surface title="1. Факты бизнеса">
         <form className="stack" onSubmit={saveFacts}>
-          <p className="muted">Публичные поля используются в контенте и контактах сайта после подтверждения facts. Адрес доставки лидов хранится отдельно, не попадает в preview, SSG или AI-контекст.</p>
+          <p className="muted">Публичные поля используются в контенте и контактах сайта после подтверждения фактов. Адрес доставки заявок хранится отдельно и не попадает в предпросмотр, статическую сборку или контекст ИИ.</p>
           <label className="field">Организация<input value={organization} onChange={(event) => setOrganization(event.target.value)} placeholder="Название организации" required /><span className="muted">Появится в коммерческих и юридических страницах после ручной проверки.</span></label>
           <label className="field">Основная услуга<input value={service} onChange={(event) => setService(event.target.value)} placeholder="Например: ремонт стиральных машин" required /><span className="muted">Основа семантики, структуры и коммерческих страниц.</span></label>
           <label className="field">Публичный телефон<input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="+7 (900) 000-00-00" required /><span className="muted">Может отображаться на сайте и используется в форме заявки.</span></label>
           <label className="field">Публичный адрес<input value={address} onChange={(event) => setAddress(event.target.value)} placeholder="Город, улица, дом" /><span className="muted">Отображается только в блоках, где адрес включён шаблоном.</span></label>
           <label className="field">Часы работы<input value={workHours} onChange={(event) => setWorkHours(event.target.value)} placeholder="Пн–Вс, 09:00–20:00" /></label>
           <label className="field">Email для заявок<input type="email" value={privateLeadEmail} onChange={(event) => setPrivateLeadEmail(event.target.value)} placeholder="leads@example.com" /><span className="muted">Приватный маршрут доставки. Не публикуется на сайте и не отправляется AI-провайдерам.</span></label>
-          <label className="field">Публичный email для privacy/DSAR<input type="email" value={privacyEmail} onChange={(event) => setPrivacyEmail(event.target.value)} placeholder="privacy@example.ru" /><span className="muted">Публичный юридический контакт для legal pages. Не используйте адрес для заявок, если он должен оставаться private.</span></label>
+          <label className="field">Публичный email для вопросов конфиденциальности и запросов субъектов данных<input type="email" value={privacyEmail} onChange={(event) => setPrivacyEmail(event.target.value)} placeholder="privacy@example.ru" /><span className="muted">Публичный юридический контакт для правовых страниц. Не используйте адрес для заявок, если он должен оставаться приватным.</span></label>
           <label className="field">Юридическое наименование<input value={legal} onChange={(event) => setLegal(event.target.value)} placeholder="ООО «Организация»" /></label>
-          <label className="field">Юрисдикция для legal pages<input value={legalJurisdiction} onChange={(event) => setLegalJurisdiction(event.target.value)} placeholder="Например: Российская Федерация" /><span className="muted">Обязательна перед public publish; preview и candidate build доступны для review без неё.</span></label>
+          <label className="field">Юрисдикция для правовых страниц<input value={legalJurisdiction} onChange={(event) => setLegalJurisdiction(event.target.value)} placeholder="Например: Российская Федерация" /><span className="muted">Обязательна перед публичной публикацией; предпросмотр и пробная сборка доступны для проверки без неё.</span></label>
           <label className="field">ИНН<input value={inn} onChange={(event) => setInn(event.target.value)} placeholder="1234567890" inputMode="numeric" /></label>
           <label className="field">История компании<textarea value={companyHistory} onChange={(event) => setCompanyHistory(event.target.value)} placeholder="Проверенные факты для страницы «История компании»" /></label>
           <label className="field">Миссия<textarea value={mission} onChange={(event) => setMission(event.target.value)} placeholder="Проверенная формулировка миссии" /></label>
@@ -1155,18 +1171,18 @@ export function ProjectWorkspacePage() {
           <label className="field">Источник фактов<textarea value={sourceNotes} onChange={(event) => setSourceNotes(event.target.value)} placeholder="Откуда оператор подтвердил сведения" /></label>
           <button className="btn" type="submit" disabled={busy !== null}>{busy === "facts" ? "Сохранение…" : "Сохранить новую версию фактов"}</button>
         </form>
-        {facts.length === 0 ? <EmptyState title="Факты ещё не сохранены" hint="Без подтверждённых фактов план страницы не перейдёт на проверку." /> : <div className="row"><StatusPill tone={latestFact?.state === "confirmed" ? "ok" : "warn"}>версия {latestFact?.version}: {latestFact?.state}</StatusPill>{latestFact?.state === "draft" ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => run(`confirm:${latestFact.id}`, () => api(`/api/v1/projects/${projectId}/facts/${latestFact.id}/confirm`, { method: "POST" }, token), "Факты подтверждены.")}>Подтвердить факты</button> : null}{latestFact?.state === "confirmed" ? <button className="btn btn-ghost" type="button" disabled={busy !== null || !approvedStructure} onClick={() => void createCommercialPagePlans()}>{busy === "commercial-pages" ? "Создание…" : "Создать коммерческие PagePlan"}</button> : null}</div>}
+        {facts.length === 0 ? <EmptyState title="Факты ещё не сохранены" hint="Без подтверждённых фактов план страницы не перейдёт на проверку." /> : <div className="row"><StatusPill tone={latestFact?.state === "confirmed" ? "ok" : "warn"}>версия {latestFact?.version}: {stateLabel(latestFact?.state || "")}</StatusPill>{latestFact?.state === "draft" ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => run(`confirm:${latestFact.id}`, () => api(`/api/v1/projects/${projectId}/facts/${latestFact.id}/confirm`, { method: "POST" }, token), "Факты подтверждены.")}>Подтвердить факты</button> : null}{latestFact?.state === "confirmed" ? <button className="btn btn-ghost" type="button" disabled={busy !== null || !approvedStructure} onClick={() => void createCommercialPagePlans()}>{busy === "commercial-pages" ? "Создание…" : "Создать коммерческие PagePlan"}</button> : null}</div>}
       </Surface>
       <Surface title="2. Маршрутизация заявок">
-        <p className="muted">Policy хранит encrypted получателей и применяется только к новым заявкам после явной активации. Сохранённые адреса и webhook secret не отображаются повторно.</p>
-        {!project.site_id ? <EmptyState title="Сначала примените черновик к манифесту" hint="После создания site можно настроить маршрутизацию заявок до candidate и публикации." /> : <>
+        <p className="muted">Правило хранит зашифрованные данные получателей и применяется только к новым заявкам после явной активации. Сохранённые адреса и секрет вебхука повторно не отображаются.</p>
+        {!project.site_id ? <EmptyState title="Сначала примените черновик к манифесту" hint="После создания сайта можно настроить маршрутизацию заявок до пробной сборки и публикации." /> : <>
           <div className="stack">
-            <label className="field">Private email получателя<input type="email" value={routingEmail} onChange={(event) => setRoutingEmail(event.target.value)} placeholder="leads@example.com" /><span className="muted">Отличается от публичного privacy email и никогда не показывается в сайте или inbox.</span></label>
-            <label className="field">Webhook URL (необязательно)<input value={routingWebhookUrl} onChange={(event) => setRoutingWebhookUrl(event.target.value)} placeholder="https://hooks.example.com/lead" /></label>
-            <label className="field">Webhook secret (необязательно)<input type="password" value={routingWebhookSecret} onChange={(event) => setRoutingWebhookSecret(event.target.value)} placeholder="Минимум 16 символов" autoComplete="new-password" /></label>
-            <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void createRoutingPolicy()}>{busy === "routing-create" ? "Сохранение…" : "Создать draft policy"}</button>
+            <label className="field">Приватный email получателя<input type="email" value={routingEmail} onChange={(event) => setRoutingEmail(event.target.value)} placeholder="leads@example.com" /><span className="muted">Отличается от публичного email для вопросов конфиденциальности и никогда не показывается на сайте или во входящих сообщениях.</span></label>
+            <label className="field">URL вебхука (необязательно)<input value={routingWebhookUrl} onChange={(event) => setRoutingWebhookUrl(event.target.value)} placeholder="https://hooks.example.com/lead" /></label>
+            <label className="field">Секрет вебхука (необязательно)<input type="password" value={routingWebhookSecret} onChange={(event) => setRoutingWebhookSecret(event.target.value)} placeholder="Минимум 16 символов" autoComplete="new-password" /></label>
+            <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void createRoutingPolicy()}>{busy === "routing-create" ? "Сохранение…" : "Создать черновик правила"}</button>
           </div>
-          {routingPolicies.length === 0 ? <EmptyState title="Активной policy пока нет" hint="До явной активации сохраняется legacy delivery compatibility; настройте policy перед следующей публикацией." /> : <DataTable headers={["Версия", "Получатели", "Статус", "Действия"]}>{routingPolicies.map((policy) => <tr key={policy.id}><td>v{policy.version}</td><td>{policy.destinations.map((destination) => <span key={destination.id} className="row"><StatusPill tone={destination.configured ? "ok" : "danger"}>{destination.channel}</StatusPill><span>{destination.target_key}{destination.required ? " · required" : " · optional"}</span></span>)}</td><td><StatusPill tone={tone(policy.state)}>{policy.state}</StatusPill></td><td className="row">{policy.state === "draft" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void submitRoutingPolicy(policy)}>На review</button>}{policy.state === "review" && <><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => rejectRoutingPolicy(policy)}>Отклонить</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => activateRoutingPolicy(policy)}>Активировать</button></>}</td></tr>)}</DataTable>}
+          {routingPolicies.length === 0 ? <EmptyState title="Активной policy пока нет" hint="До явной активации сохраняется legacy delivery compatibility; настройте policy перед следующей публикацией." /> : <DataTable headers={["Версия", "Получатели", "Статус", "Действия"]}>{routingPolicies.map((policy) => <tr key={policy.id}><td>v{policy.version}</td><td>{policy.destinations.map((destination) => <span key={destination.id} className="row"><StatusPill tone={destination.configured ? "ok" : "danger"}>{destination.channel}</StatusPill><span>{destination.target_key}{destination.required ? " · required" : " · optional"}</span></span>)}</td><td><StatusPill tone={tone(policy.state)}>{stateLabel(policy.state)}</StatusPill></td><td className="row">{policy.state === "draft" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void submitRoutingPolicy(policy)}>На review</button>}{policy.state === "review" && <><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => rejectRoutingPolicy(policy)}>Отклонить</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => activateRoutingPolicy(policy)}>Активировать</button></>}</td></tr>)}</DataTable>}
         </>}
       </Surface>
       </section>
@@ -1186,11 +1202,11 @@ export function ProjectWorkspacePage() {
       </Surface>
       <Surface id="bukvarix" title="3.5. Источник семантики: Букварикс">
         <p className="muted">{bukvarixStatus?.message || "Проверка статуса Букварикса…"}</p>
-        <p className="muted">Автоматический сбор использует только фиксированный HTTPS public free-mode. URL, endpoint, personal API key и параметры запроса в панели не вводятся и не хранятся. Лимит: до {bukvarixStatus?.max_seed_keywords || 10} seed-фраз и {bukvarixStatus?.max_results_per_run || 1000} результатов за запуск.</p>
+        <p className="muted">Автоматический сбор использует только фиксированный публичный бесплатный HTTPS-режим. URL, конечная точка, персональный ключ API и параметры запроса в панели не вводятся и не хранятся. Лимит: до {bukvarixStatus?.max_seed_keywords || 10} исходных фраз и {bukvarixStatus?.max_results_per_run || 1000} результатов за запуск.</p>
         {scheduledPreviewError ? <p className="error" role="alert">Очередь Букварикса недоступна: состояние задач неизвестно. Новые запросы отключены; preview уже завершённых runs остаётся доступен.</p> : null}
         <div className="stack">
           <strong>Автоматический HTTPS preview</strong>
-          <p className="muted">Выберите уже сохранённые project keywords. Постановка в очередь не импортирует фразы, не создаёт semantic collection, Structure, candidate, публикацию или IndexNow.</p>
+          <p className="muted">Выберите уже сохранённые ключевые фразы проекта. Постановка в очередь не импортирует фразы, не создаёт семантическую коллекцию, структуру, пробную сборку, публикацию и не запускает IndexNow.</p>
           {projectKeywords.length === 0 ? <EmptyState title="В проекте нет seed keywords" hint="Сначала сохраните ключевые фразы для проекта." /> : <DataTable headers={["", "Seed-фраза", "Intent", "Priority"]}>{projectKeywords.map((item) => <tr key={item.id}><td><input aria-label={`Seed Букварикс: ${item.phrase}`} type="checkbox" checked={bukvarixSeedIds.includes(item.id)} onChange={() => toggleBukvarixSeed(item.id)} disabled={busy !== null} /></td><td>{item.phrase}</td><td>{item.intent || "—"}</td><td>{item.priority ?? "—"}</td></tr>)}</DataTable>}
           <label className="field"><span><input type="checkbox" checked={bukvarixConfirmed} onChange={(event) => setBukvarixConfirmed(event.target.checked)} disabled={busy !== null} /> Подтверждаю запуск фиксированного HTTPS public free-mode Букварикса для выбранных seed-фраз.</span></label>
           <button className="btn btn-ghost" type="button" disabled={busy !== null || scheduledPreviewError || !bukvarixSeedIds.length || !bukvarixConfirmed} onClick={() => void queueBukvarixRun()}>{busy === "bukvarix-queue" ? "Постановка в очередь…" : "Получить HTTPS preview"}</button>
@@ -1200,7 +1216,7 @@ export function ProjectWorkspacePage() {
           const importConfirmed = bukvarixImportConfirmed[run.id] || false;
           const scheduled = scheduledPreviews[run.id] || null;
           return <div className="surface" key={run.id}>
-            <div className="row"><StatusPill tone={tone(run.status)}>{run.status}</StatusPill><strong>HTTPS public free · {run.id.slice(0, 8)}</strong><span className="muted">queries: {run.query_count}, results: {run.result_count}</span></div>
+            <div className="row"><StatusPill tone={tone(run.status)}>{run.status}</StatusPill><strong>HTTPS public free · {run.id.slice(0, 8)}</strong><span className="muted">запросов: {run.query_count}, результатов: {run.result_count}</span></div>
             {scheduled ? <div className="row"><span className="muted">Очередь: {scheduled.state}{scheduled.failure_code ? ` · ${scheduled.failure_code}` : ""}</span>{scheduled.state === "queued" ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void controlBukvarixQueue(scheduled, "pause")}>Пауза</button> : null}{scheduled.state === "paused" ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void controlBukvarixQueue(scheduled, "resume")}>Продолжить</button> : null}{["queued", "paused", "leased"].includes(scheduled.state) ? <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => cancelBukvarixQueue(scheduled)}>Отменить запрос</button> : null}</div> : null}
             {run.failure_code ? <p className="muted">Безопасный код ошибки: {run.failure_code}</p> : null}
             {run.status === "completed" && !run.committed_source_run_id ? <div className="stack">
@@ -1213,7 +1229,7 @@ export function ProjectWorkspacePage() {
           </div>;
         })}</div>}
         <div className="stack">
-          <strong>Ручной provenance export</strong>
+          <strong>Сведения о ручном экспорте</strong>
           <p className="muted">Отдельный вариант для уже полученного вручную экспорта. Он не выполняет сетевой запрос и не импортирует новые фразы.</p>
           <label className="field">Название ручного экспорта<input value={sourceLabel} onChange={(event) => setSourceLabel(event.target.value)} placeholder="Например: экспорт семантики за 2026-10-04" /></label>
           <label className="field">Режим<select value={sourceMode} onChange={(event) => setSourceMode(event.target.value as SemanticSourceRun["mode"])}><option value="domain">Один домен</option><option value="compare">Сравнение доменов</option><option value="multi_domain">Несколько доменов</option></select></label>
@@ -1231,10 +1247,10 @@ export function ProjectWorkspacePage() {
           {semanticSourceRuns.length > 0 && <fieldset className="stack"><legend>Ручные provenance runs (необязательно)</legend>{semanticSourceRuns.map((run) => <label key={run.id}><input type="checkbox" checked={semanticCollectionSourceRunIds.includes(run.id)} onChange={() => toggleSemanticCollectionSourceRun(run.id)} disabled={busy !== null} /> {run.source_label} · {run.selected_keyword_count} keywords · {run.mode}</label>)}</fieldset>}
           <button className="btn btn-ghost" type="button" disabled={busy !== null || !selectedKeywordIds.length || !selectedGeoIds.length} onClick={() => void createSemanticCollection()}>Создать draft collection из выбранных ключей и географии</button>
         </div>
-        {semanticSignals && <div className="detail-grid"><div><strong>{semanticSignals.totals.covered}</strong><span className="muted"> covered targets</span></div><div><strong>{semanticSignals.totals.planned}</strong><span className="muted"> planned targets</span></div><div><strong>{semanticSignals.totals.uncovered}</strong><span className="muted"> uncovered targets</span></div><div><strong>{semanticSignals.totals.unbound}</strong><span className="muted"> unbound keywords</span></div><div><strong>{semanticSignals.cannibalization.length}</strong><span className="muted"> collision warnings</span></div></div>}
-        <p className="muted">Сигналы семантического покрытия — только advisory: они не блокируют candidate build, публикацию или другие этапы.</p>
-        <Link className="btn btn-ghost" to={`/projects/${projectId}/semantic-coverage`}>Открыть обзор semantic coverage</Link>
-        {semanticCollections.length > 0 ? <DataTable headers={["Коллекция", "Состав", "Статус", "Действия"]}>{semanticCollections.map((collection) => <tr key={collection.id}><td>{collection.name}</td><td>{collection.members.length} фраз{collection.source_refs.manual_source_run_ids?.length ? <><br /><span className="muted">источники: {collection.source_refs.manual_source_run_ids.map((id) => semanticSourceRuns.find((run) => run.id === id)?.source_label || id.slice(0, 8)).join(", ")}</span></> : null}</td><td><StatusPill tone={tone(collection.state)}>{collection.state}</StatusPill></td><td className="row">{collection.state === "draft" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void run(`semantic-submit:${collection.id}`, () => api(`/api/v1/projects/${projectId}/semantic-collections/${collection.id}/submit-review`, { method: "POST" }, token), "Коллекция отправлена на проверку.")}>На проверку</button>}{collection.state === "review" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void run(`semantic-approve:${collection.id}`, () => api(`/api/v1/projects/${projectId}/semantic-collections/${collection.id}/approve`, { method: "POST", body: JSON.stringify({}) }, token), "Коллекция одобрена.")}>Одобрить</button>}{collection.state === "approved" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void loadSemanticImpact(collection)}>Проверить влияние</button>}</td></tr>)}</DataTable> : <EmptyState title="Коллекций пока нет" hint="Создайте черновик из выбранных ключевых фраз и географии." />}
+        {semanticSignals && <div className="detail-grid"><div><strong>{semanticSignals.totals.covered}</strong><span className="muted"> покрытых целей</span></div><div><strong>{semanticSignals.totals.planned}</strong><span className="muted"> запланированных целей</span></div><div><strong>{semanticSignals.totals.uncovered}</strong><span className="muted"> непокрытых целей</span></div><div><strong>{semanticSignals.totals.unbound}</strong><span className="muted"> непривязанных ключевых фраз</span></div><div><strong>{semanticSignals.cannibalization.length}</strong><span className="muted"> предупреждений о пересечении</span></div></div>}
+        <p className="muted">Сигналы семантического покрытия носят справочный характер: они не блокируют пробную сборку, публикацию и другие этапы.</p>
+        <Link className="btn btn-ghost" to={`/projects/${projectId}/semantic-coverage`}>Открыть обзор семантического покрытия</Link>
+        {semanticCollections.length > 0 ? <DataTable headers={["Коллекция", "Состав", "Статус", "Действия"]}>{semanticCollections.map((collection) => <tr key={collection.id}><td>{collection.name}</td><td>{collection.members.length} фраз{collection.source_refs.manual_source_run_ids?.length ? <><br /><span className="muted">источники: {collection.source_refs.manual_source_run_ids.map((id) => semanticSourceRuns.find((run) => run.id === id)?.source_label || id.slice(0, 8)).join(", ")}</span></> : null}</td><td><StatusPill tone={tone(collection.state)}>{stateLabel(collection.state)}</StatusPill></td><td className="row">{collection.state === "draft" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void run(`semantic-submit:${collection.id}`, () => api(`/api/v1/projects/${projectId}/semantic-collections/${collection.id}/submit-review`, { method: "POST" }, token), "Коллекция отправлена на проверку.")}>На проверку</button>}{collection.state === "review" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void run(`semantic-approve:${collection.id}`, () => api(`/api/v1/projects/${projectId}/semantic-collections/${collection.id}/approve`, { method: "POST", body: JSON.stringify({}) }, token), "Коллекция одобрена.")}>Одобрить</button>}{collection.state === "approved" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => void loadSemanticImpact(collection)}>Проверить влияние</button>}</td></tr>)}</DataTable> : <EmptyState title="Коллекций пока нет" hint="Создайте черновик из выбранных ключевых фраз и географии." />}
         {semanticImpact ? <div className="surface"><strong>Влияние: {semanticImpact.collection.name}</strong><p className="muted">Это только подсказки. Ничего не создаётся, не пересобирается и не публикуется автоматически.</p><DataTable headers={["Рекомендация", "Количество"]}>{["new_page", "review_existing_plan", "bind_geography", "resolve_collision", "needs_mapping", "no_change"].map((action) => <tr key={action}><td>{action === "new_page" ? "Новая страница" : action === "review_existing_plan" ? "Проверить существующий план" : action === "bind_geography" ? "Связать с географией" : action === "resolve_collision" ? "Устранить пересечение" : action === "needs_mapping" ? "Добавить связь с семантикой" : "Изменения не нужны"}</td><td>{semanticImpact.recommendations.filter((item) => item.action === action).length}</td></tr>)}</DataTable><ul>{semanticImpact.next_steps.map((step) => <li key={step}>{step}</li>)}</ul></div> : null}
         {semanticSignals?.cannibalization.map((collision, index) => <p className="muted" key={`${collision.reason}-${index}`}>Предупреждение: {collision.reason} — {collision.plans.map((plan) => plan.slug).join(", ")}</p>)}
         {semanticSignals?.unmapped_plans.length ? <p className="muted">Legacy PagePlan без explicit semantic target: {semanticSignals.unmapped_plans.map((plan) => plan.slug).join(", ")}. Они не считаются покрытием.</p> : null}
@@ -1243,13 +1259,13 @@ export function ProjectWorkspacePage() {
       <section className="workflow-stage" id="plans" aria-label="Структура и планирование страниц">
         <div className="workflow-stage-heading"><strong>Структура и планирование страниц</strong><span>Определите назначение страницы, проверьте план и создайте черновик только после одобрения.</span><Link to="/help?topic=pages-and-qa">Справка по планам страниц</Link></div>
       <Surface title="4. План страниц">
-        <p className="muted">Coverage: {coverage?.covered || 0} из {coverage?.selected || 0} выбранных ключей связаны с планами.</p>
+        <p className="muted">Покрытие: {coverage?.covered || 0} из {coverage?.selected || 0} выбранных ключевых фраз связаны с планами.</p>
         <form className="stack" onSubmit={createPlan}>
           <label className="field">Путь страницы<input value={planSlug} onChange={(event) => setPlanSlug(event.target.value)} placeholder="/repair-washing-machines" required /><span className="muted">Латиница в нижнем регистре, цифры, дефисы и вложенные пути через `/`.</span></label>
           <label className="field">Цель страницы<input value={planObjective} onChange={(event) => setPlanObjective(event.target.value)} placeholder="Какую потребность закрывает страница" required /></label>
           <label className="field">Намерение<input value={planIntent} onChange={(event) => setPlanIntent(event.target.value)} placeholder="Например: заказать услугу" /></label>
           <label className="field">Комплект<select value={kitKey} onChange={(event) => setKitKey(event.target.value)}><option value="service-local-v1">Локальные услуги</option><option value="home-repair-v1">Домашний ремонт</option></select></label>
-          <div className="surface"><strong>Semantic target (необязательно)</strong><p className="muted">Выберите только approved collection и конкретные связки keyword × geography. Без выбора план останется unmapped; это разрешено и ничего не создаёт автоматически.</p><label className="field">Approved collection<select value={planSemanticCollectionId} onChange={(event) => { setPlanSemanticCollectionId(event.target.value); setPlanSemanticSelections([]); }}><option value="">Не связывать с семантикой</option>{semanticCollections.filter((collection) => collection.state === "approved").map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</select></label>{planSemanticCollectionId && (() => { const collection = semanticCollections.find((item) => item.id === planSemanticCollectionId); return collection ? <DataTable headers={["", "Keyword", "Geo binding"]}>{collection.members.flatMap((member) => member.geo_bindings.map((binding) => { const targetKey = `${member.id}:${binding.id}`; const keyword = projectKeywords.find((item) => item.id === member.project_keyword_id); const geo = projectGeoBindings.find((item) => item.id === binding.project_geo_place_id); return <tr key={targetKey}><td><input aria-label={`Выбрать semantic target ${keyword?.phrase || member.project_keyword_id}`} type="checkbox" checked={planSemanticSelections.includes(targetKey)} onChange={() => togglePlanSemanticTarget(targetKey)} /></td><td>{keyword?.phrase || member.project_keyword_id}</td><td>{geo?.name || binding.project_geo_place_id} · {binding.scope}</td></tr>; }))}</DataTable> : null; })()}</div>
+          <div className="surface"><strong>Семантическая цель (необязательно)</strong><p className="muted">Выберите только одобренную коллекцию и конкретные связи «ключевая фраза × география». Без выбора план останется без семантической связи; это допустимо и ничего не создаёт автоматически.</p><label className="field">Одобренная коллекция<select value={planSemanticCollectionId} onChange={(event) => { setPlanSemanticCollectionId(event.target.value); setPlanSemanticSelections([]); }}><option value="">Не связывать с семантикой</option>{semanticCollections.filter((collection) => collection.state === "approved").map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</select></label>{planSemanticCollectionId && (() => { const collection = semanticCollections.find((item) => item.id === planSemanticCollectionId); return collection ? <DataTable headers={["", "Ключевая фраза", "Связь с географией"]}>{collection.members.flatMap((member) => member.geo_bindings.map((binding) => { const targetKey = `${member.id}:${binding.id}`; const keyword = projectKeywords.find((item) => item.id === member.project_keyword_id); const geo = projectGeoBindings.find((item) => item.id === binding.project_geo_place_id); return <tr key={targetKey}><td><input aria-label={`Выбрать semantic target ${keyword?.phrase || member.project_keyword_id}`} type="checkbox" checked={planSemanticSelections.includes(targetKey)} onChange={() => togglePlanSemanticTarget(targetKey)} /></td><td>{keyword?.phrase || member.project_keyword_id}</td><td>{geo?.name || binding.project_geo_place_id} · {binding.scope}</td></tr>; }))}</DataTable> : null; })()}</div>
           <div className="surface"><strong>Дословные утверждённые claims</strong><p className="muted">Не AI-текст: выбранное утверждение будет скопировано без перефразирования в серверный curated text slot после freeze facts и review плана.</p><div className="detail-grid"><label className="field">Curated slot<select value={planClaimSlot} onChange={(event) => setPlanClaimSlot(event.target.value)}><option value="hero.unique_core">hero · unique_core</option><option value="hero.hero_supporting_text">hero · hero_supporting_text</option></select></label><label className="field">Claim<select value={planClaimIndex} onChange={(event) => setPlanClaimIndex(event.target.value)}><option value="">Выберите подтверждённый claim</option>{approvedClaims.map((claim, index) => <option key={`${index}-${claim}`} value={index}>{index + 1}. {claim}</option>)}</select></label></div><button className="btn btn-ghost" type="button" disabled={busy !== null || !planClaimIndex} onClick={addPlanClaimBinding}>Привязать дословно</button>{planClaimBindings.length > 0 && <ul>{planClaimBindings.map((binding) => <li key={`${binding.block_id}.${binding.slot}`}><code>{binding.block_id}.{binding.slot}</code> ← #{binding.claim_index + 1}: {approvedClaims[binding.claim_index]} <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => setPlanClaimBindings((current) => current.filter((item) => item !== binding))}>Убрать</button></li>)}</ul>}{approvedClaims.length === 0 && <p className="muted">Сначала сохраните и подтвердите claims в facts. Без binding обычный deterministic draft не изменяется.</p>}</div>
           <button className="btn" type="submit" disabled={busy !== null || !planObjective.trim() || !approvedStructure}>{busy === "plan" ? "Сохранение…" : "Создать черновик плана"}</button>
         </form>
@@ -1257,7 +1273,7 @@ export function ProjectWorkspacePage() {
           <DataTable headers={["Выбрать", "Путь", "Цель", "Статус", "Действия"]}>
             {plans.map((plan) => <tr key={plan.id}>
               <td><input type="checkbox" aria-label={`В пакет черновиков: ${plan.slug} · v${plan.version}`} checked={batchPlanIds.includes(plan.id)} disabled={busy !== null || plan.state !== "approved"} onChange={() => toggleBatchPlan(plan.id)} /></td>
-              <td>{plan.slug}</td><td>{plan.objective}</td><td><StatusPill tone={tone(plan.state)}>{plan.state}</StatusPill></td>
+              <td>{plan.slug}</td><td>{plan.objective}</td><td><StatusPill tone={tone(plan.state)}>{stateLabel(plan.state)}</StatusPill></td>
               <td className="row">{plan.state === "draft" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => decision(plan, "submit-review")}>На проверку</button>}{plan.state === "review" && <><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => decision(plan, "approve")}>Одобрить</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => decision(plan, "reject")}>Отклонить</button></>}{plan.state === "approved" && <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => generate(plan)}>Создать черновик</button>}</td>
             </tr>)}
           </DataTable>
@@ -1270,10 +1286,10 @@ export function ProjectWorkspacePage() {
       </Surface>
       </section>
       <section className="workflow-stage" id="ai" aria-label="Подготовка контента">
-        <div className="workflow-stage-heading"><strong>Подготовка контента</strong><span>AI, медиа и профиль автора готовят материалы, но не подтверждают факты и не публикуют сайт.</span><Link to="/help?topic=ai-preparation">Справка по AI-предложениям</Link></div>
+        <div className="workflow-stage-heading"><strong>Подготовка контента</strong><span>ИИ, медиа и профиль автора готовят материалы, но не подтверждают факты и не публикуют сайт.</span><Link to="/help?topic=ai-preparation">Справка по предложениям ИИ</Link></div>
       <Surface title="4.1. AI-черновик текста и SEO">
         {aiProviderError && <p className="muted" role="status">AI-операции недоступны: {aiProviderError}. Основной проектный workflow продолжает работать.</p>}
-        <p className="muted">Доступен только для утверждённых PagePlan. AI изменяет текстовые поля нового PageDraft, сохраняет curated blocks и не применяет результат к сайту. После генерации обязателен обычный QA и ручная проверка.</p>
+        <p className="muted">Доступно только для утверждённых планов страниц. ИИ изменяет текстовые поля нового черновика страницы, сохраняет утверждённые блоки и не применяет результат к сайту. После генерации обязательны обычная проверка качества и ручная проверка.</p>
         <div className="stack">
           <label className="field">Утверждённый план<select value={aiPlanId} onChange={(event) => { setAiPlanId(event.target.value); setAiQuote(null); setAiConsent(false); }}><option value="">Выберите PagePlan</option>{plans.filter((plan) => plan.state === "approved").map((plan) => <option key={plan.id} value={plan.id}>{plan.slug} — {plan.objective}</option>)}</select></label>
           <label className="field">Активный AI provider<select value={aiProviderId} onChange={(event) => { setAiProviderId(event.target.value); setAiQuote(null); setAiConsent(false); }}><option value="">Выберите подключение</option>{aiProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.label} ({provider.provider_id})</option>)}</select></label>
@@ -1288,8 +1304,8 @@ export function ProjectWorkspacePage() {
           <button className="btn" type="button" disabled={busy !== null || !aiQuote || !aiConsent} onClick={generateAIDraft}>{busy?.startsWith("ai-draft:") ? "Генерация…" : "Подтвердить оценку и создать AI PageDraft"}</button>
         </div>
       </Surface>
-      <Surface title="4.2. SEO brief proposal">
-        <p className="muted">SEO brief остаётся отдельным proposal и не меняет PageDraft без ручного решения.</p>
+      <Surface title="4.2. Предложение по SEO-заданию">
+        <p className="muted">SEO-задание остаётся отдельным предложением и не меняет черновик страницы без ручного решения.</p>
         <div className="stack">
           <label className="field">Утверждённый план<select value={seoPlanId} onChange={(event) => { setSeoPlanId(event.target.value); setSeoQuote(null); setSeoConsent(false); }}><option value="">Выберите PagePlan</option>{plans.filter((plan) => plan.state === "approved").map((plan) => <option key={plan.id} value={plan.id}>{plan.slug} — {plan.objective}</option>)}</select></label>
           <div className="detail-grid"><label className="field">Лимит USD<input type="number" min="0.000001" max="100" step="0.000001" value={seoMaxCost} onChange={(event) => { setSeoMaxCost(event.target.value); setSeoQuote(null); }} /></label><label className="field">Выходные токены<input type="number" min="128" max="4096" value={seoMaxOutput} onChange={(event) => { setSeoMaxOutput(event.target.value); setSeoQuote(null); }} /></label></div>
@@ -1318,7 +1334,7 @@ export function ProjectWorkspacePage() {
         </div>
       </Surface>
       <Surface title="4.4. Медиа для черновика">
-        <p className="muted">Можно прикрепить только уже загруженный файл с подтверждёнными правами: в конце страницы или после одного выбранного curated-блока. В черновике сохраняется UUID и SHA-256, а candidate build копирует проверенные bytes в локальный immutable release. Attachment сбрасывает QA; URL и HTML сюда не принимаются.</p>
+        <p className="muted">Можно прикрепить только уже загруженный файл с подтверждёнными правами: в конце страницы или после одного выбранного утверждённого блока. В черновике сохраняются UUID и SHA-256, а пробная сборка копирует проверенные байты в локальный неизменяемый выпуск. Прикрепление сбрасывает проверку качества; URL и HTML сюда не принимаются.</p>
         <div className="stack">
           <label className="field">Черновик<select value={mediaDraftId} onChange={(event) => { setMediaDraftId(event.target.value); setMediaBlockId(""); }}><option value="">Выберите draft</option>{drafts.filter((draft) => draft.state === "draft").map((draft) => <option key={draft.id} value={draft.id}>{plans.find((plan) => plan.id === draft.page_plan_id)?.slug || draft.id} · rev {draft.revision}</option>)}</select></label>
           <label className="field">Размещение<select value={mediaBlockId} disabled={!mediaDraftId} onChange={(event) => setMediaBlockId(event.target.value)}><option value="">В конце страницы (gallery)</option>{mediaDraftBlocks.map((blockId) => <option key={blockId} value={blockId}>После блока: {blockId}</option>)}</select></label>
