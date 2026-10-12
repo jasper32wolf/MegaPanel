@@ -187,7 +187,7 @@ test("оператор получает private preview candidate без пуб�
   await page.getByLabel("Источник фактов").fill("Проверяемые CI данные");
   await page.getByRole("button", { name: "Сохранить новую версию фактов" }).click();
   await page.getByRole("button", { name: "Подтвердить факты" }).click();
-  await expect(page.getByText(/версия 1: confirmed/)).toBeVisible();
+  await expect(page.getByText(/версия 1: подтверждены/)).toBeVisible();
 
   const selectedKeyword = page.getByLabel(`Выбрать ${keyword}`);
   await selectedKeyword.check();
@@ -219,7 +219,7 @@ test("оператор получает private preview candidate без пуб�
   await page.getByRole("button", { name: "Одобрить", exact: true }).click();
   expect((await approveCollectionResponse).ok()).toBe(true);
   await expect(page.getByText("Коллекция одобрена.")).toBeVisible();
-  await expect(page.getByText("approved", { exact: true })).toBeVisible();
+  await expect(page.getByText("одобрен", { exact: true })).toBeVisible();
 
   const approvedCollection = await approveCollectionResponse;
   expect(approvedCollection.ok()).toBe(true);
@@ -361,7 +361,7 @@ test("оператор получает private preview candidate без пуб�
   ).toBeVisible();
 
   await page.getByTestId("project-nav-releases").click();
-  const createCandidate = page.getByRole("button", { name: "Создать candidate-сборку" });
+  const createCandidate = page.getByRole("button", { name: "Создать пробную сборку" });
   await expect(createCandidate).toBeVisible();
   const queueCandidateResponse = page.waitForResponse((response) =>
     response.request().method() === "POST" &&
@@ -384,7 +384,7 @@ test("оператор получает private preview candidate без пуб�
     const builds = await response.json() as { id: string; status: string }[];
     return builds.find((build) => build.id === candidate.id)?.status || "missing";
   }, { timeout: 120_000, intervals: [1000, 2000, 5000] }).toBe("ready");
-  const previewLink = page.getByRole("link", { name: "Открыть private preview" });
+  const previewLink = page.getByRole("link", { name: "Открыть закрытый предпросмотр" });
   await expect(previewLink).toBeVisible({ timeout: 20_000 });
   const previewResponse = await page.request.get(await previewLink.getAttribute("href") || "");
   expect(previewResponse.status()).toBe(200);

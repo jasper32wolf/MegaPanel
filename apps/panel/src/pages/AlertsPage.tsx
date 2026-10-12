@@ -69,7 +69,14 @@ function deliveryErrorLabel(error: string | undefined) {
 }
 
 function deliveryLabel(status: DeliveryStatus | undefined, error: string | undefined) {
-  return `${status || "не настроен"}${error ? ` · ${deliveryErrorLabel(error)}` : ""}`;
+  const labels: Record<DeliveryStatus, string> = {
+    queued: "в очереди",
+    processing: "отправляется",
+    retrying: "повторная отправка",
+    delivered: "доставлено",
+    dead_letter: "недоставлено",
+  };
+  return `${status ? labels[status] : "не настроено"}${error ? ` · ${deliveryErrorLabel(error)}` : ""}`;
 }
 
 export function AlertsPage() {

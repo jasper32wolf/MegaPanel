@@ -72,13 +72,13 @@ test("operator alert inbox shows channel status, read action and explicit test d
   await expect(page.getByRole("heading", { name: "Mega Panel" })).toBeVisible();
   await expect(page.getByText("Многофункциональная SEO панель", { exact: true })).toBeVisible();
   await expect(page.locator('img[src="/Iconka.svg"]')).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Оповещения" })).toBeVisible();
-  await expect(page.getByText("Email: SMTP.bz SMTP", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Оповещения", exact: true })).toBeVisible();
+  await expect(page.getByText("Эл. почта: SMTP.bz SMTP", { exact: true })).toBeVisible();
   await expect(page.getByText("Telegram: готов", { exact: true })).toBeVisible();
   await expect(page.getByText("Выполнен вход в панель", { exact: true })).toBeVisible();
-  await expect(page.getByText("Email: dead_letter · SMTP.bz отклонил логин или пароль (authentication_failed)", { exact: true })).toBeVisible();
+  await expect(page.getByText("Эл. почта: недоставлено · SMTP.bz отклонил логин или пароль (authentication_failed)", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Прочитано" }).click();
-  await expect(page.getByText("Входящие (0 непрочитанных)", { exact: true })).toBeVisible();
+  await expect(page.getByText("Входящие оповещения (0 непрочитанных)", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Отправить проверочное оповещение" }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
   await page.getByRole("button", { name: "Отправить", exact: true }).click();
