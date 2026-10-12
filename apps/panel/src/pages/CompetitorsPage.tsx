@@ -47,6 +47,14 @@ function tone(status: string) {
   return "warn" as const;
 }
 
+function statusLabel(status: string) {
+  const labels: Record<string, string> = {
+    queued: "в очереди", running: "выполняется", paused: "приостановлено", partial: "выполнено частично",
+    done: "завершено", blocked: "заблокировано", failed: "не выполнено", cancelled: "отменено", approved: "одобрено",
+  };
+  return labels[status] || status;
+}
+
 export function CompetitorsPage() {
   const { token } = useAuth();
   const [projects, setProjects] = useState<Project[]>([]);
@@ -204,8 +212,8 @@ export function CompetitorsPage() {
   return (
     <div>
       <PageHeader
-        title="Конкуренты и evidence"
-        description="Собирайте reference-only структурные сигналы конкурентов: вручную по URL либо в безопасном bounded-обходе одного HTTPS-домена. Исследование не создаёт страницы, не переносит чужие факты и не публикует сайт."
+        title="Конкуренты и данные исследования"
+        description="Собирайте только структурные сигналы конкурентов: вручную по URL или в ограниченном безопасном обходе одного HTTPS-домена. Исследование не создаёт страницы, не переносит чужие факты и не публикует сайт."
       />
       {error ? <p className="error" role="alert">{error}</p> : null}
       <Surface title="Проект и новый анализ">
@@ -216,7 +224,7 @@ export function CompetitorsPage() {
               <option value="">Выберите проект</option>
               {projects.map((project) => <option key={project.id} value={project.id}>{project.name} ({project.slug})</option>)}
             </select>
-            <span className="muted">Scan и последующее evidence навсегда относятся к выбранному проекту.</span>
+            <span className="muted">Результаты анализа и одобренные данные исследования навсегда относятся к выбранному проекту.</span>
           </label>
           <label className="field">
             Публичные URL конкурентов
@@ -225,7 +233,7 @@ export function CompetitorsPage() {
           </label>
           <label className="row">
             <input type="checkbox" checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)} required />
-            <span>Я отвечаю за право анализа указанных публичных страниц и понимаю, что URL не будут расширяться в crawl.</span>
+            <span>Я отвечаю за право анализа указанных публичных страниц и понимаю, что список URL не будет расширяться при обходе.</span>
             <HelpTip label="Какие данные собираются" topicId="research">Заголовок страницы, краткое описание, заголовки H1–H6 и похожие на вопросы заголовки. Эти данные не считаются подтверждёнными фактами и не публикуются автоматически.</HelpTip>
           </label>
           <button className="btn" type="submit" disabled={busy || !projectId || !acknowledged || !urlsText.trim()}>{busy ? "Анализ…" : "Проанализировать URL"}</button>
@@ -234,9 +242,9 @@ export function CompetitorsPage() {
       <Surface title="Исследование структуры всего домена">
         <form className="stack" onSubmit={startDomainCrawl}>
           <label className="field">
-            HTTPS root-domain конкурента
+            Корневой HTTPS-адрес конкурента
             <input value={domainRoot} onChange={(event) => setDomainRoot(event.target.value)} placeholder="https://example.ru" required />
-            <span className="muted">Только один публичный HTTPS origin на порту 443. Сервер уважает robots.txt, sitemap, same-origin scope и жёсткие лимиты.</span>
+            <span className="muted">Только один публичный HTTPS-источник на порту 443. Сервер соблюдает robots.txt, проверяет sitemap и не выходит за пределы домена и заданных лимитов.</span>
           </label>
           <label className="field">
             Максимум HTML-страниц: {maxPages}
@@ -249,13 +257,13 @@ export function CompetitorsPage() {
           </label>
           <button className="btn" type="submit" disabled={busy || !projectId || !crawlAcknowledged || !domainRoot.trim()}>{busy ? "Запуск…" : "Запустить обход домена"}</button>
         </form>
-        {!projectId ? <EmptyState title="Выберите проект" hint="Обход и результаты всегда принадлежат одному проекту." /> : crawls.length === 0 ? <EmptyState title="Обходов пока нет" hint="Запустите bounded-исследование публичного HTTPS-домена, чтобы собрать карту страниц и SEO-сигналы." /> : <DataTable headers={["Дата", "Origin", "Статус", "Прогресс", "Покрытие", "Действие"]}>{crawls.map((crawl) => <tr key={crawl.id}><td className="muted">{crawl.created_at.slice(0, 19)}</td><td><strong>{crawl.origin}</strong><br /><span className="muted">лимит: {crawl.configuration.max_pages || crawl.progress.max_pages || "—"} страниц</span></td><td><StatusPill tone={crawlTone(crawl.status)}>{crawl.status}</StatusPill>{scheduledCrawls[crawl.id] ? <p className="muted">Очередь: {scheduledCrawls[crawl.id].state}{scheduledCrawls[crawl.id].failure_code ? ` · ${scheduledCrawls[crawl.id].failure_code}` : ""}</p> : null}{crawl.error_message ? <p className="error">{crawl.error_message}</p> : null}</td><td>{crawl.progress.fetched || 0} получено · {crawl.progress.discovered || 0} найдено · {crawl.progress.skipped || 0} пропущено</td><td>{crawl.coverage.coverage || "ожидание"}{crawl.coverage.page_limit_reached ? " · лимит достигнут" : ""}</td><td className="row">{scheduledCrawls[crawl.id]?.state === "queued" ? <button className="btn btn-ghost" type="button" disabled={busy} onClick={() => controlCrawlQueue(scheduledCrawls[crawl.id], "pause")}>Пауза</button> : null}{scheduledCrawls[crawl.id]?.state === "paused" ? <button className="btn btn-ghost" type="button" disabled={busy} onClick={() => controlCrawlQueue(scheduledCrawls[crawl.id], "resume")}>Продолжить</button> : null}{crawl.status === "queued" || crawl.status === "running" ? <button className="btn btn-ghost" type="button" disabled={busy} onClick={() => cancelCrawl(crawl)}>Отменить</button> : "—"}</td></tr>)}</DataTable>}
+        {!projectId ? <EmptyState title="Выберите проект" hint="Обход и результаты всегда принадлежат одному проекту." /> : crawls.length === 0 ? <EmptyState title="Обходов пока нет" hint="Запустите ограниченное исследование публичного HTTPS-домена, чтобы собрать карту страниц и SEO-сигналы." /> : <DataTable headers={["Дата", "Источник", "Статус", "Прогресс", "Покрытие", "Действие"]}>{crawls.map((crawl) => <tr key={crawl.id}><td className="muted">{crawl.created_at.slice(0, 19)}</td><td><strong>{crawl.origin}</strong><br /><span className="muted">лимит: {crawl.configuration.max_pages || crawl.progress.max_pages || "—"} страниц</span></td><td><StatusPill tone={crawlTone(crawl.status)}>{statusLabel(crawl.status)}</StatusPill>{scheduledCrawls[crawl.id] ? <p className="muted">Очередь: {statusLabel(scheduledCrawls[crawl.id].state)}{scheduledCrawls[crawl.id].failure_code ? ` · ${scheduledCrawls[crawl.id].failure_code}` : ""}</p> : null}{crawl.error_message ? <p className="error">{crawl.error_message}</p> : null}</td><td>{crawl.progress.fetched || 0} получено · {crawl.progress.discovered || 0} найдено · {crawl.progress.skipped || 0} пропущено</td><td>{crawl.coverage.coverage || "ожидание"}{crawl.coverage.page_limit_reached ? " · лимит достигнут" : ""}</td><td className="row">{scheduledCrawls[crawl.id]?.state === "queued" ? <button className="btn btn-ghost" type="button" disabled={busy} onClick={() => controlCrawlQueue(scheduledCrawls[crawl.id], "pause")}>Пауза</button> : null}{scheduledCrawls[crawl.id]?.state === "paused" ? <button className="btn btn-ghost" type="button" disabled={busy} onClick={() => controlCrawlQueue(scheduledCrawls[crawl.id], "resume")}>Продолжить</button> : null}{crawl.status === "queued" || crawl.status === "running" ? <button className="btn btn-ghost" type="button" disabled={busy} onClick={() => cancelCrawl(crawl)}>Отменить</button> : "—"}</td></tr>)}</DataTable>}
       </Surface>
       <Surface title="Сохранённые исследования">
-        {!projectId ? <EmptyState title="Выберите проект" hint="Источники и evidence намеренно не смешиваются между проектами." /> : scans.length === 0 ? <EmptyState title="Исследований пока нет" hint="Добавьте вручную выбранные публичные URL. После проверки результат можно отдельно одобрить как reference-only evidence." /> : <DataTable headers={["Дата", "URL", "Статус", "Извлечённые сигналы", "Evidence"]}>{scans.map((scan) => <tr key={scan.id}><td className="muted">{scan.created_at.slice(0, 19)}</td><td><strong>{scan.seed_url}</strong><br /><span className="muted">{scan.urls.length} URL</span></td><td><StatusPill tone={tone(scan.status)}>{scan.status}</StatusPill>{scan.error ? <p className="error">{scan.error}</p> : null}</td><td>{scan.skeleton.sample_titles?.slice(0, 2).join(" · ") || "—"}</td><td>{approvedScanIds.has(scan.id) ? <StatusPill tone="ok">approved</StatusPill> : scan.status === "done" ? <button className="btn btn-ghost" type="button" disabled={busy} onClick={() => approve(scan)}>Одобрить evidence</button> : "—"}</td></tr>)}</DataTable>}
+        {!projectId ? <EmptyState title="Выберите проект" hint="Источники и данные исследования намеренно не смешиваются между проектами." /> : scans.length === 0 ? <EmptyState title="Исследований пока нет" hint="Добавьте вручную выбранные публичные URL. После проверки результат можно отдельно одобрить как справочные данные исследования." /> : <DataTable headers={["Дата", "URL", "Статус", "Извлечённые сигналы", "Данные исследования"]}>{scans.map((scan) => <tr key={scan.id}><td className="muted">{scan.created_at.slice(0, 19)}</td><td><strong>{scan.seed_url}</strong><br /><span className="muted">{scan.urls.length} URL</span></td><td><StatusPill tone={tone(scan.status)}>{statusLabel(scan.status)}</StatusPill>{scan.error ? <p className="error">{scan.error}</p> : null}</td><td>{scan.skeleton.sample_titles?.slice(0, 2).join(" · ") || "—"}</td><td>{approvedScanIds.has(scan.id) ? <StatusPill tone="ok">одобрено</StatusPill> : scan.status === "done" ? <button className="btn btn-ghost" type="button" disabled={busy} onClick={() => approve(scan)}>Одобрить данные исследования</button> : "—"}</td></tr>)}</DataTable>}
       </Surface>
-      <Surface title="Approved evidence">
-        {!projectId || evidence.length === 0 ? <EmptyState title="Одобренного evidence пока нет" hint="Только после явного одобрения компактные reference-only сигналы могут попасть в architecture quote выбранного проекта." /> : <DataTable headers={["Одобрено", "Сигналы", "Граница"]}>{evidence.map((item) => <tr key={item.id}><td className="muted">{item.approved_at?.slice(0, 19) || "—"}</td><td>{item.content.signals?.sample_titles?.slice(0, 2).join(" · ") || item.content.signals?.sample_h1?.slice(0, 2).join(" · ") || "—"}</td><td>reference-only; не business facts, не keywords и не PagePlan</td></tr>)}</DataTable>}
+      <Surface title="Одобренные данные исследования">
+        {!projectId || evidence.length === 0 ? <EmptyState title="Одобренных данных исследования пока нет" hint="Только после явного одобрения компактные структурные сигналы могут быть учтены при формировании структуры выбранного проекта." /> : <DataTable headers={["Одобрено", "Сигналы", "Ограничение использования"]}>{evidence.map((item) => <tr key={item.id}><td className="muted">{item.approved_at?.slice(0, 19) || "—"}</td><td>{item.content.signals?.sample_titles?.slice(0, 2).join(" · ") || item.content.signals?.sample_h1?.slice(0, 2).join(" · ") || "—"}</td><td>Только для справки; не факты бизнеса, не ключевые фразы и не план страниц</td></tr>)}</DataTable>}
       </Surface>
     </div>
   );

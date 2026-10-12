@@ -41,6 +41,22 @@ function toneOutcome(outcome: string) {
   return "accent" as const;
 }
 
+function statusLabel(status: string) {
+  const labels: Record<string, string> = {
+    new: "новый", qualified: "квалифицирован", spam: "спам", sent: "отправлен", failed: "не доставлен",
+    queued: "в очереди", processing: "обрабатывается", retrying: "повторная попытка", delivered: "доставлено", dead_letter: "доставка прекращена",
+  };
+  return labels[status] || status;
+}
+
+function outcomeLabel(outcome: string) {
+  const labels: Record<string, string> = {
+    unknown: "не указан", contacted: "связались", won: "успешно", lost: "неуспешно", unqualified: "не подходит",
+    no_answer: "не отвечает", price: "цена", geography: "география", timing: "сроки", duplicate: "дубликат", no_capacity: "нет ресурсов", other: "другая",
+  };
+  return labels[outcome] || outcome;
+}
+
 export function LeadsPage() {
   const { token } = useAuth();
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -251,16 +267,16 @@ export function LeadsPage() {
 
   return (
     <div>
-      <PageHeader title="Лиды" description="В списке нет расшифрованных контактов. Откройте карточку, затем отдельно подтвердите раскрытие PII только при необходимости. Исход лида не изменяет контент автоматически; петля обратной связи относится к дорожной карте развития." />
+      <PageHeader title="Лиды" description="В списке нет раскрытых контактов. Откройте карточку, затем отдельно подтвердите раскрытие персональных данных только при необходимости. Исход лида не изменяет контент автоматически; обратная связь используется при дальнейшем планировании развития." />
       {error && <p className="error" role="alert">{error}</p>}
       <Surface title="Сводка обратной связи">
         <div className="stat-grid"><div className="stat"><div className="label">Всего лидов</div><div className="value">{analysis?.total ?? "—"}</div></div><div className="stat"><div className="label">Оценено оператором</div><div className="value">{analysis?.evaluated ?? "—"}</div></div><div className="stat"><div className="label">Без исхода</div><div className="value">{analysis?.unassessed ?? "—"}</div></div></div>
         <p className="muted" style={{ marginBottom: 0 }}>Исход лида — ручной сигнал для следующей проверки сайта или плана страниц. Он не меняет контент, SEO, публикацию или доставку автоматически.</p>
-        {analysis && Object.keys(analysis.by_outcome).length > 0 && <div className="row" style={{ marginTop: "1rem" }}>{Object.entries(analysis.by_outcome).map(([key, value]) => <StatusPill key={key} tone="accent">{key}: {value}</StatusPill>)}</div>}
+        {analysis && Object.keys(analysis.by_outcome).length > 0 && <div className="row" style={{ marginTop: "1rem" }}>{Object.entries(analysis.by_outcome).map(([key, value]) => <StatusPill key={key} tone="accent">{outcomeLabel(key)}: {value}</StatusPill>)}</div>}
       </Surface>
       <Surface>
         <form onSubmit={applySearch} className="row" style={{ marginBottom: "1rem" }}>
-          <label className="field" style={{ margin: 0, minWidth: 180 }}>Статус<select value={status} onChange={(event) => setFilter(setStatus, event.target.value)}><option value="">Все</option>{statuses.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+          <label className="field" style={{ margin: 0, minWidth: 180 }}>Статус<select value={status} onChange={(event) => setFilter(setStatus, event.target.value)}><option value="">Все</option>{statuses.map((item) => <option key={item} value={item}>{statusLabel(item)}</option>)}</select></label>
           <label className="field" style={{ margin: 0, minWidth: 180 }}>Сайт<select value={siteId} onChange={(event) => setFilter(setSiteId, event.target.value)}><option value="">Все</option>{sites.map((site) => <option key={site.id} value={site.id}>{site.domain}</option>)}</select></label>
           <label className="field" style={{ margin: 0, minWidth: 240 }}>Поиск<input value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="Домен, статус или страница" /></label>
           <button className="btn" type="submit" disabled={busy !== null}>Найти</button>
@@ -269,12 +285,12 @@ export function LeadsPage() {
         <DataTable headers={["Статус", "Сайт", "Квалификация", "Страница", "CRM", "Доставка", "Когда", ""]}>
           {leads.map((lead) => (
             <tr key={lead.id}>
-              <td><StatusPill tone={statusTone(lead.status)}>{lead.status}</StatusPill></td>
+              <td><StatusPill tone={statusTone(lead.status)}>{statusLabel(lead.status)}</StatusPill></td>
               <td className="muted">{lead.site_domain}</td>
               <td>{lead.qualification || "—"}</td>
               <td className="muted">{lead.page_slug || "—"}</td>
               <td>{lead.crm_status || "—"}</td>
-              <td>{lead.delivery_status ? <StatusPill tone={lead.delivery_status === "delivered" ? "ok" : lead.delivery_status === "dead_letter" ? "danger" : "warn"}>{lead.delivery_status}</StatusPill> : "—"}</td>
+              <td>{lead.delivery_status ? <StatusPill tone={lead.delivery_status === "delivered" ? "ok" : lead.delivery_status === "dead_letter" ? "danger" : "warn"}>{statusLabel(lead.delivery_status)}</StatusPill> : "—"}</td>
               <td className="muted">{lead.created_at?.slice(0, 19) || "—"}</td>
               <td><div className="row row-tight"><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => openDetail(lead)}>{busy === `detail:${lead.id}` ? "Открытие…" : "Открыть"}</button><select aria-label="Изменить статус" disabled={busy !== null} value={lead.status} onChange={(event) => updateStatus(lead, event.target.value)}>{statuses.map((item) => <option key={item} value={item}>{item}</option>)}</select></div></td>
             </tr>
@@ -285,7 +301,7 @@ export function LeadsPage() {
       </Surface>
       {exportConfirmation && <Surface title="Экспортировать лиды"><p className="muted">CSV содержит контактные данные и сообщение всех {total} лидов из текущей выборки. Файл нельзя безопасно передавать третьим лицам. Экспорт будет записан в audit log.</p><div className="row"><button className="btn" type="button" disabled={busy !== null} onClick={exportLeads}>{busy === "export" ? "Подготовка…" : "Подтвердить экспорт"}</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => setExportConfirmation(false)}>Отмена</button></div></Surface>}
       {detail && <Surface title="Карточка лида"><div className="detail-grid"><div><strong>Сайт</strong><p>{detail.site_domain}</p></div><div><strong>Статус</strong><p>{detail.status}</p></div><div><strong>Страница</strong><p>{detail.page_slug || "—"}</p></div><div><strong>CRM</strong><p>{detail.crm_status || "—"}</p></div></div>{pii ? <><div className="detail-grid"><div><strong>Телефон</strong><p>{pii.phone || "—"}</p></div><div><strong>Email</strong><p>{pii.email || "—"}</p></div><div><strong>Имя</strong><p>{pii.name || "—"}</p></div></div><div><strong>Сообщение</strong><p>{pii.message || "—"}</p></div></> : <button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={revealPii}>{busy === `reveal:${detail.id}` ? "Раскрытие…" : "Раскрыть контакты и сообщение"}</button>}<label className="field" style={{ marginTop: "1rem" }}>Заметка<textarea value={notes} onChange={(event) => setNotes(event.target.value)} maxLength={4000} rows={4} /></label><div className="row"><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={saveNotes}>{busy === `notes:${detail.id}` ? "Сохранение…" : "Сохранить заметку"}</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={loadDelivery}>{busy === `delivery:${detail.id}` ? "Загрузка…" : "История доставки"}</button><button className="btn btn-ghost" type="button" disabled={busy !== null} onClick={() => { setDetail(null); setDelivery(null); setPii(null); setNotes(""); }}>Закрыть карточку</button></div></Surface>}
-      {detail && <Surface title="Исход лида"><form className="stack" onSubmit={recordOutcome}><p className="muted" style={{ margin: 0 }}>Зафиксируйте результат общения отдельно от статуса inbox и технической доставки webhook.</p><label className="field">Исход<select value={outcome} onChange={(event) => setOutcome(event.target.value)}>{outcomes.map((item) => <option key={item} value={item}>{item}</option>)}</select></label><label className="field">Причина<select value={outcomeReason} onChange={(event) => setOutcomeReason(event.target.value)}><option value="">Не указана</option>{outcomeReasons.map((item) => <option key={item} value={item}>{item}</option>)}</select></label><label className="field">Заметка об исходе<textarea value={outcomeNote} onChange={(event) => setOutcomeNote(event.target.value)} maxLength={4000} rows={3} /></label><button className="btn btn-ghost" type="submit" disabled={busy !== null}>{busy === `outcome:${detail.id}` ? "Сохранение…" : "Сохранить исход"}</button></form>{outcomesHistory.length === 0 ? <EmptyState title="Исходы ещё не зафиксированы" /> : <DataTable headers={["Исход", "Причина", "Заметка", "Когда"]}>{outcomesHistory.map((item) => <tr key={item.id}><td><StatusPill tone={toneOutcome(item.outcome)}>{item.outcome}</StatusPill></td><td>{item.reason || "—"}</td><td className="muted">{item.note || "—"}</td><td className="muted">{item.created_at?.slice(0, 19) || "—"}</td></tr>)}</DataTable>}</Surface>}
+      {detail && <Surface title="Исход лида"><form className="stack" onSubmit={recordOutcome}><p className="muted" style={{ margin: 0 }}>Зафиксируйте результат общения отдельно от статуса inbox и технической доставки webhook.</p><label className="field">Исход<select value={outcome} onChange={(event) => setOutcome(event.target.value)}>{outcomes.map((item) => <option key={item} value={item}>{outcomeLabel(item)}</option>)}</select></label><label className="field">Причина<select value={outcomeReason} onChange={(event) => setOutcomeReason(event.target.value)}><option value="">Не указана</option>{outcomeReasons.map((item) => <option key={item} value={item}>{outcomeLabel(item)}</option>)}</select></label><label className="field">Заметка об исходе<textarea value={outcomeNote} onChange={(event) => setOutcomeNote(event.target.value)} maxLength={4000} rows={3} /></label><button className="btn btn-ghost" type="submit" disabled={busy !== null}>{busy === `outcome:${detail.id}` ? "Сохранение…" : "Сохранить исход"}</button></form>{outcomesHistory.length === 0 ? <EmptyState title="Исходы ещё не зафиксированы" /> : <DataTable headers={["Исход", "Причина", "Заметка", "Когда"]}>{outcomesHistory.map((item) => <tr key={item.id}><td><StatusPill tone={toneOutcome(item.outcome)}>{outcomeLabel(item.outcome)}</StatusPill></td><td>{item.reason || "—"}</td><td className="muted">{item.note || "—"}</td><td className="muted">{item.created_at?.slice(0, 19) || "—"}</td></tr>)}</DataTable>}</Surface>}
       {detail && delivery && <Surface title="Доставка заявок">
         <p className="muted">Получатель private email намеренно не раскрывается в панели, API и audit log. Для SMTP показан только канал доставки.</p>
         {delivery.deliveries.length === 0 && <EmptyState title="Доставка не настроена" hint="Настройте webhook либо сохраните private recipient в подтверждённых facts проекта и SMTP transport в VPS environment." />}

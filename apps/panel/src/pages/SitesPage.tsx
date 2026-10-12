@@ -27,6 +27,14 @@ function buildTone(status: string) {
   return "accent" as const;
 }
 
+function stateLabel(state: string) {
+  const labels: Record<string, string> = {
+    published: "опубликован", ready: "готова", failed: "не выполнена", queued: "в очереди", running: "выполняется",
+    indexed: "в индексе", noindex: "не индексируется", draft: "черновик",
+  };
+  return labels[state] || state;
+}
+
 type SitePage = {
   id: string;
   slug: string;
@@ -102,7 +110,7 @@ export function SitesPage() {
       setWebhookUrl(settings.target_url || "");
       setWebhookSecret("");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Настройки webhook не сохранены");
+      setError(cause instanceof Error ? cause.message : "Настройки Webhook не сохранены");
     } finally {
       setBusy(null);
     }
@@ -110,14 +118,14 @@ export function SitesPage() {
 
   return (
     <div>
-      <PageHeader title="Сайты" description="Просмотр статуса, истории сборок, страниц и webhook. Сборка, публикация и откат выполняются только из Project workspace через candidate build и явное подтверждение." />
+      <PageHeader title="Сайты" description="Здесь можно просмотреть статус, историю сборок, страницы и Webhook. Сборка, публикация и откат выполняются только из рабочего пространства проекта через пробную сборку и явное подтверждение." />
       {error && <p className="error">{error}</p>}
       <Surface>
         <DataTable headers={["Домен", "Статус", "Сборка", "Версия", "Действия"]}>
           {sites.map((site) => (
             <tr key={site.id}>
               <td><strong>{site.domain}</strong></td>
-              <td><StatusPill tone={site.publish_state === "published" ? "ok" : "accent"}>{site.publish_state}</StatusPill></td>
+              <td><StatusPill tone={site.publish_state === "published" ? "ok" : "accent"}>{stateLabel(site.publish_state)}</StatusPill></td>
               <td className="muted">{site.build_hash ? site.build_hash.slice(0, 12) : "—"}</td>
               <td>{site.version}</td>
               <td>
@@ -136,7 +144,7 @@ export function SitesPage() {
             {history.map((build) => (
               <tr key={build.id}>
                 <td>{build.created_at?.slice(0, 19) || "—"}</td>
-                <td><StatusPill tone={buildTone(build.status)}>{build.status}</StatusPill></td>
+                <td><StatusPill tone={buildTone(build.status)}>{stateLabel(build.status)}</StatusPill></td>
                 <td className="muted">{build.build_hash?.slice(0, 12) || "—"}</td>
                 <td>{build.pages_built}</td>
                 <td>{build.duration_ms === null ? "—" : `${build.duration_ms} мс`}</td>
@@ -153,11 +161,11 @@ export function SitesPage() {
               Доставка использует HTTPS, HMAC и повторные попытки. Секрет не отображается после сохранения и не попадает в опубликованный сайт.
             </p>
             <label className="field">
-              Webhook URL
+              Адрес Webhook
               <input type="url" value={webhookUrl} onChange={(event) => setWebhookUrl(event.target.value)} placeholder="https://crm.example.test/leads" required />
             </label>
             <label className="field">
-              Новый signing secret
+              Новый секрет подписи
               <input value={webhookSecret} onChange={(event) => setWebhookSecret(event.target.value)} type="password" autoComplete="new-password" minLength={16} required />
             </label>
             <div className="row">
@@ -165,7 +173,7 @@ export function SitesPage() {
               {webhook?.secret_configured && <span className="muted">Секрет сохранён. Введите новый, только если меняете настройку.</span>}
             </div>
             <button className="btn" type="submit" disabled={busy !== null || !webhookUrl.trim() || webhookSecret.length < 16}>
-              {busy === `${selected.id}:webhook` ? "Сохранение…" : "Сохранить webhook"}
+              {busy === `${selected.id}:webhook` ? "Сохранение…" : "Сохранить Webhook"}
             </button>
           </form>
         </Surface>
@@ -176,9 +184,9 @@ export function SitesPage() {
             {pages.map((page) => (
               <tr key={page.id}>
                 <td><strong>{page.slug || "/"}</strong></td>
-                <td><StatusPill tone={page.publish_state === "published" ? "ok" : "accent"}>{page.publish_state}</StatusPill></td>
-                <td><StatusPill tone={page.index_state === "indexed" ? "ok" : page.index_state === "noindex" ? "warn" : "accent"}>{page.index_state}</StatusPill></td>
-                <td className="muted">{page.content_chars} знаков{page.thin ? " · thin" : ""}</td>
+                <td><StatusPill tone={page.publish_state === "published" ? "ok" : "accent"}>{stateLabel(page.publish_state)}</StatusPill></td>
+                <td><StatusPill tone={page.index_state === "indexed" ? "ok" : page.index_state === "noindex" ? "warn" : "accent"}>{stateLabel(page.index_state)}</StatusPill></td>
+                <td className="muted">{page.content_chars} знаков{page.thin ? " · мало контента" : ""}</td>
                 <td>{page.thin ? <StatusPill tone="warn">нужна доработка</StatusPill> : ""}</td>
               </tr>
             ))}

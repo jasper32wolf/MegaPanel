@@ -17,6 +17,17 @@ type AIQuote = { estimated_cost_usd: number; max_cost_usd: number; input_snapsho
 type GeoProposalNode = { key: string; kind: "district" | "metro" | "landmark"; name: string; parent_key: string; notes: string[] };
 type GeoProposalRun = { id: string; status: string; output: { nodes: GeoProposalNode[]; warnings: string[] }; prompt_hash: string; error_code: string | null };
 
+function geoKindLabel(kind: string) {
+  const labels: Record<string, string> = {
+    country: "Страна", region: "Регион", city: "Город", district: "Район", metro: "Метро", landmark: "Ориентир", street: "Улица",
+  };
+  return labels[kind] || kind;
+}
+
+function proposalStatusLabel(status: string) {
+  return status === "pending_approval" ? "ожидает одобрения" : status;
+}
+
 export function GeoPage() {
   const { token } = useAuth();
   const [places, setPlaces] = useState<GeoPlace[]>([]);
@@ -81,7 +92,7 @@ export function GeoPage() {
         setProviders(active);
         if (active.length === 1) setAiProviderId(active[0].id);
       })
-      .catch((cause) => setError(cause instanceof Error ? cause.message : "Не удалось загрузить AI-провайдеры"));
+      .catch((cause) => setError(cause instanceof Error ? cause.message : "Не удалось загрузить поставщиков ИИ"));
   }, [token]);
 
   async function addManual(event: FormEvent) {
@@ -142,7 +153,7 @@ export function GeoPage() {
       setAiQuote(await api<AIQuote>("/api/v1/geo/ai-proposals/quote", { method: "POST", body: JSON.stringify(geoAIRequest()) }, token));
     } catch (cause) {
       setAiQuote(null);
-      setError(cause instanceof Error ? cause.message : "Не удалось рассчитать AI-предложение");
+      setError(cause instanceof Error ? cause.message : "Не удалось рассчитать предложение ИИ");
     } finally {
       setBusy(false);
     }
@@ -159,7 +170,7 @@ export function GeoPage() {
       }, token);
       setAiRun(result);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Не удалось создать AI-предложение");
+      setError(cause instanceof Error ? cause.message : "Не удалось создать предложение ИИ");
     } finally {
       setBusy(false);
     }
@@ -254,16 +265,16 @@ export function GeoPage() {
             <div className="row"><button className="btn" type="submit" disabled={busy || (parentRequired && !parentId)}>{busy ? "Сохранение…" : editing ? "Сохранить" : "Добавить"}</button>{editing && <button className="btn btn-ghost" type="button" disabled={busy} onClick={cancelEditing}>Отмена</button>}</div>
           </form>
         </Surface>
-        <Surface title="AI-предложение иерархии">
-          <p className="muted">AI получает только выбранный город, существующих прямых потомков и ваши указания. Узлы не создаются до quote, явного согласия, review и отдельного apply.</p>
+        <Surface title="Предложение ИИ для иерархии">
+          <p className="muted">ИИ получает только выбранный город, существующих прямых потомков и ваши указания. Узлы не создаются до расчёта стоимости, явного согласия, проверки и отдельного применения.</p>
           <div className="stack">
             <label className="field">Город<select value={aiCityId} onChange={(event) => { setAiCityId(event.target.value); setAiQuote(null); }} required><option value="">Выберите город</option>{places.filter((place) => place.kind === "city").map((place) => <option key={place.id} value={place.id}>{place.name}</option>)}</select></label>
-            <label className="field">AI-провайдер<select value={aiProviderId} onChange={(event) => { setAiProviderId(event.target.value); setAiQuote(null); }} required><option value="">Выберите активное подключение</option>{providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.label} · {provider.provider_id}</option>)}</select></label>
+            <label className="field">Поставщик ИИ<select value={aiProviderId} onChange={(event) => { setAiProviderId(event.target.value); setAiQuote(null); }} required><option value="">Выберите активное подключение</option>{providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.label} · {provider.provider_id}</option>)}</select></label>
             <label className="field">Модель<input value={aiModel} onChange={(event) => { setAiModel(event.target.value); setAiQuote(null); }} placeholder="Модель из настроенного подключения" required /></label>
             <label className="field">Указания оператору<textarea value={aiGuidance} onChange={(event) => { setAiGuidance(event.target.value); setAiQuote(null); }} rows={3} placeholder="Одна проверяемая задача на строку" /></label>
             <div className="two-col"><label className="field">Лимит мест<input type="number" min="1" max="50" value={aiMaxPlaces} onChange={(event) => { setAiMaxPlaces(event.target.value); setAiQuote(null); }} /></label><label className="field">Лимит стоимости, USD<input type="number" min="0.000001" step="0.01" value={aiMaxCost} onChange={(event) => { setAiMaxCost(event.target.value); setAiQuote(null); }} /></label></div>
-            <button className="btn btn-ghost" type="button" disabled={busy || !aiCityId || !aiProviderId || !aiModel.trim()} onClick={quoteGeoAI}>{busy ? "Расчёт…" : "Рассчитать quote"}</button>
-            {aiQuote && <><p className="muted">Estimate: {aiQuote.estimated_cost_usd.toFixed(6)} USD; pricing: {aiQuote.pricing_source}, observed {aiQuote.pricing_observed_at}. Внешний provider ещё не вызывался.</p><label className="field"><input type="checkbox" checked={aiConsented} onChange={(event) => setAiConsented(event.target.checked)} /> Подтверждаю передачу ограниченного geo-context провайдеру и лимит бюджета.</label><button className="btn" type="button" disabled={busy || !aiConsented} onClick={proposeGeoAI}>Создать proposal для review</button></>}
+            <button className="btn btn-ghost" type="button" disabled={busy || !aiCityId || !aiProviderId || !aiModel.trim()} onClick={quoteGeoAI}>{busy ? "Расчёт…" : "Рассчитать стоимость"}</button>
+            {aiQuote && <><p className="muted">Оценка: {aiQuote.estimated_cost_usd.toFixed(6)} USD; источник цен: {aiQuote.pricing_source}, получен {aiQuote.pricing_observed_at}. Внешний поставщик ещё не вызывался.</p><label className="field"><input type="checkbox" checked={aiConsented} onChange={(event) => setAiConsented(event.target.checked)} /> Подтверждаю передачу ограниченного географического контекста поставщику и лимит бюджета.</label><button className="btn" type="button" disabled={busy || !aiConsented} onClick={proposeGeoAI}>Создать предложение для проверки</button></>}
           </div>
         </Surface>
         <Surface title="Импорт CSV">
@@ -275,8 +286,8 @@ export function GeoPage() {
         </Surface>
       </div>
       {result && <Surface title="Результат импорта"><div className="row"><StatusPill tone="ok">Добавлено/обновлено: {result.created_or_updated}</StatusPill><StatusPill tone={result.invalid_rows ? "warn" : "ok"}>Ошибок: {result.invalid_rows}</StatusPill></div>{result.errors.length > 0 && <ul className="import-errors">{result.errors.map((item) => <li key={`${item.line}-${item.error}`}>Строка {item.line}: {item.error}</li>)}</ul>}</Surface>}
-      {aiRun && <Surface title="Review AI-предложения"><p className="muted">Статус: {aiRun.status}. Перед apply измените названия и parent key при необходимости; server повторно валидирует hierarchy и не создаёт места без explicit approval.</p>{aiRun.output.warnings.map((warning) => <p key={warning} className="muted">Предупреждение: {warning}</p>)}<div className="stack">{aiRun.output.nodes.map((node, index) => <div className="detail-grid" key={node.key}><div><strong>{node.kind}</strong><p>{node.key}</p></div><label className="field">Название<input value={node.name} onChange={(event) => updateProposalNode(index, "name", event.target.value)} /></label><label className="field">Parent key<select value={node.parent_key} onChange={(event) => updateProposalNode(index, "parent_key", event.target.value)}><option value="city">city</option>{aiRun.output.nodes.filter((candidate) => candidate.kind === "district" || candidate.kind === "metro").map((candidate) => <option key={candidate.key} value={candidate.key}>{candidate.key}</option>)}</select></label></div>)}</div><button className="btn" type="button" disabled={busy || aiRun.status !== "pending_approval"} onClick={approveAndApplyGeoAI}>{busy ? "Применение…" : "Одобрить и применить проверенный proposal"}</button></Surface>}
-      <Surface title="Иерархия справочника"><p className="muted">Город → район или метро → ориентир. Дерево строится по parent link; поиск показывает совпадающие объекты из локального справочника.</p><form className="row" onSubmit={search} style={{ marginBottom: "1rem" }}><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Поиск города, района, метро или ориентира" style={{ minWidth: 260 }} /><button className="btn btn-ghost" type="submit">Найти</button></form><DataTable headers={["Название", "Тип", "Источник", "Население", ""]}>{hierarchy.map((place) => <tr key={place.id}><td><strong style={{ paddingLeft: `${place.depth * 1.25}rem` }}>{place.depth ? "↳ " : ""}{place.name}</strong></td><td>{place.kind}</td><td>{place.source}</td><td>{place.population?.toLocaleString("ru-RU") || "—"}</td><td><button className="btn btn-ghost" type="button" disabled={busy} onClick={() => startEditing(place)}>Изменить</button></td></tr>)}{places.length === 0 && <tr><td colSpan={5}><EmptyState title="Справочник пуст" hint="Добавьте страну и город вручную или импортируйте CSV." /></td></tr>}</DataTable></Surface>
+      {aiRun && <Surface title="Проверка предложения ИИ"><p className="muted">Статус: {proposalStatusLabel(aiRun.status)}. Перед применением при необходимости измените названия и ключ родителя; сервер повторно проверит иерархию и не создаст места без явного одобрения.</p>{aiRun.output.warnings.map((warning) => <p key={warning} className="muted">Предупреждение: {warning}</p>)}<div className="stack">{aiRun.output.nodes.map((node, index) => <div className="detail-grid" key={node.key}><div><strong>{geoKindLabel(node.kind)}</strong><p>{node.key}</p></div><label className="field">Название<input value={node.name} onChange={(event) => updateProposalNode(index, "name", event.target.value)} /></label><label className="field">Ключ родителя<select value={node.parent_key} onChange={(event) => updateProposalNode(index, "parent_key", event.target.value)}><option value="city">Город</option>{aiRun.output.nodes.filter((candidate) => candidate.kind === "district" || candidate.kind === "metro").map((candidate) => <option key={candidate.key} value={candidate.key}>{candidate.key}</option>)}</select></label></div>)}</div><button className="btn" type="button" disabled={busy || aiRun.status !== "pending_approval"} onClick={approveAndApplyGeoAI}>{busy ? "Применение…" : "Одобрить и применить проверенное предложение"}</button></Surface>}
+      <Surface title="Иерархия справочника"><p className="muted">Город → район или метро → ориентир. Дерево строится по связи с родительским объектом; поиск показывает совпадающие объекты из локального справочника.</p><form className="row" onSubmit={search} style={{ marginBottom: "1rem" }}><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Поиск города, района, метро или ориентира" style={{ minWidth: 260 }} /><button className="btn btn-ghost" type="submit">Найти</button></form><DataTable headers={["Название", "Тип", "Источник", "Население", ""]}>{hierarchy.map((place) => <tr key={place.id}><td><strong style={{ paddingLeft: `${place.depth * 1.25}rem` }}>{place.depth ? "↳ " : ""}{place.name}</strong></td><td>{geoKindLabel(place.kind)}</td><td>{place.source}</td><td>{place.population?.toLocaleString("ru-RU") || "—"}</td><td><button className="btn btn-ghost" type="button" disabled={busy} onClick={() => startEditing(place)}>Изменить</button></td></tr>)}{places.length === 0 && <tr><td colSpan={5}><EmptyState title="Справочник пуст" hint="Добавьте страну и город вручную или импортируйте CSV." /></td></tr>}</DataTable></Surface>
     </div>
   );
 }

@@ -130,7 +130,7 @@ test("оператор получает private preview candidate без пуб�
   );
   await page.getByRole("button", { name: "Проверить CSV" }).click();
   expect((await previewResponsePromise).ok()).toBe(true);
-  await expect(page.getByRole("heading", { name: "Preview CSV без записи" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Предварительный просмотр CSV без сохранения" })).toBeVisible();
   await expect(page.getByText("Будет добавлено: 1")).toBeVisible();
   expect(keywordImportRequests).toEqual(["/api/v1/keywords/import-csv/preview"]);
   await page.getByLabel("Колонка города").fill("city_name");

@@ -192,11 +192,11 @@ export function KeywordsPage() {
             <label className="field">Колонка фразы<input value={mapping.phrase} onChange={(event) => changeMapping("phrase", event.target.value)} required disabled={busy} /></label>
             <label className="field">Колонка группы<input value={mapping.group} onChange={(event) => changeMapping("group", event.target.value)} placeholder="Не импортировать" disabled={busy} /></label>
             <label className="field">Колонка частотности<input value={mapping.frequency} onChange={(event) => changeMapping("frequency", event.target.value)} placeholder="Не импортировать" disabled={busy} /></label>
-            <label className="field">Колонка intent<input value={mapping.intent} onChange={(event) => changeMapping("intent", event.target.value)} placeholder="Не импортировать" disabled={busy} /></label>
+            <label className="field">Колонка намерения пользователя<input value={mapping.intent} onChange={(event) => changeMapping("intent", event.target.value)} placeholder="Не импортировать" disabled={busy} /></label>
             <label className="field">Колонка города<input value={mapping.city} onChange={(event) => changeMapping("city", event.target.value)} placeholder="Не импортировать" disabled={busy} /></label>
             <label className="field">Колонка приоритета<input value={mapping.priority} onChange={(event) => changeMapping("priority", event.target.value)} placeholder="Не импортировать" disabled={busy} /></label>
           </div>
-          <p className="muted" style={{ margin: 0 }}>Выбор файла и mapping не отправляют данные. Сначала нажмите «Проверить CSV»: сервер рассчитает результат без создания ключей и audit-записи.</p>
+          <p className="muted" style={{ margin: 0 }}>Выбор файла и сопоставление колонок не отправляют данные. Сначала нажмите «Проверить CSV»: сервер рассчитает результат без создания ключевых фраз и записи в журнале аудита.</p>
           <div className="row">
             <button className="btn btn-ghost" type="button" disabled={!file || !mapping.phrase.trim() || busy} onClick={() => void requestPreview()}>{busy ? "Проверка…" : "Проверить CSV"}</button>
             <button className="btn" type="button" disabled={!previewIsCurrent || !preview || preview.created === 0 || busy} onClick={() => void importCheckedCsv()}>{busy ? "Импорт…" : `Импортировать проверенный CSV${previewIsCurrent && preview ? ` (${preview.created})` : ""}`}</button>
@@ -205,15 +205,15 @@ export function KeywordsPage() {
         </div>
       </Surface>
 
-      {previewIsCurrent && preview && <Surface title="Preview CSV без записи">
-        <p className="muted">Это ожидаемый результат на момент проверки, а не резервирование. До подтверждения ключи не созданы; при параллельном импорте фактический результат может отличаться.</p>
+      {previewIsCurrent && preview && <Surface title="Предварительный просмотр CSV без сохранения">
+        <p className="muted">Это ожидаемый результат на момент проверки, а не резервирование. До подтверждения ключевые фразы не созданы; при параллельном импорте фактический результат может отличаться.</p>
         <div className="row">
           <StatusPill tone="ok">Будет добавлено: {preview.created}</StatusPill>
           <StatusPill>Будет пропущено: {preview.skipped}</StatusPill>
           <StatusPill tone={preview.invalid_rows ? "warn" : "ok"}>Ошибок строк: {preview.invalid_rows}</StatusPill>
         </div>
         {preview.errors.length > 0 && <ul className="import-errors">{preview.errors.map((item) => <li key={`${item.line}-${item.error}`}>Строка {item.line}: {item.error}</li>)}</ul>}
-        <DataTable headers={["Фраза", "Группа", "Intent", "Гео", "Частотность", "Приоритет"]}>{preview.preview.map((item) => <tr key={item.phrase}><td><strong>{item.phrase}</strong></td><td>{item.category || "—"}</td><td>{item.meta.intent || "—"}</td><td>{item.meta.city || "—"}</td><td>{item.meta.frequency || "—"}</td><td>{item.meta.priority || "—"}</td></tr>)}{preview.preview.length === 0 && <tr><td colSpan={6}><EmptyState title="Новых фраз для импорта нет" hint="Все строки уже существуют, повторяются в файле или невалидны." /></td></tr>}</DataTable>
+        <DataTable headers={["Фраза", "Группа", "Намерение", "Гео", "Частотность", "Приоритет"]}>{preview.preview.map((item) => <tr key={item.phrase}><td><strong>{item.phrase}</strong></td><td>{item.category || "—"}</td><td>{item.meta.intent || "—"}</td><td>{item.meta.city || "—"}</td><td>{item.meta.frequency || "—"}</td><td>{item.meta.priority || "—"}</td></tr>)}{preview.preview.length === 0 && <tr><td colSpan={6}><EmptyState title="Новых фраз для импорта нет" hint="Все строки уже существуют, повторяются в файле или невалидны." /></td></tr>}</DataTable>
       </Surface>}
 
       {result && <Surface title="Фактический результат импорта">
@@ -230,7 +230,7 @@ export function KeywordsPage() {
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Поиск по фразе" style={{ minWidth: 260 }} />
           <button className="btn btn-ghost" type="submit">Найти</button>
         </form>
-        <DataTable headers={["Фраза", "Группа", "Intent", "Гео", "Частотность", "Приоритет"]}>
+        <DataTable headers={["Фраза", "Группа", "Намерение", "Гео", "Частотность", "Приоритет"]}>
           {keywords.map((keyword) => <tr key={keyword.id}><td><strong>{keyword.phrase}</strong></td><td>{keyword.category || "—"}</td><td>{keyword.meta.intent || "—"}</td><td>{keyword.meta.city || "—"}</td><td>{keyword.meta.frequency || "—"}</td><td>{keyword.meta.priority || "—"}</td></tr>)}
           {keywords.length === 0 && <tr><td colSpan={6}><EmptyState title="Семантика пока не загружена" hint="Скачайте шаблон, проверьте CSV и отдельно подтвердите импорт." /></td></tr>}
         </DataTable>
